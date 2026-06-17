@@ -1,0 +1,188 @@
+/* base.css - layout, typography, theme variables.
+   Every color in the app must come from a var(--*) so themes fully reskin it. */
+
+:root {
+  /* serika dark defaults; theme.js overrides these */
+  --bg: #323437;
+  --bg2: #2c2e31;
+  --sub: #646669;
+  --sub-alt: #51545a;
+  --text: #d1d0c5;
+  --accent: #e2b714;
+  --error: #ca4754;
+  --ok: #7ec384;
+  --warn: #e2b714;
+
+  --font: "Cascadia Code", "Consolas", "JetBrains Mono", ui-monospace, monospace;
+  --radius: 8px;
+  --row-h: 27px;
+  --trans: 0.18s ease;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  /* default sized for the shop floor, not just young eyes; adjustable via the aa menu */
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+/* the app fills the window exactly; only #view ever scrolls. body must never
+   scroll or the header/footer un-staple. */
+body { overflow: hidden; }
+
+::selection { background: var(--accent); color: var(--bg); }
+
+/* scrollbars */
+* { scrollbar-width: thin; scrollbar-color: var(--sub-alt) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: var(--sub-alt); border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: var(--sub); }
+*::-webkit-scrollbar-track { background: transparent; }
+
+#app {
+  display: flex;
+  flex-direction: column;
+  /* vh units ignore CSS zoom: at 110% scale, 100vh would be 110% of the real
+     window and the footer would slide off-screen. Dividing by the zoom factor
+     makes header + footer stay stapled at any scale. */
+  height: calc(100vh / var(--app-zoom, 1));
+}
+
+/* ---- topbar ---- */
+#topbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;        /* skinny windows: right-side buttons drop to a row, never clip */
+  gap: 0.35rem 1.25rem;
+  padding: 0.65rem 1.25rem;
+  flex: none;
+}
+
+#logo {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--sub);
+  user-select: none;
+  white-space: nowrap;
+}
+#logo svg { color: var(--accent); flex: none; }
+#logo.clickable { cursor: pointer; }
+#logo.clickable:hover .logo-text { color: var(--accent); }
+.logo-text { font-size: 1.05rem; font-weight: 600; color: var(--text); letter-spacing: -0.02em; }
+.logo-accent { color: var(--accent); }
+
+#tabbar {
+  display: flex;
+  flex-wrap: wrap;  /* tabs stack into a second row instead of scrolling away */
+  gap: 0.1rem 0.15rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tab-btn {
+  appearance: none;
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--sub);
+  padding: 0.35rem 0.7rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: color var(--trans), background var(--trans);
+  white-space: nowrap;
+  user-select: none;
+}
+.tab-btn:hover:not(:disabled) { color: var(--text); }
+.tab-btn.active { color: var(--accent); }
+.tab-btn:disabled { color: var(--sub-alt); cursor: default; opacity: 0.55; }
+.tab-btn .tab-num { opacity: 0.5; font-size: 0.75em; margin-right: 0.3em; }
+
+#topbar-right { display: flex; gap: 0.3rem; flex: none; }
+
+.icon-btn {
+  appearance: none;
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--sub);
+  padding: 0.35rem 0.65rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: color var(--trans), background var(--trans);
+  user-select: none;
+}
+.icon-btn:hover { color: var(--text); background: var(--bg2); }
+.icon-btn.accent:hover { color: var(--accent); }
+
+/* ---- toolbar ---- */
+#toolbar {
+  display: flex;
+  align-items: center;
+  padding: 0.4rem 1.25rem 0.55rem;
+  flex: none;
+  min-height: 2.4rem;
+}
+#toolbar.hidden { display: none; }
+.toolbar-slot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;   /* at big font/scale the io toolbar needs a second row, not clipping */
+  gap: 0.45rem 0.75rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.view-slot { height: 100%; }
+
+/* ---- main view ---- */
+#view {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 0.75rem 1.25rem 1.25rem;
+  outline: none;
+  position: relative;
+}
+#view.no-pad { padding: 0; }
+
+/* ---- statusbar ---- */
+#statusbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.45rem 1.25rem;
+  font-size: 0.75rem;
+  color: var(--sub);
+  flex: none;
+  user-select: none;
+}
+#statusbar .sep { margin: 0 0.5em; opacity: 0.45; }
+#statusbar .accent { color: var(--accent); }
+#statusbar .credit { font-size: 0.66rem; color: var(--sub-alt); margin-left: 0.6em; }
+
+.hidden { display: none !important; }
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+h1, h2, h3 { font-weight: 600; letter-spacing: -0.01em; }
+
+kbd {
+  font-family: var(--font);
+  font-size: 0.72rem;
+  background: var(--bg2);
+  color: var(--sub);
+  border-radius: 4px;
+  padding: 0.1em 0.45em;
+  border: 1px solid var(--sub-alt);
+  border-bottom-width: 2px;
+}

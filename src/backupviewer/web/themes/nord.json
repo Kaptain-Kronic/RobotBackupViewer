@@ -1,0 +1,15 @@
+{
+  "id": "nord",
+  "name": "nord",
+  "colors": {
+    "bg": "#242933",
+    "bg2": "#2e3440",
+    "sub": "#617b94",
+    "subAlt": "#434c5e",
+    "text": "#d8dee9",
+    "accent": "#88c0d0",
+    "error": "#bf616a",
+    "ok": "#a3be8c",
+    "warn": "#ebcb8b"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "husqy",
+  "name": "husqy",
+  "colors": {
+    "bg": "#000000",
+    "bg2": "#0e0a16",
+    "sub": "#972fff",
+    "subAlt": "#38206b",
+    "text": "#ebd7ff",
+    "accent": "#c58aff",
+    "error": "#ff5377",
+    "ok": "#7ee787",
+    "warn": "#f0b86e"
+  }
+}

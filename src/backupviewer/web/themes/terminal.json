@@ -1,0 +1,15 @@
+{
+  "id": "terminal",
+  "name": "terminal",
+  "colors": {
+    "bg": "#191a1b",
+    "bg2": "#1f2122",
+    "sub": "#5e6163",
+    "subAlt": "#36383a",
+    "text": "#e7eae0",
+    "accent": "#79a617",
+    "error": "#a61717",
+    "ok": "#79a617",
+    "warn": "#c7a217"
+  }
+}

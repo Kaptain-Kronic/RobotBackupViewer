@@ -1,0 +1,15 @@
+{
+  "id": "matrix",
+  "name": "matrix",
+  "colors": {
+    "bg": "#000000",
+    "bg2": "#0d0d0d",
+    "sub": "#006500",
+    "subAlt": "#003000",
+    "text": "#d1ffcd",
+    "accent": "#15ff00",
+    "error": "#da3333",
+    "ok": "#15ff00",
+    "warn": "#e6e600"
+  }
+}

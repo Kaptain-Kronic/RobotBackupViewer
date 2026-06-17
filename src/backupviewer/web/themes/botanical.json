@@ -1,0 +1,15 @@
+{
+  "id": "botanical",
+  "name": "botanical",
+  "colors": {
+    "bg": "#7b9c98",
+    "bg2": "#6f8e8a",
+    "sub": "#495755",
+    "subAlt": "#5d7470",
+    "text": "#eaf1f3",
+    "accent": "#eaf1f3",
+    "error": "#a23b3b",
+    "ok": "#d4e6c6",
+    "warn": "#e8d3a2"
+  }
+}

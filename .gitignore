@@ -1,0 +1,16 @@
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# build artifacts
+build/
+dist/
+*.egg-info/
+
+# real robot backup used as local test fixture - contains plant data.
+# tests skip gracefully without it; remove this line if you decide to track it.
+SampleBackup/
+
+# claude code local settings
+.claude/

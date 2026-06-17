@@ -1,0 +1,15 @@
+{
+  "id": "gruvbox_dark",
+  "name": "gruvbox dark",
+  "colors": {
+    "bg": "#282828",
+    "bg2": "#1d2021",
+    "sub": "#928374",
+    "subAlt": "#504945",
+    "text": "#ebdbb2",
+    "accent": "#d79921",
+    "error": "#cc241d",
+    "ok": "#98971a",
+    "warn": "#d65d0e"
+  }
+}

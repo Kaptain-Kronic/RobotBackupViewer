@@ -1,0 +1,831 @@
+/* components.css - cards, tables, badges, inputs, modal, empty states */
+
+/* ---- cards ---- */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(330px, 1fr));
+  gap: 0.9rem;
+  align-items: start;
+}
+.card {
+  background: var(--bg2);
+  border-radius: var(--radius);
+  padding: 0.9rem 1.1rem 1rem;
+  min-width: 0;
+}
+.card.span-2 { grid-column: span 2; }
+.card h3 {
+  margin: 0 0 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--sub);
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+  user-select: none;
+}
+.card h3 .count { color: var(--sub-alt); margin-left: 0.4em; }
+
+/* key/value list */
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 0.18rem 1.1rem; font-size: 0.85rem; }
+.kv dt { color: var(--sub); white-space: nowrap; }
+.kv dd { margin: 0; color: var(--text); word-break: break-word; }
+.kv dd.accent { color: var(--accent); }
+
+/* hero identity block */
+.hero { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem 1.4rem; padding: 0.4rem 0.2rem 1rem; }
+/* stapled variant (overview hero, compare header): sticks to the top of the
+   scrolling view, spans edge to edge, covers content scrolling beneath */
+.hero.stick {
+  position: sticky;
+  top: -0.8rem;            /* cancel #view's top padding */
+  z-index: 5;
+  background: var(--bg);
+  margin: -0.75rem -1.25rem 0.35rem;
+  padding: 1.05rem 1.45rem 0.7rem;
+}
+.hero .robot-name { font-size: 1.7rem; font-weight: 700; color: var(--text); letter-spacing: -0.02em; }
+.hero .robot-model { font-size: 1.05rem; color: var(--accent); }
+.hero .hero-sub { color: var(--sub); font-size: 0.85rem; }
+
+/* ---- tables ---- */
+.tbl-wrap { overflow: auto; border-radius: var(--radius); background: var(--bg2); }
+table.tbl { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+.tbl th, .tbl td { text-align: left; padding: 0.28rem 0.8rem; white-space: nowrap; }
+.tbl th {
+  position: sticky; top: 0;
+  background: var(--bg2);
+  color: var(--sub);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: lowercase;
+  user-select: none;
+  z-index: 2;
+}
+.tbl th.sortable { cursor: pointer; }
+.tbl th.sortable:hover { color: var(--text); }
+.tbl th .arrow { color: var(--accent); margin-left: 0.3em; font-size: 0.7em; }
+.tbl tbody tr { transition: background 0.08s ease; }
+.tbl tbody tr:hover { background: color-mix(in srgb, var(--sub-alt) 22%, transparent); }
+.tbl tbody tr.active-row { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.tbl td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.tbl td.dim { color: var(--sub); }
+.tbl td.accent { color: var(--accent); }
+
+/* virtual table */
+.vtable { position: relative; overflow: auto; background: var(--bg2); border-radius: var(--radius); }
+.vtable .vt-head {
+  display: flex; position: sticky; top: 0; z-index: 3;
+  background: var(--bg2);
+  user-select: none;
+}
+.vtable .vt-head .vt-cell {
+  color: var(--sub); font-weight: 600; font-size: 0.75rem; text-transform: lowercase;
+  padding: 0.38rem 0.8rem;
+}
+.vtable .vt-head .vt-cell.sortable { cursor: pointer; }
+.vtable .vt-head .vt-cell.sortable:hover { color: var(--text); }
+.vtable .vt-head .arrow { color: var(--accent); margin-left: 0.3em; font-size: 0.7em; }
+.vtable .vt-spacer { position: relative; width: 100%; }
+.vtable .vt-row {
+  display: flex; position: absolute; left: 0; right: 0;
+  height: var(--row-h); align-items: center;
+  font-size: 0.85rem;
+  cursor: default;
+  transition: background 0.08s ease;
+}
+.vtable .vt-row:hover { background: color-mix(in srgb, var(--sub-alt) 22%, transparent); }
+.vtable .vt-row.selected { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.vtable .vt-row.clickable { cursor: pointer; }
+.vtable .vt-row.dim-row { opacity: 0.55; }
+/* vs-page difference highlighting */
+.vtable .vt-row.vsdiff {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.frame-card.vsdiff { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 65%, transparent); }
+.vt-cell { padding: 0 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: none; }
+.vt-cell.grow { flex: 1 1 0; }
+.vt-cell.num { text-align: right; font-variant-numeric: tabular-nums; }
+.vt-cell.dim { color: var(--sub); }
+.vt-cell.accent { color: var(--accent); }
+/* column resize: a grip on each header cell's right border (drag to resize,
+   double-click to auto-fit). The label is wrapped so a sort-toggle updates it
+   without wiping the grip. */
+.vt-head .vt-cell { position: relative; }
+.vt-head .vt-label { cursor: inherit; }
+.vt-resize { position: absolute; top: 0; right: 0; width: 7px; height: 100%; cursor: col-resize; z-index: 1; }
+.vt-resize:hover { background: color-mix(in srgb, var(--accent) 55%, transparent); }
+
+/* ---- badges / pills ---- */
+.pill {
+  display: inline-block;
+  font-size: 0.7rem;
+  border-radius: 99px;
+  padding: 0.06em 0.6em;
+  background: var(--sub-alt);
+  color: var(--bg);
+  font-weight: 600;
+  user-select: none;
+}
+.pill.on { background: var(--ok); }
+.pill.off { background: var(--sub-alt); color: var(--bg); }
+.pill.err { background: var(--error); color: var(--bg); }
+.pill.warn { background: var(--warn); color: var(--bg); }
+.pill.acc { background: var(--accent); color: var(--bg); }
+.pill.ghost { background: transparent; color: var(--sub); border: 1px solid var(--sub-alt); }
+
+/* ---- inputs ---- */
+.search-box {
+  display: flex; align-items: center; gap: 0.5rem;
+  background: var(--bg2);
+  border-radius: var(--radius);
+  padding: 0.3rem 0.7rem;
+  flex: 1 1 14em;          /* grows into spare row space, shrinks instead of clipping */
+  min-width: 9em;
+  max-width: 24em;
+  transition: box-shadow var(--trans);
+}
+.search-box:focus-within { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
+.search-box .si { color: var(--sub); font-size: 0.8rem; user-select: none; }
+.search-box input {
+  appearance: none; background: none; border: none; outline: none;
+  font: inherit; font-size: 0.85rem; color: var(--text);
+  flex: 1 1 auto; min-width: 0;
+}
+.search-box input::placeholder { color: var(--sub); }
+.search-box .match-count { color: var(--sub); font-size: 0.72rem; white-space: nowrap; }
+
+select.sel, button.btn {
+  appearance: none;
+  background: var(--bg2);
+  color: var(--text);
+  border: none;
+  font: inherit;
+  font-size: 0.82rem;
+  border-radius: var(--radius);
+  padding: 0.32rem 0.7rem;
+  cursor: pointer;
+  transition: color var(--trans), background var(--trans);
+}
+button.btn:hover { color: var(--accent); }
+button.btn.primary { background: var(--accent); color: var(--bg); font-weight: 600; }
+button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
+
+/* segmented sub-tab control - wraps instead of overflowing its parent */
+.seg { display: flex; flex-wrap: wrap; gap: 0.1rem; background: var(--bg2); border-radius: var(--radius); padding: 0.15rem; min-width: 0; max-width: 100%; }
+.seg button {
+  appearance: none; background: none; border: none; font: inherit;
+  font-size: 0.78rem; color: var(--sub); padding: 0.22rem 0.65rem;
+  border-radius: 6px; cursor: pointer; transition: all var(--trans);
+  user-select: none;
+}
+.seg button:hover { color: var(--text); }
+.seg button.active { background: var(--bg); color: var(--accent); }
+.seg button .cnt { opacity: 0.55; font-size: 0.85em; margin-left: 0.35em; }
+
+/* ---- empty / placeholder states ---- */
+.empty-state {
+  height: 100%;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 1rem; color: var(--sub);
+  user-select: none;
+  text-align: center;
+}
+.empty-state .big { font-size: 1.4rem; color: var(--text); }
+.empty-state .hint { font-size: 0.8rem; }
+.empty-state .hint kbd { margin: 0 0.2em; }
+
+/* ---- modal ---- */
+#modal-root {
+  position: fixed; inset: 0; z-index: 50;
+  background: color-mix(in srgb, var(--bg) 60%, transparent);
+  backdrop-filter: blur(2px);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 10vh;
+}
+.modal {
+  background: var(--bg2);
+  border-radius: var(--radius);
+  min-width: 420px; max-width: 640px; max-height: 70vh;
+  display: flex; flex-direction: column;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+.modal h2 {
+  margin: 0; padding: 0.8rem 1.1rem 0.5rem;
+  font-size: 0.8rem; color: var(--sub); text-transform: lowercase;
+}
+.modal .modal-body { overflow: auto; padding: 0.3rem 0.5rem 0.8rem; }
+.modal .opt-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 1.5rem;
+  padding: 0.4rem 0.7rem; border-radius: 6px; cursor: pointer;
+  transition: background var(--trans);
+}
+.modal .opt-row:hover, .modal .opt-row.focused { background: var(--bg); }
+.modal .opt-row .name { color: var(--text); font-size: 0.88rem; }
+.modal .opt-row.sel .name { color: var(--accent); }
+/* non-interactive modal rows (help overlay etc) */
+.modal .static-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 1.5rem;
+  padding: 0.4rem 0.7rem;
+}
+.modal .static-row .name { color: var(--text); font-size: 0.88rem; }
+.modal .swatches { display: flex; gap: 0.3rem; }
+.modal .swatch { width: 14px; height: 14px; border-radius: 50%; }
+
+/* ---- program / file viewer ---- */
+.viewer {
+  background: var(--bg2); border-radius: var(--radius);
+  font-size: 0.83rem; overflow: auto;
+  padding: 0.7rem 0;
+  height: 100%;
+}
+.viewer pre { margin: 0; font-family: var(--font); }
+.code-line { display: flex; padding: 0 0.9rem; min-height: 1.4em; }
+.code-line:hover { background: color-mix(in srgb, var(--sub-alt) 18%, transparent); }
+.code-line .ln {
+  color: var(--sub-alt); text-align: right; min-width: 3.2em;
+  margin-right: 1em; user-select: none; flex: none;
+}
+.code-line .lc { white-space: pre-wrap; word-break: break-all; }
+
+/* TP syntax classes */
+.tp-comment { color: var(--sub); font-style: italic; }
+.tp-motion { color: var(--accent); font-weight: 600; }
+.tp-io { color: var(--ok); }
+.tp-reg { color: color-mix(in srgb, var(--accent) 60%, var(--text)); }
+.tp-kw { color: var(--error); }
+.tp-label { color: var(--warn); font-weight: 600; }
+.tp-str { color: var(--ok); }
+.tp-num { color: color-mix(in srgb, var(--text) 70%, var(--accent)); }
+.tp-sysvar { color: color-mix(in srgb, var(--error) 55%, var(--text)); }
+/* clickable CALL/RUN program names + bare macro-name lines */
+.tp-call { color: var(--accent); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
+.tp-call:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); border-radius: 3px; }
+
+/* standard collapsible primitive (sysvars, DCS entries, call tree) */
+.bv-collapse-head { cursor: pointer; user-select: none; }
+.bv-collapse-body { display: none; }
+.bv-collapsible.open > .bv-collapse-body { display: block; }
+.bv-caret { display: inline-block; width: 1em; color: var(--sub); font-size: 0.78em; flex: none; }
+
+/* call-tree card grown to ~half screen */
+.card.expanded {
+  position: fixed; top: 3.2rem; right: 1rem; bottom: 1rem;
+  width: 48vw; z-index: 60; overflow: auto;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+}
+.card.expanded .calltree { max-height: none; }
+.card .card-close { float: right; padding: 0.2rem 0.5rem; margin-left: 0.3rem; }
+
+/* detail split view */
+.split { display: grid; grid-template-columns: minmax(0, 5fr) minmax(15em, 3fr); gap: 0.9rem; height: 100%; min-height: 0; }
+.split > * { min-height: 0; overflow: auto; }
+
+/* back link row */
+.crumb { display: flex; align-items: center; gap: 0.7rem; margin-bottom: 0.6rem; font-size: 0.85rem; }
+.crumb .back { cursor: pointer; color: var(--sub); transition: color var(--trans); user-select: none; }
+.crumb .back:hover { color: var(--accent); }
+.crumb .title { color: var(--text); font-weight: 600; }
+.crumb .dim { color: var(--sub); }
+
+/* notice banner */
+.notice {
+  background: color-mix(in srgb, var(--warn) 12%, var(--bg2));
+  color: var(--text);
+  border-radius: var(--radius);
+  padding: 0.5rem 0.9rem; font-size: 0.8rem;
+  margin-bottom: 0.7rem;
+}
+
+/* memory usage bar */
+.membar { display: flex; flex-direction: column; gap: 0.15rem; margin-bottom: 0.45rem; }
+.membar .mb-label { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--sub); }
+.membar .mb-track { height: 6px; border-radius: 3px; background: var(--bg); overflow: hidden; }
+.membar .mb-fill { height: 100%; border-radius: 3px; background: var(--accent); transition: width 0.4s ease; }
+.membar.hot .mb-fill { background: var(--error); }
+
+/* ---- overview dashboard ---- */
+.ov-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; margin-left: auto; }
+.ov-chip {
+  display: inline-flex; align-items: baseline; gap: 0.4em;
+  background: var(--bg2); border-radius: 99px;
+  padding: 0.18em 0.75em; font-size: 0.74rem; user-select: none;
+}
+.ov-chip .k { color: var(--sub); }
+.ov-chip .v { color: var(--accent); font-weight: 600; }
+
+/* MH valves overview tile: compact, clickable "what signal grips what" rows */
+.mh-ov-row { display: flex; flex-direction: column; gap: 0.05rem; padding: 0.28rem 0.2rem;
+  cursor: pointer; border-radius: 5px; font-size: 0.82rem; }
+.mh-ov-row:hover { background: var(--bg2); }
+.mh-ov-row + .mh-ov-row { border-top: 1px solid color-mix(in srgb, var(--sub-alt) 22%, transparent); }
+.mh-ov-name { color: var(--accent); font-weight: 600; }
+.mh-ov-sigs { color: var(--text); font-size: 0.78rem; font-variant-numeric: tabular-nums; }
+.mh-ov-open { display: inline-block; margin-top: 0.5rem; font-size: 0.78rem; }
+
+.ov-dash {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(16em, 19em);
+  gap: 0.9rem;
+  align-items: start;
+}
+@media (max-width: 760px) { .ov-dash { grid-template-columns: 1fr; } }
+
+/* main area: EXPLICIT columns - a card lives in the column you put it in;
+   collapsing a neighbor can never reflow it somewhere else (and unlike CSS
+   multicol, overflow grows DOWN into scroll, never sideways into clipping) */
+.ov-main { display: flex; gap: 0.9rem; align-items: flex-start; min-width: 0; }
+.ov-col {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  min-height: 6rem; /* an emptied column stays a drop target */
+}
+/* sidebar stapled like header/footer: stays put while main scrolls, scrolls
+   internally only when it outgrows the window (big display settings) */
+.ov-side {
+  display: flex; flex-direction: column; gap: 0.9rem; min-width: 0;
+  position: sticky;
+  top: 0;
+  align-self: start;
+  max-height: calc(var(--view-h, 60rem) - 1.4rem);
+  overflow-y: auto;
+}
+.ov-side:empty { display: none; }
+
+/* drag affordances */
+.card[data-card-id] > h3:first-of-type { cursor: grab; }
+.card.dragging { opacity: 0.45; }
+.card.drop-before { box-shadow: 0 -3px 0 0 var(--accent); }
+.card.drop-after { box-shadow: 0 3px 0 0 var(--accent); }
+.ov-col.drop-end, .ov-side.drop-end {
+  outline: 2px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 4px; border-radius: var(--radius);
+}
+
+/* ---- collapsible cards ---- */
+/* only the card's own title (first h3) is the card toggle; inner section
+   headers are .subsec and collapse independently */
+.card.collapsible > h3:first-of-type { cursor: pointer; display: flex; align-items: center; gap: 0.45rem; }
+.card.collapsible > h3:first-of-type::before {
+  content: "▾"; font-size: 0.7em; color: var(--sub-alt); transition: transform var(--trans);
+}
+.card.collapsible.collapsed > h3:first-of-type { margin-bottom: 0; }
+.card.collapsible.collapsed > h3:first-of-type::before { transform: rotate(-90deg); }
+.card.collapsible.collapsed > :not(h3:first-of-type) { display: none; }
+.card .scrollbody { max-height: 420px; overflow: auto; }
+
+/* collapsible subsection inside a card */
+.subsec { margin-top: 0.8rem; }
+.subsec > .subsec-h {
+  margin: 0 0 0.45rem;
+  font-size: 0.78rem; font-weight: 600; color: var(--sub);
+  text-transform: lowercase; letter-spacing: 0.04em;
+  cursor: pointer; user-select: none;
+  display: flex; align-items: center; gap: 0.45rem;
+}
+.subsec > .subsec-h::before {
+  content: "▾"; font-size: 0.7em; color: var(--sub-alt); transition: transform var(--trans);
+}
+.subsec.collapsed > .subsec-h::before { transform: rotate(-90deg); }
+.subsec.collapsed > .subsec-body { display: none; }
+.subsec > .subsec-h .count { color: var(--sub-alt); margin-left: 0.2em; }
+
+/* wizard q&a rows */
+.qa-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 1.2rem;
+  padding: 0.2rem 0.1rem;
+  font-size: 0.85rem;
+}
+.qa-row + .qa-row { border-top: 1px solid color-mix(in srgb, var(--sub-alt) 30%, transparent); }
+.qa-row .qa-q { color: var(--text); }
+.qa-row .qa-a { color: var(--accent); font-weight: 600; white-space: nowrap; text-align: right; }
+.qa-row .qa-a.yes { color: var(--ok); }
+.qa-row .qa-a.no { color: var(--sub); }
+.qa-event { color: var(--sub); font-size: 0.78rem; padding: 0.18rem 0.1rem; }
+.qa-fail { color: var(--error); font-size: 0.8rem; padding: 0.18rem 0.1rem; }
+
+/* ---- multitable (side-by-side panes) ---- */
+.multitable { display: grid; gap: 0.7rem; height: 100%; min-height: 0; position: relative; }
+.mt-lock {
+  position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+  z-index: 6; appearance: none; border: none;
+  background: var(--bg2); color: var(--sub);
+  font-size: 0.62rem; line-height: 1; padding: 0.22rem 0.32rem;
+  border-radius: 6px; cursor: pointer;
+  opacity: 0.8; transition: opacity var(--trans);
+  user-select: none;
+}
+.mt-lock:hover { opacity: 1; }
+.multitable.mt-stack { grid-template-rows: 1fr 1fr; }
+.mt-pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.mt-label {
+  font-size: 0.92rem; color: var(--text); text-transform: lowercase;
+  padding: 0 0.2rem 0.35rem; user-select: none; font-weight: 600;
+  text-align: center;
+}
+/* when labels exist, the lock drops below them so robot names / "di · inputs"
+   stay readable; the lock itself stays tiny */
+.multitable.mt-haslabels .mt-lock { top: 1.9rem; }
+.mt-table { flex: 1 1 auto; min-height: 0; }
+
+/* ---- frames tab: collapsible section headers (tool/user/jog/payloads) ---- */
+.frame-section { margin-bottom: 1rem; }
+.frame-section-h {
+  display: flex; align-items: center; gap: 0.5rem;
+  font-size: 1rem; font-weight: 600; color: var(--text); text-transform: lowercase;
+  margin: 0.3rem 0 0.6rem;
+}
+.frame-section-h .cnt { color: var(--sub-alt); font-size: 0.8rem; font-weight: 500; }
+
+/* ---- vertical frame cards ---- */
+.frame-card .kv dt { min-width: 1.4em; }
+.frame-card .kv dd { font-variant-numeric: tabular-nums; }
+.frame-card h3 .pill { margin-left: 0.4em; }
+.frame-card .cfg { margin-top: 0.5rem; color: var(--sub); font-size: 0.78rem; }
+/* identity subtitle (frame comment / signal) - one consistent treatment so the
+   frames tab and the dcs frames section read the same */
+.frame-card .frame-sub { font-size: 0.88rem; color: var(--text); margin: -0.25rem 0 0.45rem; }
+
+/* ---- search results ---- */
+.sr-section { margin-bottom: 1.1rem; }
+.sr-section > h3 {
+  font-size: 0.78rem; color: var(--sub); text-transform: lowercase;
+  margin: 0 0 0.4rem; user-select: none;
+}
+.sr-section > h3 .count { color: var(--accent); margin-left: 0.4em; }
+.sr-prog { background: var(--bg2); border-radius: var(--radius); margin-bottom: 0.45rem; overflow: hidden; }
+.sr-prog > .sr-head {
+  display: flex; align-items: center; gap: 0.8rem; padding: 0.38rem 0.9rem; cursor: pointer;
+  transition: background var(--trans);
+}
+.sr-prog > .sr-head:hover { background: color-mix(in srgb, var(--sub-alt) 20%, transparent); }
+.sr-prog .sr-name { color: var(--accent); font-weight: 600; }
+.sr-prog .sr-cnt { color: var(--sub); font-size: 0.78rem; }
+.sr-hit {
+  display: flex; gap: 1em; padding: 0.16rem 0.9rem 0.16rem 1.6rem;
+  font-size: 0.82rem; cursor: pointer;
+}
+.sr-hit:hover { background: color-mix(in srgb, var(--sub-alt) 18%, transparent); }
+.sr-hit .ln { color: var(--sub-alt); min-width: 3em; text-align: right; flex: none; }
+.sr-hit .tx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sr-row {
+  display: flex; gap: 1.2em; align-items: center;
+  background: var(--bg2); border-radius: var(--radius);
+  padding: 0.32rem 0.9rem; margin-bottom: 0.3rem; cursor: pointer; font-size: 0.85rem;
+  transition: background var(--trans);
+}
+.sr-row:hover { background: color-mix(in srgb, var(--sub-alt) 22%, transparent); }
+.sr-row .dim { color: var(--sub); }
+
+/* ---- compare ---- */
+.cmp-head {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem 1.4rem;
+  /* stapled like the overview hero: always know which robot is which */
+  position: sticky;
+  top: -0.8rem;
+  z-index: 5;
+  background: var(--bg);
+  margin: -0.75rem -1.25rem 0.35rem;
+  padding: 1.05rem 1.45rem 0.7rem;
+}
+.cmp-side { display: flex; flex-direction: column; gap: 0.1rem; }
+/* changed-program rows: one plain statement instead of two date cells */
+.cmp-summary { grid-column: 2 / 4; color: var(--accent); }
+.cmp-summary .dim { color: var(--sub); }
+/* inline mini-diff under a changed program row */
+.cmp-minidiff {
+  background: var(--bg);
+  border-radius: var(--radius);
+  margin: 0.15rem 0.6rem 0.5rem;
+  padding: 0.3rem 0;
+  max-height: 24rem;
+  overflow: auto;
+}
+.cmp-minihead {
+  display: flex; gap: 1rem; align-items: baseline;
+  padding: 0.25rem 0.9rem 0.45rem; font-size: 0.8rem;
+}
+.pd-row.pd-mini { cursor: pointer; }
+.pd-row.pd-mini:hover { filter: brightness(1.15); }
+.cmp-vs { color: var(--sub); font-size: 0.85rem; user-select: none; }
+/* three fixed columns: what | robot A has | robot B has */
+.cmp-row {
+  display: grid;
+  grid-template-columns: minmax(8em, 16em) 1fr 1fr;
+  gap: 0 1.1rem;
+  align-items: baseline;
+  padding: 0.26rem 1.5rem 0.26rem 0.9rem;
+  font-size: 0.84rem;
+  position: relative;
+}
+/* per-entry hide (verified-OK differences); shows on row hover. when "show
+   hidden" is on, hidden rows reappear greyed and the x un-hides them. */
+.cmp-hide {
+  position: absolute; right: 0.4rem; top: 0.2rem;
+  color: var(--sub-alt); cursor: pointer; user-select: none;
+  font-size: 0.8rem; line-height: 1; padding: 0.15rem 0.25rem; opacity: 0;
+  transition: opacity var(--trans), color var(--trans);
+}
+.cmp-row:hover .cmp-hide { opacity: 1; }
+.cmp-hide:hover { color: var(--error); }
+.cmp-hidden-row { opacity: 0.5; }
+.cmp-hidden-row .cmp-hide { opacity: 1; color: var(--ok); }
+.cmp-row + .cmp-row { border-top: 1px solid color-mix(in srgb, var(--sub-alt) 25%, transparent); }
+.cmp-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* the program's own comment, on its own full-width line so it fits instead of
+   clipping in the narrow name column (item 4) */
+.cmp-row > .cmp-prog-comment {
+  grid-column: 1 / -1; white-space: normal; overflow: visible; text-overflow: clip;
+  color: var(--sub); font-size: 0.78rem; margin-top: 0.05rem;
+}
+.cmp-cols-head { color: var(--sub); font-size: 0.72rem; text-transform: lowercase; font-weight: 600; border-top: none !important; }
+.cmp-name { color: var(--text); font-weight: 600; }
+.cmp-a, .cmp-b { color: var(--sub); }
+.cmp-missing { color: var(--sub-alt); font-style: italic; }
+.cmp-row.cmp-added .cmp-b { color: var(--ok); }
+.cmp-row.cmp-removed .cmp-a { color: var(--error); }
+.cmp-row.cmp-changed .cmp-a { color: var(--sub); }
+.cmp-row.cmp-changed .cmp-b { color: var(--accent); }
+.cmp-row.cmp-alert .cmp-a, .cmp-row.cmp-alert .cmp-b { color: var(--error); font-weight: 600; }
+.cmp-row.cmp-click { cursor: pointer; }
+.cmp-row.cmp-click:hover { background: color-mix(in srgb, var(--sub-alt) 20%, transparent); }
+.cmp-row.cmp-click .cmp-name::after { content: " ⇄"; color: var(--sub-alt); }
+
+/* ---- dcs ---- */
+/* muted "ok" pill - a full DCS screen of bright green is noise; reserve
+   strong colors for changed/NG */
+.pill.ok-soft { background: transparent; color: var(--ok); border: 1px solid color-mix(in srgb, var(--ok) 45%, transparent); }
+
+.dcs-menu { display: flex; flex-direction: column; gap: 0.3rem; }
+.dcs-menu-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  background: var(--bg2); border-radius: var(--radius);
+  padding: 0.6rem 0.95rem; cursor: pointer;
+  transition: background var(--trans);
+}
+.dcs-menu-row:hover { background: color-mix(in srgb, var(--sub-alt) 22%, var(--bg2)); }
+.dcs-menu-title { color: var(--text); font-weight: 600; }
+.dcs-menu-tags { display: flex; align-items: center; gap: 0.6rem; }
+.dcs-menu-tags .dcs-caret { color: var(--sub-alt); font-size: 1.1rem; }
+
+.dcs-preamble {
+  display: flex; flex-wrap: wrap; gap: 0.3rem 1.2rem; align-items: center;
+  margin-bottom: 0.7rem; font-size: 0.84rem; color: var(--sub);
+}
+
+.dcs-entry { background: var(--bg2); border-radius: var(--radius); margin-bottom: 0.3rem; overflow: hidden; }
+.dcs-entry.dim { opacity: 0.6; }
+.dcs-entry-head {
+  display: flex; align-items: center; gap: 0.7rem;
+  padding: 0.42rem 0.9rem; cursor: pointer;
+  transition: background var(--trans);
+}
+.dcs-entry-head:hover { background: color-mix(in srgb, var(--sub-alt) 18%, transparent); }
+.dcs-caret { color: var(--sub); font-size: 0.75rem; width: 1em; flex: none; }
+.dcs-entry-idx { color: var(--sub-alt); font-variant-numeric: tabular-nums; min-width: 1.8em; text-align: right; }
+.dcs-entry-label { color: var(--accent); font-weight: 600; flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dcs-entry-tags { display: flex; align-items: center; gap: 0.4rem; flex: none; }
+.dcs-entry-body { display: none; padding: 0.3rem 0.9rem 0.7rem 2.3rem; }
+/* DIRECT child only: a nested element body is controlled by ITS OWN open state,
+   not the parent model's - otherwise opening the model force-shows every
+   element's body and the element headers can't collapse independently */
+.dcs-entry.open > .dcs-entry-body { display: block; }
+.dcs-kv { font-size: 0.84rem; }
+.dcs-kv .dcs-raw { font-family: var(--font); white-space: pre-wrap; }
+
+.dcs-sub { color: var(--sub); font-size: 0.74rem; font-weight: 600; text-transform: lowercase;
+  margin: 0.4rem 0 0.15rem; }
+.dcs-line { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem;
+  padding: 0.12rem 0; font-size: 0.84rem; }
+.dcs-line > span { white-space: pre-wrap; word-break: break-word; min-width: 0; }
+
+.dcs-raw-rows { font-size: 0.84rem; }
+
+.dcs-logic { display: flex; flex-direction: column; gap: 0.1rem; }
+.dcs-logic-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: 0.16rem 0.7rem; border-radius: 5px;
+}
+.dcs-logic-row:hover { background: var(--bg2); }
+.dcs-logic-row code { font-family: var(--font); font-size: 0.86rem; white-space: pre; color: var(--text); }
+.dcs-sig { color: var(--accent); }
+.dcs-op { color: var(--error); font-weight: 600; }
+.dcs-not { color: var(--error); font-weight: 700; }
+.dcs-eq { color: var(--sub); }
+.dcs-detail-sub { color: var(--sub); font-size: 0.72rem; font-weight: 600; text-transform: lowercase; margin-top: 0.45rem; }
+
+/* CPC position(mm) table: axis labels + column headers in the label colour,
+   the positional values in the normal text colour (item 7). */
+/* a tidy chart: columns hug their content (width:max-content), header + values
+   both right-aligned so "Current" sits over its numbers; axis label in a left
+   gutter. The grid-template-columns is set inline (auto repeat(N,auto)). */
+.dcs-pos-grid { display: grid; width: max-content; max-width: 100%; gap: 0.12rem 1.5rem;
+  align-items: baseline; margin: 0.15rem 0 0.3rem; font-size: 0.84rem; font-variant-numeric: tabular-nums; }
+.dcs-pos-h, .dcs-pos-v { text-align: right; }
+.dcs-pos-h { color: var(--sub); font-weight: 600; }
+.dcs-pos-axis { color: var(--sub); font-weight: 600; text-align: left; }
+.dcs-pos-v { color: var(--text); }
+/* inline X:/Y:/Z: axis row (DCS user-model Pos1/Pos2): colored labels, plain values */
+.dcs-axes { display: flex; flex-wrap: wrap; gap: 0.2rem 1.4rem; margin: 0.1rem 0 0.25rem;
+  font-size: 0.84rem; font-variant-numeric: tabular-nums; }
+.dcs-axes .ax-l { color: var(--sub); font-weight: 600; }
+.dcs-axes .ax-v { color: var(--text); }
+/* inline title next to a KAREL struct-array element index ([n] EOAT) */
+.sysvar-title { color: color-mix(in srgb, var(--accent) 55%, var(--sub)); font-size: 0.82em;
+  margin-left: 0.5em; font-style: italic; }
+
+/* stapled DCS dashboard (signatures + small sections inline) */
+.dcs-dash {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.7rem;
+  position: sticky; top: -0.8rem; z-index: 5; background: var(--bg);
+  margin: -0.75rem -1.25rem 0.5rem; padding: 0.85rem 1.45rem 0.7rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--sub-alt) 30%, transparent);
+}
+.dcs-dash-cell { background: var(--bg2); border-radius: var(--radius); padding: 0.55rem 0.8rem; min-width: 0; }
+.dcs-dash-cell.clickable { cursor: pointer; transition: background var(--trans); }
+.dcs-dash-cell.clickable:hover { background: color-mix(in srgb, var(--sub-alt) 20%, var(--bg2)); }
+.dcs-dash-h { font-size: 0.74rem; color: var(--sub); text-transform: lowercase; font-weight: 600; margin-bottom: 0.4rem; display: flex; align-items: center; gap: 0.4rem; }
+.dcs-dash-body, .dcs-dash-line { font-size: 0.8rem; color: var(--text); }
+.dcs-dash-line { display: flex; justify-content: space-between; gap: 0.6rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0.05rem 0; }
+.dcs-sig-strip { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.dcs-sig-chip { font-size: 0.72rem; padding: 0.08em 0.5em; border-radius: 99px; border: 1px solid; }
+.dcs-sig-chip.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+.dcs-sig-chip.bad { color: var(--bg); background: var(--error); border-color: var(--error); font-weight: 600; }
+
+/* ---- system vars tree ---- */
+.sysvar-list { font-size: 0.85rem; }
+.sysvar-node { background: var(--bg2); border-radius: var(--radius); margin-bottom: 0.25rem; overflow: hidden; }
+.sysvar-node > .bv-collapse-body { padding: 0.15rem 0.5rem 0.45rem; }
+.sysvar-head { display: flex; align-items: baseline; gap: 0.6rem; padding: 0.35rem 0.8rem; }
+.sysvar-leaf { display: flex; align-items: baseline; gap: 0.6rem; padding: 0.35rem 0.8rem; }
+.sysvar-name { color: var(--accent); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.sysvar-type { color: var(--sub); font-size: 0.76rem; white-space: nowrap; }
+/* value sits right after the name/type instead of being pushed to the far edge
+   - on a wide screen [1] and its value stay together and traceable (item 11) */
+.sysvar-val { color: var(--text); font-variant-numeric: tabular-nums; white-space: pre-wrap; word-break: break-word; min-width: 0; }
+.sysvar-tnode { padding-left: 1rem; border-left: 1px solid color-mix(in srgb, var(--sub-alt) 32%, transparent); margin-left: 0.5rem; }
+.sysvar-tnode .sysvar-head, .sysvar-tnode.sysvar-leaf { padding: 0.13rem 0.3rem; }
+.sysvar-tnode .sysvar-name { color: var(--text); font-weight: 500; }
+
+/* ---- selectability pass (item 3): chrome/controls keep user-select:none
+   (set on their own rules above); these re-enable selection on the actual
+   DATA text so it can be copied - including data that lives inside a
+   collapse-head (variable names, DCS entry labels), which would otherwise
+   inherit the head's user-select:none. */
+.tbl td, .vtable .vt-cell,
+.kv dt, .kv dd,
+.sysvar-name, .sysvar-type, .sysvar-val,
+.dcs-entry-label, .dcs-line > span, .dcs-pos-grid,
+.dcs-dash-line, .dcs-sig-chip,
+.code-line .lc, .pd-text,
+.sr-name, .sr-hit .tx,
+.cmp-name, .cmp-a, .cmp-b, .cmp-summary,
+.frame-card h3, .frame-card .frame-sub, .frame-card .cfg,
+.mh-ov-name, .mh-ov-sigs, .sysvar-title,
+.hero .robot-name, .hero-sub, .ov-chip .v {
+  user-select: text;
+}
+
+/* ---- program diff (pdiff) ---- */
+.pd-row {
+  display: grid;
+  grid-template-columns: 3.2em minmax(0, 1fr) 3.2em minmax(0, 1fr);
+  gap: 0 0.6em;
+  padding: 0 0.9rem;
+  min-height: 1.4em;
+  font-size: 0.83rem;
+}
+.pd-row .ln { color: var(--sub-alt); text-align: right; user-select: none; }
+.pd-row .pd-text { white-space: pre-wrap; word-break: break-all; min-width: 0; }
+.pd-row .pd-text:first-of-type { border-right: 1px solid color-mix(in srgb, var(--sub-alt) 35%, transparent); padding-right: 0.6em; }
+/* the program/robot header sits flush at the top of the viewer (no gap), shown
+   large and centered over each program's column (item 9) */
+.pd-viewer { padding-top: 0; }
+.pd-head { position: sticky; top: 0; background: var(--bg2); z-index: 2; padding: 0.55rem 0.9rem 0.5rem; }
+/* keep the empty .ln gutter cells so each header stays centered over its own
+   program column (cols 2 and 4 of the grid) */
+.pd-head .pd-text { color: var(--text); font-size: 1.1rem; font-weight: 600; text-align: center; }
+.pd-head .pd-text:first-of-type { border-right: none; }
+.pd-same { opacity: 0.55; }
+.pd-change { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.pd-a_only { background: color-mix(in srgb, var(--error) 9%, transparent); }
+.pd-b_only { background: color-mix(in srgb, var(--ok) 9%, transparent); }
+.pd-void { color: var(--sub-alt); font-style: italic; }
+.pd-row.flash { animation: lineflash 1.6s ease-out; }
+
+/* ---- call tree ---- */
+.calltree { font-size: 0.85rem; }
+.ct-node { padding-left: 1.1rem; border-left: 1px solid color-mix(in srgb, var(--sub-alt) 45%, transparent); margin-left: 0.45rem; }
+.ct-node.ct-root { padding-left: 0; border-left: none; margin-left: 0; }
+.ct-row { display: flex; align-items: center; gap: 0.5rem; padding: 0.12rem 0; }
+.ct-row .ct-toggle {
+  width: 1.1em; color: var(--sub); cursor: pointer; user-select: none; flex: none; text-align: center;
+}
+.ct-row .ct-name { color: var(--accent); cursor: pointer; }
+.ct-row .ct-name:hover { text-decoration: underline; }
+.ct-row .ct-name.missing { color: var(--sub); cursor: default; text-decoration: none; }
+.ct-row .ct-kind { font-size: 0.68rem; color: var(--sub); }
+.ct-row .ct-cycle { font-size: 0.68rem; color: var(--warn); }
+
+/* clickable source tokens */
+.code-line .tp-io, .code-line .tp-reg { cursor: pointer; }
+.code-line .tp-io:hover, .code-line .tp-reg:hover { text-decoration: underline; }
+.code-line.flash { animation: lineflash 1.6s ease-out; }
+@keyframes lineflash {
+  0% { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+  100% { background: transparent; }
+}
+
+/* ---- global search box (topbar) ---- */
+#global-search { flex: 0 1 16em; min-width: 8em; }
+#global-search input { font-size: 0.8rem; }
+
+/* ---- settings rows ---- */
+.set-row { display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; padding: 0.45rem 0.7rem; }
+.set-row .name { color: var(--text); font-size: 0.88rem; }
+.set-row .seg { flex: none; }
+
+/* ---- home / shell ---- */
+.home-hero { padding-top: 0.6rem; }
+.home-actions { margin-bottom: 1.4rem; }
+.home-tile { cursor: pointer; transition: background var(--trans), box-shadow var(--trans); }
+.home-tile:hover {
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg2));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.home-tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.home-tile h3 { color: var(--accent); }
+.home-tile-desc { color: var(--sub); font-size: 0.84rem; }
+
+.home-lib-head { display: flex; align-items: center; justify-content: space-between; margin: 0.4rem 0 0.7rem; }
+.home-lib-head h2 { font-size: 0.95rem; color: var(--text); text-transform: lowercase; margin: 0; }
+.empty-lib { color: var(--sub); font-size: 0.85rem; padding: 0.8rem 0.2rem; }
+
+.lib-plant { margin-bottom: 0.9rem; }
+.lib-plant-h { font-size: 0.74rem; color: var(--sub); text-transform: uppercase; letter-spacing: 0.07em; margin-bottom: 0.35rem; }
+.lib-line { margin: 0 0 0.5rem 0.6rem; }
+.lib-line-h { font-size: 0.8rem; color: var(--accent); margin-bottom: 0.25rem; }
+.lib-robot {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  background: var(--bg2); border-radius: var(--radius);
+  padding: 0.45rem 0.55rem 0.45rem 0.8rem; margin: 0 0 0.3rem 0.6rem; cursor: pointer;
+  transition: background var(--trans);
+}
+.lib-robot:hover { background: color-mix(in srgb, var(--sub-alt) 22%, var(--bg2)); }
+.lib-robot.stale { opacity: 0.6; }
+.lib-robot-main { min-width: 0; }
+.lib-robot-name { color: var(--text); font-weight: 600; }
+.lib-robot-model { color: var(--accent); font-size: 0.82rem; margin-left: 0.6em; }
+.lib-robot-meta { color: var(--sub); font-size: 0.76rem; margin-top: 0.1rem; }
+.lib-robot-meta .sep { margin: 0 0.35em; opacity: 0.5; }
+.lib-robot-acts { display: flex; gap: 0.25rem; flex: none; }
+.lib-robot-acts .btn { padding: 0.22rem 0.55rem; font-size: 0.78rem; }
+.lib-robot-name, .lib-robot-meta { user-select: text; }
+
+/* library add/edit form (modal) */
+.lib-form { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.3rem 0.6rem 0.2rem; }
+.lf-row { display: grid; grid-template-columns: 7em 1fr; align-items: center; gap: 0.8rem; }
+.lf-row label { color: var(--sub); font-size: 0.82rem; }
+.lf-input {
+  appearance: none; background: var(--bg); border: 1px solid var(--sub-alt);
+  border-radius: 6px; color: var(--text); font: inherit; font-size: 0.84rem;
+  padding: 0.3rem 0.5rem; outline: none; min-width: 0;
+}
+.lf-input:focus { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+.lf-input[readonly] { color: var(--sub); }
+.lf-check { width: 16px; height: 16px; accent-color: var(--accent); justify-self: start; }
+.lf-actions { display: flex; justify-content: flex-end; gap: 0.4rem; margin-top: 0.6rem; }
+
+/* ---- take a new backup (#backup) ---- */
+.backup-form { display: flex; flex-direction: column; gap: 0.45rem; max-width: 32rem; }
+.bf-picker { margin-bottom: 0.3rem; }
+.bf-picker-label { font-size: 0.74rem; color: var(--sub); text-transform: lowercase; margin-bottom: 0.3rem; }
+.bf-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.bf-chip { font-size: 0.78rem; padding: 0.22rem 0.6rem; }
+.backup-actions { display: flex; gap: 0.4rem; margin-top: 0.9rem; }
+.backup-status { margin-top: 1rem; max-width: 32rem; }
+.bf-probe { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+.bf-banner { color: var(--sub); font-size: 0.78rem; margin-top: 0.4rem; font-family: var(--font); }
+.bf-err { color: var(--error); font-size: 0.82rem; margin-top: 0.4rem; }
+.backup-progress { display: flex; flex-direction: column; gap: 0.5rem; }
+.backup-progress .membar { margin-bottom: 0; }
+.bf-current { font-size: 0.78rem; font-family: var(--font); }
+.bf-done-pills { margin-bottom: 0.6rem; }
+.bf-done-acts { display: flex; gap: 0.4rem; }
+.bf-note { font-size: 0.78rem; margin-top: 1.2rem; max-width: 32rem; }
+
+/* toast */
+#toast {
+  position: fixed; bottom: 2.6rem; left: 50%; transform: translateX(-50%);
+  background: var(--bg2); color: var(--text);
+  border-radius: var(--radius); padding: 0.5rem 1rem; font-size: 0.82rem;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.4); z-index: 60;
+  opacity: 0; transition: opacity 0.25s ease; pointer-events: none;
+}
+#toast.show { opacity: 1; }

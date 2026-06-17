@@ -1,0 +1,15 @@
+{
+  "id": "8008",
+  "name": "8008",
+  "colors": {
+    "bg": "#333a45",
+    "bg2": "#2b313b",
+    "sub": "#939eae",
+    "subAlt": "#485263",
+    "text": "#e9ecf0",
+    "accent": "#f44c7f",
+    "error": "#ce2d4f",
+    "ok": "#74c69d",
+    "warn": "#ffd166"
+  }
+}

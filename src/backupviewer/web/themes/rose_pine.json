@@ -1,0 +1,15 @@
+{
+  "id": "rose_pine",
+  "name": "rose pine",
+  "colors": {
+    "bg": "#1f1d27",
+    "bg2": "#26233a",
+    "sub": "#6e6a86",
+    "subAlt": "#403d52",
+    "text": "#e0def4",
+    "accent": "#9ccfd8",
+    "error": "#eb6f92",
+    "ok": "#95b7a3",
+    "warn": "#f6c177"
+  }
+}

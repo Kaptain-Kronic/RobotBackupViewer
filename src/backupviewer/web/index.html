@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>FANUC Backup Viewer</title>
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/components.css">
+</head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <div id="logo" title="backupviewer">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+        <path fill="currentColor" d="M12 2 2 7v10l10 5 10-5V7L12 2zm0 2.2 7.5 3.75L12 11.7 4.5 7.95 12 4.2zM4 9.6l7 3.5v6.7l-7-3.5V9.6zm16 0v6.7l-7 3.5v-6.7l7-3.5z"/>
+      </svg>
+      <span class="logo-text">backup<span class="logo-accent">viewer</span></span>
+    </div>
+    <nav id="tabbar" aria-label="tabs"></nav>
+    <div id="topbar-right">
+      <div class="search-box" id="global-search" title="search the whole backup (ctrl+k)">
+        <span class="si">⌕</span>
+        <input type="text" placeholder="search backup…" spellcheck="false">
+      </div>
+      <button class="icon-btn" id="btn-compare" title="compare with another backup">compare</button>
+      <button class="icon-btn" id="btn-theme" title="theme (t)">theme</button>
+      <button class="icon-btn" id="btn-settings" title="font &amp; scale">aa</button>
+      <button class="icon-btn" id="btn-help" title="shortcuts (?)">?</button>
+      <button class="icon-btn accent" id="btn-open" title="open backup (ctrl+o)">open</button>
+    </div>
+  </header>
+  <div id="toolbar" class="hidden"></div>
+  <main id="view" tabindex="-1"></main>
+  <footer id="statusbar">
+    <span id="status-left"></span>
+    <span id="status-right"></span>
+  </footer>
+</div>
+<div id="modal-root" class="hidden"></div>
+
+<script src="js/util.js"></script>
+<script src="js/api.js"></script>
+<script src="js/state.js"></script>
+<script src="js/theme.js"></script>
+<script src="js/settings_ui.js"></script>
+<script src="js/highlight_tp.js"></script>
+<script src="js/components/vtable.js"></script>
+<script src="js/components/multitable.js"></script>
+<script src="js/components/vsdiff.js"></script>
+<script src="js/components/search.js"></script>
+<script src="js/components/pill.js"></script>
+<script src="js/components/segmented.js"></script>
+<script src="js/components/builders.js"></script>
+<script src="js/components/table.js"></script>
+<script src="js/components/framecard.js"></script>
+<script src="js/components/dragreorder.js"></script>
+<script src="js/tabs/overview.js"></script>
+<script src="js/tabs/frames.js"></script>
+<script src="js/tabs/io.js"></script>
+<script src="js/tabs/registers.js"></script>
+<script src="js/tabs/programs.js"></script>
+<script src="js/tabs/alarms.js"></script>
+<script src="js/tabs/macros.js"></script>
+<script src="js/tabs/dcs.js"></script>
+<script src="js/tabs/sysvars.js"></script>
+<script src="js/tabs/mhvalves.js"></script>
+<script src="js/tabs/files.js"></script>
+<script src="js/tabs/search.js"></script>
+<script src="js/tabs/compare.js"></script>
+<script src="js/tabs/pdiff.js"></script>
+<script src="js/tabs/home.js"></script>
+<script src="js/tabs/backup.js"></script>
+<script src="js/keys.js"></script>
+<script src="js/router.js"></script>
+</body>
+</html>

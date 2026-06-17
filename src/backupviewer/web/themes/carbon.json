@@ -1,0 +1,15 @@
+{
+  "id": "carbon",
+  "name": "carbon",
+  "colors": {
+    "bg": "#313131",
+    "bg2": "#2a2a2a",
+    "sub": "#616161",
+    "subAlt": "#4a4a4a",
+    "text": "#f5e6c8",
+    "accent": "#f66e0d",
+    "error": "#e72d2d",
+    "ok": "#85c258",
+    "warn": "#f6af0d"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "id": "dots",
+  "name": "dots",
+  "colors": {
+    "bg": "#121520",
+    "bg2": "#1a1e2e",
+    "sub": "#676e8a",
+    "subAlt": "#3a4254",
+    "text": "#ffffff",
+    "accent": "#ffffff",
+    "error": "#da3333",
+    "ok": "#5cdb95",
+    "warn": "#ffb347"
+  }
+}

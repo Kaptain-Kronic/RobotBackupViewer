@@ -1,0 +1,15 @@
+{
+  "id": "serika_dark",
+  "name": "serika dark",
+  "colors": {
+    "bg": "#323437",
+    "bg2": "#2c2e31",
+    "sub": "#646669",
+    "subAlt": "#51545a",
+    "text": "#d1d0c5",
+    "accent": "#e2b714",
+    "error": "#ca4754",
+    "ok": "#7ec384",
+    "warn": "#e2b714"
+  }
+}
