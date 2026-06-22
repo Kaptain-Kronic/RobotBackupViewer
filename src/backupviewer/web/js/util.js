@@ -119,31 +119,44 @@ window.BV = {};
       });
       menu.appendChild(b);
     });
-    document.body.appendChild(menu);
+    /* Append to <html>, OUTSIDE body's CSS zoom (body.style.zoom = ui_scale).
+       A position:fixed element INSIDE the zoomed body can't be positioned
+       reliably at zoom != 1 (its top/left saturate - the menu flies to a corner).
+       Out here, fixed coords == the visual viewport, which is exactly the space
+       getBoundingClientRect and window.innerWidth report, so positioning is
+       straightforward; we re-apply the UI scale to the menu itself with a
+       transform (reliable, unlike fixed+zoom). */
+    document.documentElement.appendChild(menu);
+    var z = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--app-zoom")) || 1;
+    menu.style.transformOrigin = "top left";
+    menu.style.transform = "scale(" + z + ")";
 
-    var r = anchorEl.getBoundingClientRect();
+    var r = anchorEl.getBoundingClientRect();   /* visual viewport px */
+    var mw = menu.offsetWidth * z, mh = menu.offsetHeight * z;   /* on-screen size */
     var left = r.left;
-    if (left + menu.offsetWidth > window.innerWidth - 8) {
-      left = Math.max(8, r.right - menu.offsetWidth);  /* spill leftward at the edge */
-    }
-    menu.style.top = (r.bottom + 4) + "px";
+    if (left + mw > window.innerWidth - 8) left = Math.max(8, r.right - mw);  /* spill leftward */
+    var top = r.bottom + 4;
+    if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - 4 - mh); /* flip above */
     menu.style.left = left + "px";
+    menu.style.top = top + "px";
 
     function close() {
       if (!menu.parentNode) return;
       menu.parentNode.removeChild(menu);
       document.removeEventListener("mousedown", onOutside, true);
       document.removeEventListener("keydown", onKey, true);
-      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", close);
     }
     function onOutside(e) { if (!menu.contains(e.target)) close(); }
     function onKey(e) { if (e.key === "Escape") { e.stopPropagation(); close(); } }
+    /* page scroll closes the menu, but scrolling INSIDE it (long lists) must not */
+    function onScroll(e) { if (!menu.contains(e.target)) close(); }
     /* defer the listeners so the click that opened the menu doesn't close it */
     setTimeout(function () {
       document.addEventListener("mousedown", onOutside, true);
       document.addEventListener("keydown", onKey, true);
-      window.addEventListener("scroll", close, true);
+      window.addEventListener("scroll", onScroll, true);
       window.addEventListener("resize", close);
     }, 0);
     return { close: close };

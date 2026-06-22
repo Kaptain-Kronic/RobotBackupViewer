@@ -874,6 +874,9 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
   background: var(--bg2); border-radius: var(--radius);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4); padding: 0.25rem;
   display: flex; flex-direction: column;
+  /* a long list (e.g. compare-from-library) scrolls inside the menu instead of
+     running off-screen; /zoom keeps the rendered cap near the viewport at any scale */
+  max-height: calc(80vh / var(--app-zoom, 1)); overflow-y: auto;
 }
 .ctx-item {
   appearance: none; background: none; border: none; font: inherit; text-align: left;
