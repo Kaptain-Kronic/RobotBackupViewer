@@ -12,10 +12,65 @@
   var _collapsed = {};          /* folder keys explicitly collapsed (default = expanded) */
   var _selected = {};           /* selected robot ids (object used as a Set) */
   var _robots = [];             /* last loaded library list, for client-side collision checks */
-  var _active = {};             /* jobId -> {robotId} for in-flight backups */
-  var _poll = null;             /* the single shared progress-poll interval */
+  var _lastAbsorbMsg = "";      /* absorption toast dedupe (same folders every rescan) */
   var _showHidden = false;      /* reveal hidden robots in the list */
   var _showHiddenBtn = null;    /* the header toggle (shown only when some are hidden) */
+  var _warnedTruncated = false; /* the scan-cap warning toast fires once per session */
+  var _visibleRobots = [];      /* the currently-rendered robots — the sticky toolbar's scope */
+  var _sortMode = "";           /* name | ip | date; lazily read from settings (lib_sort) */
+
+  var SORT_LABELS = { name: "name", ip: "IP", date: "last backup" };
+
+  function sortMode() {
+    if (!_sortMode) {
+      _sortMode = ((BV.state.settings || {}).lib_sort) || "name";
+      if (!SORT_LABELS[_sortMode]) _sortMode = "name";
+    }
+    return _sortMode;
+  }
+
+  function setSortMode(mode) {
+    _sortMode = mode;
+    if (BV.state.settings) BV.state.settings.lib_sort = mode;
+    BV.api.call("set_setting", "lib_sort", mode).catch(function () {});
+    refresh();
+  }
+
+  function nameCmp(a, b) { return (a.robot || "").localeCompare(b.robot || ""); }
+
+  function ipNum(r) {
+    var m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(((r.ips && r.ips[0]) || "").trim());
+    if (!m) return Infinity;                         /* no IP -> sinks last */
+    return (+m[1]) * 16777216 + (+m[2]) * 65536 + (+m[3]) * 256 + (+m[4]);
+  }
+
+  function robotComparator() {
+    var mode = sortMode();
+    if (mode === "ip") {
+      return function (a, b) {
+        var ia = ipNum(a), ib = ipNum(b);
+        if (ia !== ib) return ia < ib ? -1 : 1;      /* octet-numeric, not lexicographic */
+        return nameCmp(a, b);
+      };
+    }
+    if (mode === "date") {
+      return function (a, b) {
+        var da = a.last_backup || "", db = b.last_backup || "";
+        if (da !== db) return da < db ? 1 : -1;      /* ISO strings: newest first, never-backed-up last */
+        return nameCmp(a, b);
+      };
+    }
+    return nameCmp;
+  }
+
+  /* group keys alphabetically with the '—' (no plant/line) bucket pinned last */
+  function groupKeys(obj) {
+    return Object.keys(obj).sort(function (a, b) {
+      if (a === "—") return 1;
+      if (b === "—") return -1;
+      return a.localeCompare(b);
+    });
+  }
 
   /* ---- folder collapse state (survives in-place refreshes) ---- */
   function isExpanded(key) { return !_collapsed[key]; }
@@ -42,9 +97,40 @@
     if (!_libWrap) return;
     _libWrap.innerHTML = "";
 
+    /* ONE sticky header row: title · selection actions (act on checked robots
+       anywhere in the tree) · library actions. It stays pinned while the 50-line
+       plants scroll — the per-line button rows are gone. */
     var head = BV.el("div", { class: "home-lib-head" });
     head.appendChild(BV.el("h2", null, "library"));
+
+    var selActs = BV.el("div", { class: "home-lib-selacts" });
+    selActs.appendChild(BV.el("span", { class: "lib-sel-count dim" }, ""));
+    var bk = BV.el("button", { class: "btn lib-act-backup", title: "back up the selected robots" },
+      "backup");
+    bk.addEventListener("click", function () { startLineBackup(_visibleRobots); });
+    var hd = BV.el("button", { class: "btn lib-act-hide", title: "hide the selected robots from view" },
+      "hide");
+    hd.addEventListener("click", function () { hideSelectedInLine(_visibleRobots); });
+    var fx = BV.el("button", { class: "btn lib-act-fix",
+      title: "fix the selected robots' names from their backup contents" }, "fix names");
+    fx.addEventListener("click", function () { fixNamesInLine(_visibleRobots); });
+    var mg = BV.el("button", { class: "btn lib-act-merge",
+      title: "merge 2 selected duplicate robots into one" }, "merge");
+    mg.addEventListener("click", function () { mergeSelectedInLine(_visibleRobots); });
+    selActs.appendChild(bk);
+    selActs.appendChild(hd);
+    selActs.appendChild(fx);
+    selActs.appendChild(mg);
+    head.appendChild(selActs);
+
     var headActs = BV.el("div", { class: "home-lib-actions" });
+    var sortBtn = BV.el("button", { class: "btn lib-sort", title: "library sort order" },
+      "sort: " + SORT_LABELS[sortMode()]);
+    sortBtn.addEventListener("click", function () {
+      BV.menu(sortBtn, ["name", "ip", "date"].map(function (mode) {
+        return { label: SORT_LABELS[mode], onClick: function () { setSortMode(mode); } };
+      }));
+    });
     var cancelAll = BV.el("button", { class: "btn lib-cancel-all hidden", id: "lib-cancel-all" },
       "cancel backups");
     cancelAll.addEventListener("click", cancelAllBackups);
@@ -62,13 +148,15 @@
     var addBtn = BV.el("button", { class: "btn lib-add-robot", id: "lib-add-robot",
       title: "add a robot to the library" }, "+ add robot");
     addBtn.addEventListener("click", function () {
+      /* existing backups join the library by being COPIED into the library
+         folder (Explorer) — the scan/watcher picks them up. Adding here is for
+         robots that don't have backup data yet. */
       BV.menu(addBtn, [
-        { label: "from backup", onClick: BV.addToLibraryFlow },
-        { label: "bulk from folder", onClick: bulkAddFlow },
         { label: "discover on network", onClick: discoverFlow },
         { label: "manually", onClick: function () { editRobotModal(null, true); } },
       ]);
     });
+    headActs.appendChild(sortBtn);
     headActs.appendChild(cancelAll);
     headActs.appendChild(_showHiddenBtn);
     headActs.appendChild(rescanBtn);
@@ -83,9 +171,64 @@
       _robots = (data && data.robots) || [];
       renderTree(body, data);
       reattachProgress();   /* repaint any backups already running */
+      if (data && data.scan_truncated && !_warnedTruncated) {
+        _warnedTruncated = true;
+        BV.toast("backup scan hit its safety cap — some backups may not be listed", 4000);
+      }
+      /* copied folders that carried a robot.json get folded into that robot's
+         history by identity — SAY so, or the copy looks like it never arrived */
+      if (data && data.scan_absorbed && data.scan_absorbed.length) {
+        var absorbMsg = data.scan_absorbed.map(function (a) {
+          return a.count + " copied snapshot" + (a.count === 1 ? "" : "s") +
+            " joined " + (a.robot || "a robot");
+        }).join(" · ");
+        if (absorbMsg !== _lastAbsorbMsg) {
+          _lastAbsorbMsg = absorbMsg;
+          BV.toast(absorbMsg, 4200);
+        }
+      }
     }).catch(function (e) {
       body.innerHTML = '<div class="dim">library unavailable: ' + BV.esc(e.message) + "</div>";
     });
+  }
+
+  /* the backend watcher saw the library folder change on disk (Explorer copy /
+     delete). Refresh only when it's safe and useful: on the library screen,
+     no modal open, no backups being started from here. */
+  BV.state.on("library-dirty", function () {
+    var onHome = !location.hash || location.hash === "#" || location.hash === "#home";
+    if (!onHome || BV.modalOpen() || BV.jobs.activeCount()) return;
+    refresh();
+  });
+
+  /* per-row progress bars: painted from the global jobs poller's events
+     whenever the library is on screen (jobs.js owns the polling + the strip) */
+  BV.state.on("jobs", function (ev) {
+    if (!_libWrap || !document.body.contains(_libWrap)) return;
+    var ids = Object.keys(ev.jobs || {});
+    var anyActive = false;
+    ids.forEach(function (jobId) {
+      var p = ev.jobs[jobId];
+      var terminal = p.status === "done" || p.status === "error" || p.status === "cancelled";
+      if (!terminal) anyActive = true;
+      /* paint running jobs every tick; terminal ones once, when they land */
+      if (terminal && (ev.newlyDone || []).indexOf(jobId) < 0) return;
+      var rid = robotIdForJob(p);
+      if (rid) renderRowProgress(rid, p);
+    });
+    setCancelAllVisible(anyActive);
+  });
+
+  /* which library row a job belongs to: tracked meta first (we started it),
+     else match the job's host against robot IPs (jobs re-discovered after a
+     reload were started by a previous page) */
+  function robotIdForJob(p) {
+    var meta = BV.jobs.meta(p.id);
+    if (meta.robotId) return meta.robotId;
+    var host = p.host || "";
+    if (!host) return null;
+    var r = _robots.find(function (x) { return (x.ips || []).indexOf(host) >= 0; });
+    return r ? r.id : null;
   }
 
   function refresh() {
@@ -102,14 +245,18 @@
   function renderTree(body, data) {
     var robots = (data && data.robots) || [];
     if (!robots.length) {
-      body.innerHTML = '<div class="empty-lib">no robots saved yet — add a backup, or take one.</div>';
+      body.innerHTML = '<div class="empty-lib">no robots yet — copy backups into the library folder, ' +
+        "or discover robots on the network.</div>";
       updateHiddenToggle(0);
+      _visibleRobots = [];
+      syncSelectionUI();
       return;
     }
-    var plants = {}, hiddenCount = 0, visible = 0;
+    var plants = {}, hiddenCount = 0;
+    _visibleRobots = [];
     robots.forEach(function (r) {
       if (r.hidden) { hiddenCount++; if (!_showHidden) return; }
-      visible++;
+      _visibleRobots.push(r);
       var pl = r.plant || "—", ln = r.line || "—";
       plants[pl] = plants[pl] || {};
       plants[pl][ln] = plants[pl][ln] || [];
@@ -117,19 +264,19 @@
     });
     updateHiddenToggle(hiddenCount);
     body.innerHTML = "";
-    if (!visible) {
+    if (!_visibleRobots.length) {
       body.innerHTML = '<div class="empty-lib">all robots are hidden — use “show hidden” above.</div>';
+      syncSelectionUI();
       return;
     }
-    Object.keys(plants).sort().forEach(function (pl) {
+    var cmp = robotComparator();
+    groupKeys(plants).forEach(function (pl) {
       var plantNode = BV.el("div", { class: "lib-plant" });
       var plantHead = BV.el("div", { class: "lib-plant-h" }, BV.esc(pl));
       var plantBody = BV.el("div", { class: "lib-plant-body" });
       var lines = plants[pl];
-      Object.keys(lines).sort().forEach(function (ln) {
-        var lineRobots = lines[ln].sort(function (a, b) {
-          return (a.robot || "").localeCompare(b.robot || "");
-        });
+      groupKeys(lines).forEach(function (ln) {
+        var lineRobots = lines[ln].sort(cmp);
         var lineNode = BV.el("div", { class: "lib-line" });
         var lineHead = buildLineHead(ln, lineRobots);
         var lineBody = BV.el("div", { class: "lib-line-body" });
@@ -143,6 +290,8 @@
     syncSelectionUI();
   }
 
+  /* line header = name + select-all only; the action buttons live ONCE in the
+     sticky library header (with 50+ lines, per-line button rows ate the screen) */
   function buildLineHead(ln, lineRobots) {
     var head = BV.el("div", { class: "lib-line-h" });
     head.appendChild(BV.el("span", { class: "lib-line-name" }, BV.esc(ln)));
@@ -159,27 +308,7 @@
       syncSelectionUI();
     });
 
-    var bk = BV.el("button", { class: "btn lib-line-backup", title: "back up selected robots" },
-      "backup");
-    bk.addEventListener("click", function () { startLineBackup(lineRobots); });
-
-    var tr = BV.el("button", { class: "btn lib-line-hide", title: "hide selected from view" },
-      "hide");
-    tr.addEventListener("click", function () { hideSelectedInLine(lineRobots); });
-
-    var fix = BV.el("button", { class: "btn lib-line-fix",
-      title: "fix names from the backup contents (selected)" }, "fix names");
-    fix.addEventListener("click", function () { fixNamesInLine(lineRobots); });
-
-    var mrg = BV.el("button", { class: "btn lib-line-merge",
-      title: "merge 2 selected duplicate robots into one" }, "merge");
-    mrg.addEventListener("click", function () { mergeSelectedInLine(lineRobots); });
-
     controls.appendChild(sa);
-    controls.appendChild(bk);
-    controls.appendChild(tr);
-    controls.appendChild(fix);
-    controls.appendChild(mrg);
     head.appendChild(controls);
     return head;
   }
@@ -222,13 +351,14 @@
     var moreBtn = BV.el("button", { class: "btn lib-robot-more", title: "more actions" }, "⋯");
     moreBtn.addEventListener("click", function (e) {
       e.stopPropagation();
+      /* no delete here: files are law — hide covers the everyday case, and a
+         true delete is done in Explorer ("open folder"); the library follows. */
       var items = [
         { label: r.hidden ? "unhide" : "hide", onClick: function () { setHidden(r, !r.hidden); } },
       ];
       if (r.history_root) {
         items.push({ label: "open folder", onClick: function () { openLocation(r.history_root); } });
       }
-      items.push({ label: "delete from disk…", danger: true, onClick: function () { deleteFromDiskFlow(r); } });
       BV.menu(moreBtn, items);
     });
     acts.appendChild(editBtn);
@@ -288,7 +418,8 @@
     return lineRobots.filter(function (r) { return _selected[r.id]; });
   }
 
-  /* reflect _selected onto every checkbox + each line's select-all tri-state */
+  /* reflect _selected onto every checkbox + each line's select-all tri-state,
+     and drive the sticky toolbar: selection counter + button enablement */
   function syncSelectionUI() {
     if (!_libWrap) return;
     _libWrap.querySelectorAll(".lib-line").forEach(function (lineNode) {
@@ -307,6 +438,15 @@
         sa.indeterminate = on > 0 && on < total;
       }
     });
+    var selN = _visibleRobots.filter(function (r) { return _selected[r.id]; }).length;
+    var count = _libWrap.querySelector(".lib-sel-count");
+    if (count) count.textContent = selN ? selN + " selected" : "";
+    ["backup", "hide", "fix"].forEach(function (k) {
+      var b = _libWrap.querySelector(".lib-act-" + k);
+      if (b) b.disabled = selN === 0;
+    });
+    var mg = _libWrap.querySelector(".lib-act-merge");
+    if (mg) mg.disabled = selN !== 2;                /* merge is strictly a pair */
   }
 
   /* ---- per-line actions ---- */
@@ -372,33 +512,76 @@
       var merges = items.filter(function (it) { return it.action === "merge"; });
       if (!renames.length && !merges.length) { BV.toast("names already match the backups"); return; }
 
-      var step = renames.length
-        ? BV.api.call("lib_apply_renames", renames.map(function (it) {
-            return { id: it.id, plant: it.plant, line: it.line, robot: it.proposed };
-          }))
-        : Promise.resolve({ renamed: [], merged: [], failed: [] });
+      /* renames are folder moves — never apply them without showing the list */
+      function applyRenames(chosen) {
+        var step = chosen.length
+          ? BV.api.call("lib_apply_renames", chosen.map(function (it) {
+              return { id: it.id, plant: it.plant, line: it.line, robot: it.proposed };
+            }))
+          : Promise.resolve({ renamed: [], merged: [], failed: [] });
 
-      step.then(function (rr) {
-        var nRenamed = (rr.renamed || []).length;
-        if ((rr.failed || []).length) BV.toast((rr.failed.length) + " rename(s) failed");
-        if (!merges.length) { done(nRenamed, (rr.merged || []).length); return; }
-        confirmMergeBatch(merges, function () {
-          var byTarget = {};
-          merges.forEach(function (it) {
-            (byTarget[it.merge_into] = byTarget[it.merge_into] || []).push(it.id);
-          });
-          Promise.all(Object.keys(byTarget).map(function (primId) {
-            return BV.api.call("lib_merge", primId, byTarget[primId]);
-          })).then(function (results) {
-            var nMerged = results.reduce(function (a, r) { return a + ((r.merged || []).length); }, 0);
-            done(nRenamed, nMerged);
-          }).catch(function (e) { BV.toast(e.message); refresh(); });
-        }, function () { done(nRenamed, 0); });   /* user skipped the merges */
-      }).catch(function (e) { BV.toast(e.message); refresh(); });
+        step.then(function (rr) {
+          var nRenamed = (rr.renamed || []).length;
+          if ((rr.failed || []).length) BV.toast((rr.failed.length) + " rename(s) failed");
+          if (!merges.length) { done(nRenamed, (rr.merged || []).length); return; }
+          confirmMergeBatch(merges, function () {
+            var byTarget = {};
+            merges.forEach(function (it) {
+              (byTarget[it.merge_into] = byTarget[it.merge_into] || []).push(it.id);
+            });
+            Promise.all(Object.keys(byTarget).map(function (primId) {
+              return BV.api.call("lib_merge", primId, byTarget[primId]);
+            })).then(function (results) {
+              var nMerged = results.reduce(function (a, r) { return a + ((r.merged || []).length); }, 0);
+              done(nRenamed, nMerged);
+            }).catch(function (e) { BV.toast(e.message); refresh(); });
+          }, function () { done(nRenamed, 0); });   /* user skipped the merges */
+        }).catch(function (e) { BV.toast(e.message); refresh(); });
+      }
+
+      if (renames.length) {
+        confirmRenameBatch(renames, applyRenames, function () { applyRenames([]); });
+      } else {
+        applyRenames([]);
+      }
     }).catch(function (e) { BV.toast(e.message); });
   }
 
-  /* explicit merge of exactly 2 selected robots (always previews) */
+  /* preview for the fix-names clean renames: current → proposed with per-row
+     opt-outs. Folders only move after this confirm. */
+  function confirmRenameBatch(renames, onConfirm, onSkip) {
+    var body = BV.el("div", { class: "lib-form" });
+    body.appendChild(BV.el("div", { class: "scan-info dim" },
+      "These robots' backups report a different name. Rename their folders to match?"));
+    var list = BV.el("ul", { class: "merge-list" });
+    var rows = [];
+    renames.forEach(function (it) {
+      var li = BV.el("li");
+      var lab = BV.el("label", { class: "rename-row" });
+      var cb = BV.el("input", { type: "checkbox", class: "lf-check" });
+      cb.checked = true;
+      lab.appendChild(cb);
+      lab.appendChild(BV.el("span", null,
+        " " + BV.esc(it.current || "(unnamed)") + " → " + BV.esc(it.proposed)));
+      li.appendChild(lab);
+      rows.push({ cb: cb, it: it });
+      list.appendChild(li);
+    });
+    body.appendChild(list);
+    var acts = BV.el("div", { class: "lf-actions" });
+    var skip = BV.el("button", { class: "btn" }, "skip renames");
+    var go = BV.el("button", { class: "btn primary" }, "rename");
+    acts.appendChild(skip); acts.appendChild(go); body.appendChild(acts);
+    var m = BV.modal("fix names", body);
+    skip.addEventListener("click", function () { m.close(); if (onSkip) onSkip(); });
+    go.addEventListener("click", function () {
+      m.close();
+      onConfirm(rows.filter(function (r) { return r.cb.checked; }).map(function (r) { return r.it; }));
+    });
+  }
+
+  /* explicit merge of exactly 2 selected robots (always previews, direction is
+     the user's call — the richer history is only the suggested default) */
   function mergeSelectedInLine(lineRobots) {
     var sel = selectedInLine(lineRobots);
     if (sel.length !== 2) { BV.toast("select exactly 2 robots to merge"); return; }
@@ -406,22 +589,22 @@
     if ((a.line || "").toUpperCase() !== (b.line || "").toUpperCase()) {
       BV.toast("can't merge across lines"); return;
     }
-    /* keep the richer history's id as the primary */
+    /* default: keep the richer history's id as the primary (swappable in the confirm) */
     var primary = ((a.backups || []).length >= (b.backups || []).length) ? a : b;
     var secondary = (primary === a) ? b : a;
-    confirmSingleMerge(secondary, primary, function () {
-      BV.api.call("lib_merge", primary.id, [secondary.id]).then(function (res) {
+    confirmSingleMerge(secondary, primary, function (prim, sec) {
+      BV.api.call("lib_merge", prim.id, [sec.id]).then(function (res) {
         if ((res.refused || []).length) { BV.toast("refused — can't merge across lines"); refresh(); return; }
         delete _selected[a.id]; delete _selected[b.id];
         var m = (res.merged || [])[0] || {};
         var skipped = (m.skipped || []).length, conflicts = (m.conflicts || []).length;
-        var msg = "merged " + (secondary.robot || "") + " into " + (primary.robot || "");
+        var msg = "merged " + (sec.robot || "") + " into " + (prim.robot || "");
         if (skipped) msg += " · " + skipped + " duplicate" + (skipped === 1 ? "" : "s") + " skipped";
         if (conflicts) msg += " · " + conflicts + " conflict" + (conflicts === 1 ? "" : "s") + " kept";
         BV.toast(msg);
         refresh();
       }).catch(function (e) { BV.toast(e.message); });
-    });
+    }, { allowSwap: true });
   }
 
   /* the batched "Duplicate robots detected. Merge?" confirm (fix-names path) */
@@ -448,67 +631,36 @@
     go.addEventListener("click", function () { m.close(); onConfirm(); });
   }
 
-  /* single "are you sure?" merge confirm (explicit merge + edit-modal collision) */
-  function confirmSingleMerge(secondary, primary, onConfirm) {
+  /* single "are you sure?" merge confirm (explicit merge + edit-modal collision).
+     onConfirm receives the FINAL (primary, secondary) — with opts.allowSwap the
+     user can flip which robot survives; the edit-modal collision direction is
+     fixed by the rename semantics, so it passes no opts. */
+  function confirmSingleMerge(secondary, primary, onConfirm, opts) {
+    var prim = primary, sec = secondary;
     var body = BV.el("div", { class: "lib-form" });
-    body.appendChild(BV.el("div", { class: "del-warn" },
-      "Merge <b>" + BV.esc(secondary.robot || "(unnamed)") + "</b> into <b>" +
-      BV.esc(primary.robot || "(unnamed)") + "</b>? Their backups are combined under " +
-      BV.esc(primary.robot || "this robot") + "; identical snapshots are skipped and " +
-      BV.esc(secondary.robot || "the other") + " is removed."));
+    var msg = BV.el("div", { class: "del-warn" });
+    function paint() {
+      msg.innerHTML =
+        "Merge <b>" + BV.esc(sec.robot || "(unnamed)") + "</b> into <b>" +
+        BV.esc(prim.robot || "(unnamed)") + "</b>? Their backups are combined under " +
+        BV.esc(prim.robot || "this robot") + "; identical snapshots are skipped and " +
+        BV.esc(sec.robot || "the other") + " is removed.";
+    }
+    paint();
+    body.appendChild(msg);
     var acts = BV.el("div", { class: "lf-actions" });
     var cancel = BV.el("button", { class: "btn" }, "cancel");
+    acts.appendChild(cancel);
+    if (opts && opts.allowSwap) {
+      var swap = BV.el("button", { class: "btn", title: "swap which robot survives" }, "⇄ swap");
+      swap.addEventListener("click", function () { var t = prim; prim = sec; sec = t; paint(); });
+      acts.appendChild(swap);
+    }
     var go = BV.el("button", { class: "btn primary" }, "merge");
-    acts.appendChild(cancel); acts.appendChild(go); body.appendChild(acts);
+    acts.appendChild(go); body.appendChild(acts);
     var m = BV.modal("merge robots", body);
     cancel.addEventListener("click", m.close);
-    go.addEventListener("click", function () { m.close(); onConfirm(); });
-  }
-
-  /* delete-from-disk: two confirmations — "are you sure" then "type the name" */
-  function deleteFromDiskFlow(r) {
-    var b1 = BV.el("div", { class: "lib-form" });
-    b1.appendChild(BV.el("div", { class: "del-warn" },
-      "Delete <b>" + BV.esc(r.robot || "(unnamed)") +
-      "</b> and ALL of its backups from disk? This cannot be undone."));
-    var a1 = BV.el("div", { class: "lf-actions" });
-    var c1 = BV.el("button", { class: "btn" }, "cancel");
-    var go1 = BV.el("button", { class: "btn danger" }, "continue");
-    a1.appendChild(c1); a1.appendChild(go1); b1.appendChild(a1);
-    var m1 = BV.modal("delete from disk", b1);
-    c1.addEventListener("click", m1.close);
-    go1.addEventListener("click", function () { m1.close(); confirmDeleteByName(r); });
-  }
-
-  function confirmDeleteByName(r) {
-    var b2 = BV.el("div", { class: "lib-form" });
-    b2.appendChild(BV.el("div", { class: "del-warn" },
-      "Type the robot name <b>" + BV.esc(r.robot || "") + "</b> to permanently delete it:"));
-    var name = inp("", { placeholder: r.robot || "" });
-    b2.appendChild(field("robot name", name));
-    var a2 = BV.el("div", { class: "lf-actions" });
-    var c2 = BV.el("button", { class: "btn" }, "cancel");
-    var del = BV.el("button", { class: "btn danger" }, "delete");
-    del.disabled = true;
-    a2.appendChild(c2); a2.appendChild(del); b2.appendChild(a2);
-    var m2 = BV.modal("confirm deletion", b2);
-    name.focus();
-    function matches() { return name.value.trim() === (r.robot || "").trim(); }
-    name.addEventListener("input", function () { del.disabled = !matches(); });
-    c2.addEventListener("click", m2.close);
-    del.addEventListener("click", function () {
-      if (!matches()) return;
-      del.disabled = true;
-      BV.api.call("lib_delete_files", r.id).then(function (res) {
-        m2.close();
-        var n = (res.removed || []).length, ref = (res.refused || []).length;
-        BV.toast(n ? "deleted " + n + " folder" + (n === 1 ? "" : "s") + " from disk"
-          : (ref ? "removed from library · " + ref + " folder(s) outside the library root were left"
-                 : "removed from library"));
-        delete _selected[r.id];
-        refresh();
-      }).catch(function (e) { BV.toast(e.message); del.disabled = false; });
-    });
+    go.addEventListener("click", function () { m.close(); onConfirm(prim, sec); });
   }
 
   /* ---- multi-backup ---- */
@@ -539,9 +691,8 @@
         };
         renderRowProgress(r.id, { status: "pending", total: 0, done: 0 });
         BV.api.call("start_backup", spec).then(function (res) {
-          _active[res.job_id] = { robotId: r.id };
+          BV.jobs.track(res.job_id, { robotId: r.id });
           setCancelAllVisible(true);
-          ensurePoller();
         }).catch(function (e) {
           var slot = rowProgressSlot(r.id);
           if (slot) slot.innerHTML = '<div class="lib-robot-result err">✗ ' + BV.esc(e.message) + "</div>";
@@ -607,48 +758,22 @@
   }
 
   function cancelAllBackups() {
-    Object.keys(_active).forEach(function (jobId) {
-      BV.api.call("cancel_backup", jobId).catch(function () {});
-    });
-    BV.toast("cancelling backups…");
+    BV.jobs.cancelAll();
   }
 
-  /* a single 500ms poll drives every in-flight job's row. It stops itself when
-     nothing is active or the library view is detached (jobs keep running server-
-     side; reattachProgress() repaints them when #home is shown again). */
-  function ensurePoller() {
-    if (_poll) return;
-    _poll = setInterval(function () {
-      if (!_libWrap || !document.body.contains(_libWrap)) { clearInterval(_poll); _poll = null; return; }
-      var ids = Object.keys(_active);
-      if (!ids.length) { clearInterval(_poll); _poll = null; setCancelAllVisible(false); return; }
-      ids.forEach(function (jobId) {
-        BV.api.call("get_backup_progress", jobId).then(function (p) {
-          if (!_active[jobId]) return;
-          renderRowProgress(_active[jobId].robotId, p);
-          if (p.status === "done" || p.status === "error" || p.status === "cancelled") {
-            delete _active[jobId];
-            if (!Object.keys(_active).length) { setCancelAllVisible(false); BV.toast("backups finished"); }
-          }
-        }).catch(function () {
-          delete _active[jobId];
-          if (!Object.keys(_active).length) setCancelAllVisible(false);
-        });
-      });
-    }, 500);
-  }
-
-  /* after any (re)render, repaint backups that are still running */
+  /* after any (re)render, repaint backups that are still running (jobs.js owns
+     the polling — this is just a one-shot repaint of its latest snapshots) */
   function reattachProgress() {
-    var ids = Object.keys(_active);
-    if (!ids.length) return;
-    setCancelAllVisible(true);
-    ensurePoller();
-    ids.forEach(function (jobId) {
-      BV.api.call("get_backup_progress", jobId).then(function (p) {
-        if (_active[jobId]) renderRowProgress(_active[jobId].robotId, p);
-      }).catch(function () {});
+    var jobs = BV.jobs.latest();
+    var any = false;
+    Object.keys(jobs).forEach(function (jobId) {
+      var p = jobs[jobId];
+      if (p.status === "done" || p.status === "error" || p.status === "cancelled") return;
+      any = true;
+      var rid = robotIdForJob(p);
+      if (rid) renderRowProgress(rid, p);
     });
+    setCancelAllVisible(any);
   }
 
   /* ---- add / edit modal ---- */
@@ -662,6 +787,54 @@
     var row = BV.el("div", { class: "lf-row" });
     row.appendChild(BV.el("label", null, BV.esc(label)));
     row.appendChild(el);
+    return row;
+  }
+
+  /* distinct existing values for the plant/line pickers: case-insensitive
+     dedupe presenting the stored casing (so 'Plant1'/'PLANT1' can't split),
+     hidden robots included (their folders still exist) */
+  function distinctCI(values) {
+    var seen = {}, out = [];
+    values.forEach(function (v) {
+      v = (v || "").trim();
+      if (!v) return;
+      var k = v.toUpperCase();
+      if (!seen[k]) { seen[k] = true; out.push(v); }
+    });
+    return out.sort(function (a, b) { return a.localeCompare(b); });
+  }
+  function knownPlants() {
+    return distinctCI(_robots.map(function (r) { return r.plant; }));
+  }
+  function knownLines(plant) {
+    var p = (plant || "").trim().toUpperCase();
+    return distinctCI(_robots.filter(function (r) {
+      return !p || (r.plant || "").toUpperCase() === p;
+    }).map(function (r) { return r.line; }));
+  }
+
+  /* a text input + "▾" picker of existing values — no more retyping the same
+     plant/line everywhere; free typing still creates new ones */
+  function comboField(label, input, getSuggestions) {
+    var row = BV.el("div", { class: "lf-row" });
+    row.appendChild(BV.el("label", null, BV.esc(label)));
+    var wrap = BV.el("div", { class: "lf-combo" });
+    wrap.appendChild(input);
+    var pick = BV.el("button", { class: "btn lf-combo-btn", type: "button",
+      title: "pick an existing " + label }, "▾");
+    pick.addEventListener("click", function (e) {
+      e.preventDefault();
+      var vals = getSuggestions() || [];
+      if (!vals.length) { BV.toast("no existing " + label + "s yet — type one"); return; }
+      BV.menu(pick, vals.map(function (v) {
+        return { label: v, onClick: function () {
+          input.value = v;
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        } };
+      }));
+    });
+    wrap.appendChild(pick);
+    row.appendChild(wrap);
     return row;
   }
 
@@ -683,8 +856,8 @@
     var fMove = BV.el("input", { type: "checkbox", class: "lf-check" });
     fMove.checked = true;   /* default ON: folders rename WITH the entry */
 
-    form.appendChild(field("plant", fPlant));
-    form.appendChild(field("line", fLine));
+    form.appendChild(comboField("plant", fPlant, knownPlants));
+    form.appendChild(comboField("line", fLine, function () { return knownLines(fPlant.value); }));
     form.appendChild(field("robot", fRobot));
     form.appendChild(field("model", fModel));
     form.appendChild(field("ip(s)", fIps));
@@ -701,7 +874,16 @@
     actions.appendChild(save);
     form.appendChild(actions);
 
-    var m = BV.modal(isNew ? "add robot" : "edit robot", form);
+    /* unsaved-work guard: a stray click outside the form can't eat typed edits */
+    function fieldsSnapshot() {
+      return [fPlant.value, fLine.value, fRobot.value, fModel.value, fIps.value,
+              fPath.value, fUser.value, fPassive.checked, fNotes.value].join("\n");
+    }
+    var initialSnapshot = fieldsSnapshot();
+    var m = BV.modal(isNew ? "add robot" : "edit robot", form, {
+      beforeClose: BV.dirtyGuard(function () { return fieldsSnapshot() !== initialSnapshot; },
+                                 "robot edits"),
+    });
     cancel.addEventListener("click", m.close);
     fRobot.focus();
 
@@ -723,7 +905,7 @@
         };
         Object.keys(fields).forEach(function (k) { draft[k] = fields[k]; });
         BV.api.call("lib_add", draft)
-          .then(function () { m.close(); BV.toast("added"); refresh(); })
+          .then(function () { m.close(true); BV.toast("added"); refresh(); })
           .catch(function (e) { BV.toast(e.message); });
         return;
       }
@@ -735,31 +917,47 @@
 
       if (!moveFolders) {
         BV.api.call("lib_update", entry.id, fields)
-          .then(function () { m.close(); BV.toast("saved"); refresh(); })
+          .then(function () { m.close(true); BV.toast("saved"); refresh(); })
           .catch(function (e) { BV.toast(e.message); });
         return;
       }
 
       /* identity changed AND "move folders" on: relocate the tree, then write the
-         non-identity fields onto the surviving entry. A name+line collision is a
-         merge — confirm it first (merges always confirm). */
+         non-identity fields onto the entry. A name+line collision is a merge —
+         confirm it first (merges always confirm). */
       function relocateThenSave() {
         BV.api.call("lib_relocate", entry.id, fields.plant, fields.line, fields.robot)
           .then(function (res) {
-            var survivingId = (res && res.id) || entry.id;
-            BV.api.call("lib_update", survivingId, fields)
+            /* a merge into ANOTHER entry folds this robot into that survivor:
+               the backend carries the useful config over — don't overwrite the
+               survivor's own fields with this (now removed) robot's modal
+               values. (res.id === entry.id is the orphan-folder ADOPTION case:
+               the entry itself survives, so the user's edits still apply.) */
+            if (res && res.action === "merged" && res.id !== entry.id) {
+              m.close(true); BV.toast("merged"); refresh(); return;
+            }
+            /* relocate retargeted latest_path itself; the modal's readonly copy
+               is the stale PRE-move path — never send it back */
+            var patch = {};
+            Object.keys(fields).forEach(function (k) {
+              if (k !== "latest_path") patch[k] = fields[k];
+            });
+            BV.api.call("lib_update", entry.id, patch)
               .then(function () {
-                m.close();
-                BV.toast(res.action === "merged" ? "merged & saved" : "moved & saved");
+                m.close(true);
+                BV.toast("moved & saved");
                 refresh();
               })
-              .catch(function (e) { m.close(); BV.toast(e.message); refresh(); });
+              .catch(function (e) { m.close(true); BV.toast(e.message); refresh(); });
           })
           .catch(function (e) { BV.toast(e.message); });
       }
 
       var collide = collidesWithExisting(entry.id, fields.robot, fields.line);
       if (collide) {
+        /* hand off to the merge confirm EXPLICITLY (it replaces this modal in
+           #modal-root) so the edit modal's listeners and guard don't linger */
+        m.close(true);
         confirmSingleMerge({ robot: fields.robot }, collide, relocateThenSave);
       } else {
         relocateThenSave();
@@ -767,59 +965,11 @@
     });
   }
 
-  /* picked-folder -> draft -> add modal. A folder holding several dated
-     snapshots of one robot returns a single draft with its history; one holding
-     several robots returns {multi, drafts} and routes to a bulk confirm. */
-  BV.addToLibraryFlow = function () {
-    BV.api.call("pick_backup_folder").then(function (path) {
-      if (!path) return null;
-      return BV.api.call("lib_scan_folder", path).then(function (res) {
-        if (res && res.multi) multiAddModal(res.drafts || []);
-        else editRobotModal(res, true);
-      });
-    }).catch(function (e) { BV.toast(e.message); });
-  };
+  /* (the "from backup" / "bulk from folder" import flows were removed in the
+     v0.98 files-are-law pivot: copy backups into the library folder with
+     Explorer and the scan/watcher lists them — no separate import step.) */
 
-  /* several robots found under one picked folder -> add them all under a shared
-     plant/line (each draft already carries its own dated history). */
-  function multiAddModal(drafts) {
-    if (!drafts.length) { BV.toast("no backups found in that folder"); return; }
-    var body = BV.el("div", { class: "lib-form" });
-    body.appendChild(BV.el("div", { class: "scan-info dim" },
-      drafts.length + " robots found in that folder — add them all?"));
-    var list = BV.el("div", { class: "scan-results" });
-    drafts.forEach(function (d) {
-      var meta = [];
-      if (d.model) meta.push(BV.esc(d.model));
-      if (d.backups && d.backups.length) meta.push(d.backups.length + " backup" + (d.backups.length === 1 ? "" : "s"));
-      var row = BV.el("div", { class: "scan-row" });
-      row.innerHTML = '<span class="lib-robot-name">' + BV.esc(d.robot || "(unnamed)") + "</span>" +
-        (meta.length ? ' <span class="lib-robot-meta">' + meta.join(" · ") + "</span>" : "");
-      list.appendChild(row);
-    });
-    body.appendChild(list);
-    var fPlant = inp(""), fLine = inp("");
-    body.appendChild(field("plant", fPlant));
-    body.appendChild(field("line", fLine));
-    var actions = BV.el("div", { class: "lf-actions" });
-    var cancel = BV.el("button", { class: "btn" }, "cancel");
-    var add = BV.el("button", { class: "btn primary" }, "add " + drafts.length);
-    actions.appendChild(cancel); actions.appendChild(add);
-    body.appendChild(actions);
-    var m = BV.modal("add robots from folder", body);
-    cancel.addEventListener("click", m.close);
-    add.addEventListener("click", function () {
-      add.disabled = true;
-      BV.api.call("lib_bulk_add", drafts, fPlant.value.trim(), fLine.value.trim()).then(function (r) {
-        m.close();
-        var added = (r.added || []).length, skipped = (r.skipped || []).length;
-        BV.toast("added " + added + (skipped ? " · skipped " + skipped + " already in library" : ""));
-        refresh();
-      }).catch(function (e) { BV.toast(e.message); add.disabled = false; });
-    });
-  }
-
-  /* ---- shared scan progress (bulk folder + network discover) ---- */
+  /* ---- shared scan progress (network discover) ---- */
 
   function scanStatusText(p) {
     return {
@@ -857,75 +1007,6 @@
     return function stop() { clearInterval(iv); };
   }
 
-  /* ---- bulk add from a parent folder ---- */
-
-  function bulkAddFlow() {
-    BV.api.call("pick_backup_folder").then(function (path) {
-      if (path) bulkAddModal(path);
-    }).catch(function (e) { BV.toast(e.message); });
-  }
-
-  function bulkAddModal(path) {
-    var body = BV.el("div", { class: "lib-form" });
-    var info = BV.el("div", { class: "scan-info dim" }, "scanning " + BV.esc(path) + " …");
-    var bar = BV.el("div", { class: "scan-bar" });
-    var found = BV.el("div", { class: "scan-results" });
-    var fPlant = inp(""), fLine = inp("");
-    var actions = BV.el("div", { class: "lf-actions" });
-    var cancelBtn = BV.el("button", { class: "btn" }, "cancel");
-    var addBtn = BV.el("button", { class: "btn primary" }, "add");
-    addBtn.disabled = true;
-    actions.appendChild(cancelBtn);
-    actions.appendChild(addBtn);
-    body.appendChild(info);
-    body.appendChild(bar);
-    body.appendChild(found);
-    body.appendChild(field("plant", fPlant));
-    body.appendChild(field("line", fLine));
-    body.appendChild(actions);
-
-    var results = [], jobId = null, stop = null;
-    var m = BV.modal("bulk add from folder", body, {
-      onClose: function () { if (stop) stop(); if (jobId) BV.api.call("cancel_scan", jobId).catch(function () {}); },
-    });
-    cancelBtn.addEventListener("click", m.close);
-
-    BV.api.call("lib_bulk_scan_start", path).then(function (res) {
-      jobId = res.job_id;
-      stop = pollScan(jobId, function (p) { renderScanBar(bar, p); }, function (p) {
-        renderScanBar(bar, p);
-        results = p.results || [];
-        if (p.status !== "done") { info.textContent = "scan " + scanStatusText(p) + (p.error ? ": " + p.error : ""); return; }
-        info.textContent = results.length
-          ? results.length + " backup" + (results.length === 1 ? "" : "s") + " found — enter a plant & line"
-          : "no backups found in this folder";
-        found.innerHTML = "";
-        results.forEach(function (d) {
-          var row = BV.el("div", { class: "scan-row" });
-          var meta = [];
-          if (d.model) meta.push(BV.esc(d.model));
-          if (d.backup_type && d.backup_type !== "unknown") meta.push(BV.esc(d.backup_type));
-          row.innerHTML = '<span class="lib-robot-name">' + BV.esc(d.robot || "(unnamed)") + "</span>" +
-            (meta.length ? ' <span class="lib-robot-meta">' + meta.join(" · ") + "</span>" : "");
-          found.appendChild(row);
-        });
-        addBtn.disabled = results.length === 0;
-        addBtn.textContent = results.length ? "add " + results.length : "add";
-      });
-    }).catch(function (e) { info.textContent = e.message; });
-
-    addBtn.addEventListener("click", function () {
-      if (!results.length) return;
-      addBtn.disabled = true;
-      BV.api.call("lib_bulk_add", results, fPlant.value.trim(), fLine.value.trim()).then(function (r) {
-        m.close();
-        var added = (r.added || []).length, skipped = (r.skipped || []).length;
-        BV.toast("added " + added + (skipped ? " · skipped " + skipped + " already in library" : ""));
-        refresh();
-      }).catch(function (e) { BV.toast(e.message); addBtn.disabled = false; });
-    });
-  }
-
   /* ---- discover robots on the network ---- */
 
   function discoverFlow() {
@@ -942,7 +1023,8 @@
     advBox.appendChild(field("subnet", fSubnet));
     advBox.appendChild(field("port", fPort));
 
-    var fPlant = inp(""), fLine = inp("");
+    /* plant/line are NOT asked here — scanning comes first; the add step asks
+       for them right next to its confirm button, where the question is obvious */
     var bar = BV.el("div", { class: "scan-bar" });
     var selRow = BV.el("div", { class: "scan-selall hidden" });
     var selAll = BV.el("input", { type: "checkbox", class: "lf-check" });
@@ -958,8 +1040,6 @@
     body.appendChild(field("network", adapterBtn));
     body.appendChild(advToggle);
     body.appendChild(advBox);
-    body.appendChild(field("plant", fPlant));
-    body.appendChild(field("line", fLine));
     body.appendChild(bar);
     body.appendChild(selRow);
     body.appendChild(list);
@@ -994,9 +1074,19 @@
     });
 
     var found = [], sel = {}, jobId = null, stop = null, scanning = false;
-    var m = BV.modal("discover on network", body, {
+    var m;
+    var modalOpts = {
+      /* selected scan results are work too — don't lose them to a stray click;
+         closing (second press) still cancels a running scan via onClose */
+      beforeClose: BV.dirtyGuard(function () {
+        return found.some(function (h) { return sel[h.host]; });
+      }, "discovery picks"),
       onClose: function () { if (stop) stop(); if (jobId) BV.api.call("cancel_scan", jobId).catch(function () {}); },
-    });
+    };
+    /* the scan modal can be re-shown after "back" from the add step: BV.modal
+       only detaches `body`, so the results list and its listeners survive */
+    function openMain() { m = BV.modal("discover on network", body, modalOpts); }
+    openMain();
 
     /* populate adapters; default to the connected ethernet, else the local /24 */
     BV.api.call("list_adapters").then(function (res) {
@@ -1069,19 +1159,49 @@
       }).catch(function (e) { BV.toast(e.message); scanning = false; scanBtn.textContent = "scan"; });
     });
 
+    /* step 2: NOW ask where they go — the plant/line question sits right next
+       to its confirm button instead of above a 38vh results list */
+    function addStepTwo(drafts) {
+      var body2 = BV.el("div", { class: "lib-form" });
+      body2.appendChild(BV.el("div", { class: "scan-info dim" },
+        "add " + drafts.length + " robot" + (drafts.length === 1 ? "" : "s") +
+        " — which plant &amp; line?"));
+      var fPlant = inp(""), fLine = inp("");
+      body2.appendChild(comboField("plant", fPlant, knownPlants));
+      body2.appendChild(comboField("line", fLine, function () { return knownLines(fPlant.value); }));
+      var acts2 = BV.el("div", { class: "lf-actions" });
+      var back = BV.el("button", { class: "btn" }, "← back");
+      var go = BV.el("button", { class: "btn primary" },
+        "add " + drafts.length);
+      acts2.appendChild(back);
+      acts2.appendChild(go);
+      body2.appendChild(acts2);
+      var m2 = BV.modal("add to library", body2, {
+        beforeClose: BV.dirtyGuard(function () {
+          return !!(fPlant.value.trim() || fLine.value.trim());
+        }, "plant/line"),
+      });
+      back.addEventListener("click", function () { m2.close(true); openMain(); });
+      go.addEventListener("click", function () {
+        go.disabled = true;
+        BV.api.call("lib_bulk_add", drafts, fPlant.value.trim(), fLine.value.trim()).then(function (r) {
+          m2.close(true);
+          var added = (r.added || []).length, skipped = (r.skipped || []).length;
+          BV.toast("added " + added + (skipped ? " · skipped " + skipped + " already in library" : ""));
+          refresh();
+        }).catch(function (e) { BV.toast(e.message); go.disabled = false; });
+      });
+      fPlant.focus();
+    }
+
     addBtn.addEventListener("click", function () {
       var drafts = found.filter(function (h) { return sel[h.host]; }).map(function (h) {
         return { robot: h.name || h.host, model: h.model || "", f_number: h.f_number || "",
           ips: [h.host], ftp: { user: "", passive: true } };
       });
       if (!drafts.length) return;
-      addBtn.disabled = true;
-      BV.api.call("lib_bulk_add", drafts, fPlant.value.trim(), fLine.value.trim()).then(function (r) {
-        m.close();
-        var added = (r.added || []).length, skipped = (r.skipped || []).length;
-        BV.toast("added " + added + (skipped ? " · skipped " + skipped + " already in library" : ""));
-        refresh();
-      }).catch(function (e) { BV.toast(e.message); addBtn.disabled = false; });
+      m.close(true);              /* explicit handoff — the picks carry forward */
+      addStepTwo(drafts);
     });
   }
 

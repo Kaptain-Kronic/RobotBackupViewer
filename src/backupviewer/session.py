@@ -59,12 +59,16 @@ def looks_like_backup(d: Path) -> bool:
     return False
 
 
-def find_backup_roots(parent: Path, max_depth: int = 5, cap: int = 300) -> list[Path]:
+def find_backup_roots(parent: Path, max_depth: int = 7, cap: int = 5000,
+                      stats: dict | None = None) -> list[Path]:
     """Every backup root at or beneath `parent`. A folder that looks_like_backup
     is a root and is NOT descended into (its dated <date>/<time> subfolders are
     snapshots of the same backup, not separate ones). Handles a per-line Latest/
     mirror (each child is a root), a LINE/ROBOT/<date>/<time> tree (the time
-    folder is the root), and a flat folder of backups. Bounded by depth + count."""
+    folder is the root), and a flat folder of backups. Bounded by depth + count;
+    when a bound trips, stats["truncated"] is set so callers can SAY SO instead
+    of silently listing a partial library (each dated snapshot counts as one
+    root, so a plant-scale tree runs to thousands)."""
     parent = Path(parent)
     if not parent.is_dir():
         return []
@@ -81,12 +85,16 @@ def find_backup_roots(parent: Path, max_depth: int = 5, cap: int = 300) -> list[
         for c in children:
             if len(roots) >= cap:
                 break
+            if c.name.endswith((".__part", ".__tmp")):
+                continue    # transient staging dir (crash residue mid move/mirror-regen)
             if looks_like_backup(c):
                 roots.append(c)
             elif depth + 1 < max_depth:
                 stack.append((c, depth + 1))
     if len(roots) >= cap:
         log.warning("find_backup_roots hit cap=%d under %s", cap, parent)
+        if stats is not None:
+            stats["truncated"] = True
     return sorted(roots)
 
 

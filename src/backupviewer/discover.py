@@ -1,15 +1,12 @@
-"""Scan jobs that populate the library in bulk.
+"""Network discovery that populates the library.
 
-Two background jobs, both mirroring ftpbackup.BackupJob's shape (a uuid `id`, a
-lock-guarded progress dict, snapshot()/cancel(), a run() driven on a daemon
-thread), so the api layer can poll them through one pair of endpoints:
+NetworkScanJob mirrors ftpbackup.BackupJob's shape (a uuid `id`, a lock-guarded
+progress dict, snapshot()/cancel(), a run() driven on a daemon thread), so the
+api layer polls it through the shared scan endpoints: sweep a subnet for FANUC
+controllers over FTP and return the reachable ones, best-effort named from the
+controller (IP as the fallback).
 
-- FolderScanJob: walk a parent folder, turn every backup root beneath it into a
-  library draft (newest snapshot wins per robot).
-- NetworkScanJob: sweep a subnet for FANUC controllers over FTP and return the
-  reachable ones, best-effort named from the controller (IP as the fallback).
-
-Network code lives only here. Both jobs accept injectable factories so they run
+Network code lives only here. The job accepts injectable factories so it runs
 fully offline under test (see tests/test_discover.py), the same way
 ftpbackup.probe_controller takes an ftp_factory.
 """
@@ -176,13 +173,6 @@ def list_adapters(runner=subprocess.run) -> list[dict]:
     return out
 
 
-def _mtime(path: str) -> float:
-    try:
-        return Path(path).stat().st_mtime
-    except OSError:
-        return 0.0
-
-
 def _tcp_open(host: str, port: int, timeout: float) -> bool:
     """Fast TCP pre-check so a /24 sweep doesn't wait on the FTP timeout per host."""
     try:
@@ -241,56 +231,9 @@ class _ScanJob:
         return self._cancel.is_set()
 
 
-# -- folder bulk scan ------------------------------------------------------------
-
-class FolderScanJob(_ScanJob):
-    """Turn a parent folder of several backups into a list of library drafts.
-
-    draft_fn(root: Path) -> dict builds one draft from a backup root (api wires
-    this to _draft_from_session so the heavy parsing stays there)."""
-    kind = "folder"
-
-    def __init__(self, parent, draft_fn, *, find_fn=session.find_backup_roots):
-        super().__init__()
-        self.parent = Path(parent)
-        self._draft_fn = draft_fn
-        self._find_fn = find_fn
-
-    def run(self):
-        try:
-            self._set(status="scanning")
-            roots = self._find_fn(self.parent)
-            self._set(total=len(roots))
-            drafts: list[dict] = []
-            for root in roots:
-                if self.cancelled:
-                    self._set(status="cancelled")
-                    return
-                self._bump(current=str(root))
-                try:
-                    d = self._draft_fn(root)
-                    if d:
-                        drafts.append(d)
-                except Exception as e:  # noqa: BLE001 - one bad folder shouldn't sink the scan
-                    log.warning("bulk draft failed for %s: %s", root, e)
-            self._set_results(_dedupe_newest(drafts))
-            self._set(status="done")
-        except Exception as e:  # noqa: BLE001
-            log.exception("folder scan failed")
-            self._set(status="error", error=f"{type(e).__name__}: {e}")
-
-
-def _dedupe_newest(drafts: list[dict]) -> list[dict]:
-    """One draft per robot name - keep the newest backup folder when a robot has
-    several dated snapshots under the scanned tree."""
-    best: dict[str, dict] = {}
-    for d in drafts:
-        key = (d.get("robot") or "").upper()
-        cur = best.get(key)
-        if cur is None or _mtime(d.get("latest_path", "")) > _mtime(cur.get("latest_path", "")):
-            best[key] = d
-    return sorted(best.values(), key=lambda d: (d.get("robot") or "").upper())
-
+# (FolderScanJob was removed with the v0.98 files-are-law pivot: backups join
+# the library by being copied into the library folder, which the scan/watcher
+# picks up - there is no separate bulk-import walk anymore.)
 
 # -- network discovery -----------------------------------------------------------
 

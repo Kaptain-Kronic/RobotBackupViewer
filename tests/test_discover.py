@@ -1,9 +1,8 @@
-"""Discover + bulk-scan unit tests - fully offline (synthetic folders + a fake
+"""Discover + folder-walk unit tests - fully offline (synthetic folders + a fake
 FTP), so they touch neither the network nor a user's %APPDATA% and are safe in
 the public repo. Mirrors the ftp_factory injection style of test_ftpbackup.py."""
 import ftplib
 import json
-import os
 
 from backupviewer import discover, session
 
@@ -51,24 +50,17 @@ def test_find_backup_roots_nested_and_empty(tmp_path):
     assert session.find_backup_roots(empty) == []
 
 
-def test_folder_scan_job_dedupes_newest(tmp_path):
-    # same robot, two dated snapshots -> only the newest folder is kept
-    old = tmp_path / "R1" / "2026_01_01"
-    new = tmp_path / "R1" / "2026_02_02"
-    _touch(old, "SUMMARY.DG")
-    _touch(new, "SUMMARY.DG")
-    os.utime(old, (1_600_000_000, 1_600_000_000))
-    os.utime(new, (1_700_000_000, 1_700_000_000))
-
-    def draft_fn(root):
-        return {"robot": "R1", "latest_path": str(root), "backup_type": "MD"}
-
-    job = discover.FolderScanJob(tmp_path, draft_fn)
-    job.run()
-    snap = job.snapshot()
-    assert snap["status"] == "done"
-    assert len(snap["results"]) == 1
-    assert snap["results"][0]["latest_path"] == str(new)
+def test_find_backup_roots_reports_cap_truncation(tmp_path):
+    # more backup roots than the cap -> the caller is TOLD, not silently shorted
+    parent = tmp_path / "Latest"
+    for i in range(5):
+        _touch(parent / f"R{i}", "SUMMARY.DG")
+    stats: dict = {}
+    roots = session.find_backup_roots(parent, cap=3, stats=stats)
+    assert len(roots) == 3 and stats.get("truncated") is True
+    ok: dict = {}
+    assert len(session.find_backup_roots(parent, stats=ok)) == 5
+    assert "truncated" not in ok
 
 
 # -- network discovery -----------------------------------------------------------

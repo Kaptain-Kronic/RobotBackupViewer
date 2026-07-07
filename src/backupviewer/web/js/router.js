@@ -103,7 +103,7 @@
 
   /* the search box + compare + the 1-9 tabbar are backup-viewer chrome - hide
      them on the shell (home/backup) screens so the main menu's topbar is just
-     logo·theme·aa·?. buildTabbar() keys off "manifest present", which stays true
+     logo·⚙·?. buildTabbar() keys off "manifest present", which stays true
      once a robot is open, so the tabbar must be hidden here by ROUTE instead. */
   function setTopbarChrome(shell) {
     var s = document.getElementById("global-search");
@@ -191,9 +191,8 @@
     if (BV.state.compare) location.hash = "#compare";
     else BV.compareFlow();
   });
-  document.getElementById("btn-theme").addEventListener("click", function () { BV.theme.picker(); });
+  document.getElementById("btn-cog").addEventListener("click", function () { BV.uiPrefs.modal(); });
   document.getElementById("btn-help").addEventListener("click", function () { BV.helpOverlay(); });
-  document.getElementById("btn-settings").addEventListener("click", function () { BV.uiPrefs.modal(); });
 
   /* global backup-wide search */
   var gsInput = document.querySelector("#global-search input");

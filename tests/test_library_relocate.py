@@ -484,3 +484,288 @@ def test_lib_apply_renames_batch(monkeypatch, tmp_path):
     assert len(res["renamed"]) == 1 and res["failed"] == [] and res["merged"] == []
     assert library.get_robot("rid-1")["robot"] == "NEW1"
     assert (root / "P" / "L" / "NEW1").is_dir() and not (root / "P" / "L" / "OLD1").exists()
+
+
+def test_lib_merge_endpoint_multi_secondary_and_string_coercion(monkeypatch, tmp_path):
+    from backupviewer.api import Api
+    _iso(monkeypatch, tmp_path)
+    root = _lib(tmp_path)
+    for i, (date, time) in enumerate([("2026_01_01", "12_00_00"),
+                                      ("2026_02_02", "09_30_00"),
+                                      ("2026_03_03", "10_00_00")], start=1):
+        r = root / "P" / "L" / f"R{i}"
+        _snap(r, date, time, files=i, robot=f"R{i}", line="L", plant="P")
+        _sidecar(r, f"rid-{i}", "P", "L", f"R{i}")
+    library.scan_library_root(root)
+
+    res = Api().lib_merge("rid-1", ["rid-2", "rid-3"])["data"]           # multi-secondary batch
+    assert len(res["merged"]) == 2 and res["refused"] == [] and res["failed"] == []
+    assert library.get_robot("rid-2") is None and library.get_robot("rid-3") is None
+    assert len(library.get_robot("rid-1")["backups"]) == 3
+
+    r4 = root / "P" / "L" / "R4"
+    _snap(r4, "2026_04_04", "11_00_00", files=4, robot="R4", line="L", plant="P")
+    _sidecar(r4, "rid-4", "P", "L", "R4")
+    library.scan_library_root(root)
+    res2 = Api().lib_merge("rid-1", "rid-4")["data"]                     # bare-string coercion
+    assert len(res2["merged"]) == 1 and library.get_robot("rid-4") is None
+
+
+# -- merge data-safety (2026-07-06 field-feedback fixes) --------------------------
+# The duplicate-skip branch is the ONLY place a merge deletes source data. It must
+# never fire on metadata equality alone: missing/corrupt backup.json on both sides
+# used to compare (0,0)==(0,0) -> "identical" -> intact source deleted. Same for a
+# partial destination left by an interrupted copy. These pin the strict rule:
+# skip (and drop the source copy) ONLY when both sidecars are readable, stats
+# match, AND the trees verify file-for-file in both directions.
+
+def test_merge_duplicate_missing_backup_json_is_conflict_not_deleted(monkeypatch, tmp_path):
+    _iso(monkeypatch, tmp_path)
+    root = _lib(tmp_path)
+    r1 = root / "P" / "L" / "R1"
+    d1 = _snap(r1, "2026_02_02", "09_30_00", files=9, robot="R1", line="L", plant="P")
+    (d1 / "backup.json").unlink()
+    (d1 / "REAL_DATA.LS").write_text("precious program", encoding="utf-8")
+    _sidecar(r1, "rid-1", "P", "L", "R1")
+    r2 = root / "P" / "L" / "R2"
+    d2 = _snap(r2, "2026_02_02", "09_30_00", files=9, robot="R2", line="L", plant="P")
+    (d2 / "backup.json").unlink()
+    _sidecar(r2, "rid-2", "P", "L", "R2")
+    library.scan_library_root(root)
+
+    res = library.merge_robots("rid-2", "rid-1")                 # fold R1 into R2
+    assert len(res["conflicts"]) == 1 and res["skipped"] == []
+    assert (d1 / "REAL_DATA.LS").is_file()                       # intact source retained
+    assert library.get_robot("rid-1") is not None                # entry kept with its leftovers
+
+
+def test_merge_retry_after_partial_destination_keeps_source(monkeypatch, tmp_path):
+    """A partial destination snapshot (interrupted copy) that already holds a
+    matching backup.json must be treated as a conflict, never as an identical
+    duplicate whose source can be dropped."""
+    _iso(monkeypatch, tmp_path)
+    root = _lib(tmp_path)
+    r1 = root / "P" / "L" / "R1"
+    d1 = _snap(r1, "2026_02_02", "09_30_00", files=9, robot="R1", line="L", plant="P")
+    (d1 / "REAL_DATA.LS").write_text("precious program", encoding="utf-8")
+    _sidecar(r1, "rid-1", "P", "L", "R1")
+    r2 = root / "P" / "L" / "R2"
+    _snap(r2, "2026_03_03", "10_00_00", files=5, robot="R2", line="L", plant="P")
+    part = r2 / "2026_02_02" / "09_30_00"                        # partial: ONLY backup.json arrived
+    part.mkdir(parents=True)
+    part.joinpath("backup.json").write_bytes((d1 / "backup.json").read_bytes())
+    _sidecar(r2, "rid-2", "P", "L", "R2")
+    library.scan_library_root(root)
+
+    res = library.merge_robots("rid-2", "rid-1")
+    assert len(res["conflicts"]) == 1 and res["skipped"] == []
+    assert (d1 / "REAL_DATA.LS").is_file()                       # source survives the retry
+
+
+def test_merge_verified_identical_duplicate_still_skipped(monkeypatch, tmp_path):
+    """The useful dedup behavior stays: a genuinely identical duplicate (readable
+    stats, equal, contents verify) is skipped and its redundant source dropped."""
+    _iso(monkeypatch, tmp_path)
+    root = _lib(tmp_path)
+    r1 = root / "P" / "L" / "R1"
+    _snap(r1, "2026_02_02", "09_30_00", files=9, robot="R1", line="L", plant="P")
+    _sidecar(r1, "rid-1", "P", "L", "R1")
+    r2 = root / "P" / "L" / "R2"
+    _snap(r2, "2026_02_02", "09_30_00", files=9, robot="R2", line="L", plant="P")
+    _sidecar(r2, "rid-2", "P", "L", "R2")
+    library.scan_library_root(root)
+
+    res = library.merge_robots("rid-2", "rid-1")
+    assert len(res["skipped"]) == 1 and res["conflicts"] == []
+    assert res["secondary_removed"] is True
+    assert library.get_robot("rid-1") is None                    # fully consumed
+    assert not (root / "P" / "L" / "R1").exists()
+
+
+def test_merge_same_size_different_content_is_conflict(monkeypatch, tmp_path):
+    """Equal backup.json stats with subtly different real contents (an edited
+    program of the same byte size) must be a conflict - content is compared, not
+    just sizes, before a source copy may be dropped."""
+    _iso(monkeypatch, tmp_path)
+    root = _lib(tmp_path)
+    r1 = root / "P" / "L" / "R1"
+    d1 = _snap(r1, "2026_02_02", "09_30_00", files=9, robot="R1", line="L", plant="P")
+    (d1 / "PROG.LS").write_text("R[1]=1 ;", encoding="utf-8")
+    _sidecar(r1, "rid-1", "P", "L", "R1")
+    r2 = root / "P" / "L" / "R2"
+    d2 = _snap(r2, "2026_02_02", "09_30_00", files=9, robot="R2", line="L", plant="P")
+    (d2 / "PROG.LS").write_text("R[1]=2 ;", encoding="utf-8")    # same size, different byte
+    _sidecar(r2, "rid-2", "P", "L", "R2")
+    library.scan_library_root(root)
+
+    res = library.merge_robots("rid-2", "rid-1")
+    assert len(res["conflicts"]) == 1 and res["skipped"] == []
+    assert (d1 / "PROG.LS").is_file()                            # differing source retained
+
+
+def test_merge_copy_failure_leaves_source_and_registry_intact(monkeypatch, tmp_path):
+    """A copy failure mid-merge must leave the source snapshot on disk, nothing at
+    the destination's FINAL snapshot name (a partial there would fool a retry),
+    and both entries still in the library."""
+    _iso(monkeypatch, tmp_path)
+    root = _lib(tmp_path)
+    r1 = root / "P" / "L" / "R1"
+    _snap(r1, "2026_01_01", "12_00_00", files=3, robot="R1", line="L", plant="P")
+    _sidecar(r1, "rid-1", "P", "L", "R1")
+    r2 = root / "P" / "L" / "R2"
+    _snap(r2, "2026_03_03", "10_00_00", files=5, robot="R2", line="L", plant="P")
+    _sidecar(r2, "rid-2", "P", "L", "R2")
+    library.scan_library_root(root)
+
+    def boom_rename(a, b):
+        raise OSError("simulated cross-device rename")
+    from pathlib import Path as _P
+
+    def partial_copy(src, dst, **kw):                            # copies a bit, then dies
+        _P(dst).mkdir(parents=True, exist_ok=True)
+        (_P(dst) / "half.txt").write_text("partial", encoding="utf-8")
+        raise OSError("simulated copy failure")
+    monkeypatch.setattr(library.os, "rename", boom_rename)
+    monkeypatch.setattr(library.shutil, "copytree", partial_copy)
+
+    with pytest.raises(OSError):
+        library.merge_robots("rid-2", "rid-1")
+    assert (r1 / "2026_01_01" / "12_00_00" / "SUMMARY.DG").is_file()   # source intact
+    assert not (r2 / "2026_01_01" / "12_00_00").exists()               # nothing at the final name
+    assert library.get_robot("rid-1") and library.get_robot("rid-2")   # registry untouched
+
+
+def test_scan_ignores_transient_staging_dirs(monkeypatch, tmp_path):
+    """A crash between copy and replace can leave <name>.__part (move staging) or
+    <name>.__tmp (mirror regen) dirs on disk. The scanner must never register
+    them as robots/backups — the next move cleans them up."""
+    _iso(monkeypatch, tmp_path)
+    root = _lib(tmp_path)
+    r1 = root / "P" / "L" / "R1"
+    _snap(r1, "2026_01_01", "12_00_00", robot="R1", line="L", plant="P")
+    _sidecar(r1, "rid-1", "P", "L", "R1")
+    ghost = root / "P" / "L" / "R2.__part"                       # crash residue
+    _snap(ghost, "2026_02_02", "09_30_00", robot="R2", line="L", plant="P")
+    tmpd = root / "P" / "L" / "R3.__tmp"
+    _snap(tmpd, "2026_03_03", "10_00_00", robot="R3", line="L", plant="P")
+
+    data = library.scan_library_root(root)
+    names = [e.get("robot", "") for e in data["robots"]]
+    assert names == ["R1"]                                       # no phantom robots
+    assert ghost.is_dir() and tmpd.is_dir()                      # residue untouched
+
+
+def test_verify_tree_semantics(tmp_path):
+    src = tmp_path / "src"
+    (src / "sub").mkdir(parents=True)
+    (src / "a.txt").write_text("hello", encoding="utf-8")
+    (src / "sub" / "b.txt").write_text("world", encoding="utf-8")
+    dst = tmp_path / "dst"
+    (dst / "sub").mkdir(parents=True)
+    (dst / "a.txt").write_text("hello", encoding="utf-8")
+    (dst / "sub" / "b.txt").write_text("world", encoding="utf-8")
+
+    assert library._verify_tree(src, dst) is True
+    assert library._verify_tree(src, dst, strict=True) is True
+
+    (dst / "extra.txt").write_text("x", encoding="utf-8")        # dst-only file
+    assert library._verify_tree(src, dst) is True                # move-path check: src ⊆ dst
+    assert library._verify_tree(src, dst, strict=True) is False  # pre-delete bar: sets must match
+    (dst / "extra.txt").unlink()
+
+    (dst / "a.txt").write_text("HELLO", encoding="utf-8")        # same size, different content
+    assert library._verify_tree(src, dst) is True                # size check alone can't see it
+    assert library._verify_tree(src, dst, strict=True) is False  # content compare does
+    (dst / "a.txt").write_text("hello", encoding="utf-8")
+
+    (dst / "sub" / "b.txt").unlink()                             # missing file
+    assert library._verify_tree(src, dst) is False
+    assert library._verify_tree(src, dst, strict=True) is False
+
+
+# -- merge metadata survival ------------------------------------------------------
+
+def test_merge_folds_secondary_metadata_into_primary(monkeypatch, tmp_path):
+    """Merging must not lose the secondary's IPs/notes/model/ftp user - in the
+    fleet-typical case the discovery-created entry (holding the real IP) is the
+    one folded in. hidden must NOT propagate (a visible robot can't vanish)."""
+    _iso(monkeypatch, tmp_path)
+    root = _lib(tmp_path)
+    r1 = root / "P" / "L" / "R1"
+    _snap(r1, "2026_01_01", "12_00_00", files=1, robot="R1", line="L", plant="P")
+    _sidecar(r1, "rid-1", "P", "L", "R1")
+    r2 = root / "P" / "L" / "R2"
+    _snap(r2, "2026_02_02", "09_30_00", files=2, robot="R2", line="L", plant="P")
+    _sidecar(r2, "rid-2", "P", "L", "R2")
+    library.scan_library_root(root)
+    library.update_robot("rid-2", {"ips": ["10.1.1.2"], "model": "R-2000iC", "f_number": "F123",
+                                   "notes": "cell 4 door side",
+                                   "ftp": {"user": "robot", "passive": True}, "hidden": True})
+
+    res = library.merge_robots("rid-1", "rid-2")
+    assert res["action"] == "merged"
+    surv = library.get_robot("rid-1")
+    assert "10.1.1.2" in surv["ips"]                             # the only recorded IP survives
+    assert surv["model"] == "R-2000iC" and surv["f_number"] == "F123"
+    assert surv["ftp"]["user"] == "robot"
+    assert "cell 4 door side" in surv["notes"]
+    assert surv["hidden"] is False                               # sec's hidden not propagated
+
+
+def test_merge_metadata_never_clobbers_primary_values(monkeypatch, tmp_path):
+    _iso(monkeypatch, tmp_path)
+    root = _lib(tmp_path)
+    r1 = root / "P" / "L" / "R1"
+    _snap(r1, "2026_01_01", "12_00_00", files=1, robot="R1", line="L", plant="P")
+    _sidecar(r1, "rid-1", "P", "L", "R1")
+    r2 = root / "P" / "L" / "R2"
+    _snap(r2, "2026_02_02", "09_30_00", files=2, robot="R2", line="L", plant="P")
+    _sidecar(r2, "rid-2", "P", "L", "R2")
+    library.scan_library_root(root)
+    library.update_robot("rid-1", {"ips": ["10.1.1.1"], "model": "M-900iB",
+                                   "notes": "prim note", "ftp": {"user": "admin", "passive": True}})
+    library.update_robot("rid-2", {"ips": ["10.1.1.2"], "model": "R-2000iC",
+                                   "notes": "sec note", "ftp": {"user": "robot", "passive": True}})
+
+    library.merge_robots("rid-1", "rid-2")
+    surv = library.get_robot("rid-1")
+    assert surv["model"] == "M-900iB"                            # prim's own value kept
+    assert surv["ftp"]["user"] == "admin"
+    assert surv["ips"] == ["10.1.1.1", "10.1.1.2"]               # union, prim's first
+    assert "prim note" in surv["notes"] and "sec note" in surv["notes"]   # neither note lost
+
+
+# -- update_robot latest_path guard ------------------------------------------------
+
+def test_update_robot_keeps_valid_latest_path_over_stale_patch(monkeypatch, tmp_path):
+    """The edit modal re-sends its (readonly, pre-rename) folder field after a
+    relocate has already retargeted the entry. A patch must never downgrade a
+    valid latest_path to one that no longer exists on disk."""
+    _iso(monkeypatch, tmp_path)
+    root = _lib(tmp_path)
+    r1 = root / "P" / "L" / "R1"
+    _snap(r1, "2026_01_01", "12_00_00", robot="R1", line="L", plant="P")
+    _sidecar(r1, "rid-1", "P", "L", "R1")
+    library.scan_library_root(root)
+    e = library.list_robots()["robots"][0]
+    stale_path = e["latest_path"]                                # pre-rename snapshot path
+
+    library.relocate_robot(e["id"], "P", "L", "R1NEW")
+    library.update_robot(e["id"], {"notes": "edited", "latest_path": stale_path})
+
+    e2 = library.get_robot(e["id"])
+    assert e2["notes"] == "edited"                               # rest of the patch applied
+    assert "R1NEW" in e2["latest_path"]                          # retargeted path kept
+    import pathlib
+    assert pathlib.Path(e2["latest_path"]).is_dir()
+    assert library.list_robots()["robots"][0]["stale"] is False  # no phantom 'missing' pill
+
+
+def test_update_robot_applies_latest_path_when_current_blank_or_gone(monkeypatch, tmp_path):
+    _iso(monkeypatch, tmp_path)
+    root = _lib(tmp_path)
+    root.mkdir(parents=True, exist_ok=True)
+    e = library.add_robot({"robot": "GHOST", "plant": "P", "line": "L"})   # no folder, blank path
+    somewhere = root / "P" / "L" / "GHOST" / "2026_01_01" / "12_00_00"
+    library.update_robot(e["id"], {"latest_path": str(somewhere)})
+    assert library.get_robot(e["id"])["latest_path"] == str(somewhere)     # blank current -> applied

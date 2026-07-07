@@ -9,6 +9,7 @@ from __future__ import annotations
 import functools
 import json
 import logging
+import os
 import threading
 import time
 from pathlib import Path
@@ -24,7 +25,7 @@ from .parsers import (alarms, callgraph, dcs, frames, gmwizlog, io_dg,
                       ls_program, macros, magnet, mastering, mhvalves, payloads,
                       registers, styles, summary_dg, sysvars)
 from .parsers.common import is_binary, read_text
-from .session import BackupSession, find_backup_roots
+from .session import BackupSession
 
 log = logging.getLogger(__name__)
 
@@ -53,11 +54,18 @@ def _endpoint(fn):
     return wrapper
 
 
-def _folder_mtime(p) -> float:
-    try:
-        return Path(p).stat().st_mtime
-    except OSError:
-        return 0.0
+def _watch_step(last: str | None, pending: bool, sig: str) -> tuple[str, bool, bool]:
+    """One debounced watcher transition: (last, pending, sig) -> (last, pending,
+    fire). The first tick only baselines (never fire at boot); a changed
+    signature arms `pending`; a QUIET tick with pending armed fires — so a burst
+    of Explorer copies produces one notification after it settles."""
+    if last is None:
+        return sig, False, False
+    if sig != last:
+        return sig, True, False
+    if pending:
+        return last, False, True
+    return last, False, False
 
 
 class Api:
@@ -67,7 +75,7 @@ class Api:
         self._compare_session: BackupSession | None = None
         self._jobs: dict[str, ftpbackup.BackupJob] = {}  # active/finished backup jobs
         self._scans: dict[str, discover._ScanJob] = {}  # folder + network scan jobs
-        self._booted_scan = False  # one-shot folder scan on the first library load
+        self._lib_sig: str | None = None  # tree signature at the last scan (None = never)
 
     def bind(self, window, initial_backup: str | None = None):
         self._window = window
@@ -76,6 +84,70 @@ class Api:
                 self._session = BackupSession(Path(initial_backup))
             except Exception:
                 log.exception("could not open initial backup %s", initial_backup)
+        if not os.environ.get("BV_NO_WATCHER"):
+            threading.Thread(target=self._watch_library, name="libwatch", daemon=True).start()
+        try:
+            window.events.closing += self._confirm_close
+        except Exception:  # noqa: BLE001 - a GUI backend without the event still gets a working app
+            log.exception("could not attach the close-confirmation handler")
+
+    # -- library watcher -------------------------------------------------------
+    # Polls a cheap tree signature so folders copied in / deleted via Explorer
+    # show up without pressing rescan. Polling, not ReadDirectoryChangesW:
+    # library roots commonly live on network shares / USB where change
+    # notifications are unreliable. Paused while backup jobs run (they write
+    # thousands of files into the watched tree).
+
+    _WATCH_POLL_S = 4.0
+
+    def _active_backup_count(self) -> int:
+        return sum(1 for j in self._jobs.values()
+                   if j.snapshot().get("status") not in ("done", "error", "cancelled"))
+
+    def _backups_active(self) -> bool:
+        return self._active_backup_count() > 0
+
+    def _confirm_close(self):
+        """pywebview `closing` handler: returning False keeps the window open.
+        Closing kills the daemon backup threads mid-download (the .part protocol
+        means no half-file ever looks complete, but the snapshot is left partial
+        with no sidecars), so closing during a backup deserves an explicit yes.
+        Any failure fails OPEN - never trap the user inside the app."""
+        try:
+            n = self._active_backup_count()
+            if not n:
+                return True
+            msg = ("%d backup%s still running. Closing now cuts %s off mid-transfer "
+                   "and leaves incomplete snapshot folders. Close anyway?"
+                   % (n, "s" if n != 1 else "", "them" if n != 1 else "it"))
+            return bool(self._window.create_confirmation_dialog("backups in progress", msg))
+        except Exception:  # noqa: BLE001
+            log.exception("close-confirmation check failed")
+            return True
+
+    def _watch_library(self):
+        last: str | None = None
+        pending = False
+        while True:
+            time.sleep(self._WATCH_POLL_S)
+            try:
+                if self._backups_active():
+                    continue
+                sig = library.scan_signature(settings.library_root())
+                last, pending, fire = _watch_step(last, pending, sig)
+                if fire:
+                    self._notify_library_changed()
+            except Exception:  # noqa: BLE001 - the watcher must never die
+                log.exception("library watcher tick failed")
+
+    def _notify_library_changed(self):
+        w = self._window
+        if w is None:
+            return
+        try:
+            w.evaluate_js("window.BV && BV.state && BV.state.emit && BV.state.emit('library-dirty')")
+        except Exception:  # noqa: BLE001 - window mid-teardown at app exit
+            pass
 
     # -- internals -----------------------------------------------------------
     # builders take an optional session so compare can run them against a
@@ -1120,6 +1192,7 @@ class Api:
             raise ApiError("BAD_PATH", "a folder path is required")
         settings.set_value("library_root", p)
         settings.set_value("backup_root", p)   # keep the legacy key in sync
+        self._lib_sig = None                   # next lib_list rescans the new root
         return {"path": p}
 
     @_endpoint
@@ -1138,24 +1211,56 @@ class Api:
     def lib_rescan(self):
         """Rebuild the library from the folder tree (picks up copied-in folders)
         and return the reconciled set."""
-        return library.scan_library_root(settings.library_root())
+        root = settings.library_root()
+        data = library.scan_library_root(root)
+        self._lib_sig = library.scan_signature(root)   # this scan IS the fresh baseline
+        return data
 
     @_endpoint
     def lib_list(self):
-        # once per session, fold in folders copied into the library root since
-        # last run (e.g. a coworker's tree dropped on top). Best-effort: a scan
-        # failure must never block showing the existing library.
-        if not self._booted_scan:
-            self._booted_scan = True
-            try:
-                return library.scan_library_root(settings.library_root())
-            except Exception:
-                log.exception("library scan on first load failed")
+        """The library, freshly rescanned whenever the folder tree changed since
+        the last look (files are law - the tree IS the library, so Explorer
+        copies/deletes just show up). Unchanged tree -> the cached state, with
+        no scan and no library.json rewrite. An unreachable root always takes
+        the scan path, which serves the last known library marked stale."""
+        root = settings.library_root()
+        sig = library.scan_signature(root)
+        if sig != self._lib_sig or not sig:
+            data = library.scan_library_root(root)
+            # store the POST-scan signature: NTFS flushes directory-mtime
+            # updates lazily, and the scan's own walk forces the flush - the
+            # settled value is the one future listings will see.
+            self._lib_sig = library.scan_signature(root)
+            return data
         return library.list_robots()
+
+    def _materialize_robot_folder(self, e: dict) -> dict:
+        """Files are law: a robot IS a folder. Ensure a just-added robot exists
+        on disk (folder + robot.json sidecar) so it survives rescans, root
+        changes, and rebuilds - a discovery-added robot is real from second one,
+        and its IP travels in the sidecar, not just this machine's cache."""
+        hr = e.get("history_root", "")
+        if hr and Path(hr).is_dir():
+            return e
+        root = library._root()
+        d = library._robot_dir_for(root, e.get("plant", ""), e.get("line", ""), e.get("robot", ""))
+        sidecar = d / library.SIDECAR
+        if sidecar.is_file():
+            owner = library._read_json(sidecar)
+            if owner.get("id") and owner["id"] != e.get("id"):
+                log.warning("not adopting %s: folder already belongs to %r",
+                            d, owner.get("robot", ""))
+                return e
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except OSError as ex:
+            raise ApiError("BAD_PATH", f"could not create the robot folder: {ex}")
+        return library.update_robot(e["id"], {"history_root": str(d)}) or e
 
     @_endpoint
     def lib_add(self, entry: dict):
-        return library.add_robot(entry or {})
+        e = library.add_robot(entry or {})
+        return self._materialize_robot_folder(e)
 
     @_endpoint
     def lib_update(self, robot_id: str, patch: dict):
@@ -1177,59 +1282,10 @@ class Api:
             raise ApiError("NOT_FOUND", "robot not in library")
         return e
 
-    @_endpoint
-    def lib_delete_files(self, robot_id: str):
-        """Permanently delete a robot's backup folders from disk and drop it from
-        the library. Guarded to the configured library root. Caller is expected
-        to have done the two-step (type-the-name) confirmation in the UI."""
-        return library.delete_robot_files(robot_id)
-
-    @_endpoint
-    def lib_scan_folder(self, path: str):
-        """Parse a picked backup folder into a draft entry WITHOUT making it the
-        active session - the 'add to library' flow shows this for editing.
-
-        If the picked folder actually holds several dated snapshots, group them
-        by robot so we don't build one muddled session over every date: a single
-        robot yields one draft carrying its full history (newest = latest); many
-        robots yield {multi, drafts} for the bulk-add modal."""
-        p = Path(path)
-        if not p.is_dir():
-            raise ApiError("NOT_FOUND", f"Not a folder: {path}")
-        roots = find_backup_roots(p)
-        if len(roots) <= 1:
-            target = roots[0] if roots else p
-            return self._draft_from_session(BackupSession(target), str(target))
-
-        groups: dict = {}
-        for root in roots:
-            try:
-                d = self._draft_from_session(BackupSession(root), str(root))
-            except Exception:  # noqa: BLE001 - one bad snapshot shouldn't sink the add
-                continue
-            groups.setdefault((d.get("robot") or "").upper(), []).append((root, d))
-
-        drafts = []
-        for items in groups.values():
-            items.sort(key=lambda rd: _folder_mtime(rd[0]), reverse=True)
-            newest_root, newest_draft = items[0]
-            nd = dict(newest_draft)
-            nd["latest_path"] = str(newest_root)
-            nd["history_root"] = str(library.robot_folder_of(newest_root))
-            nd["backups"] = [library.backup_record(r) for r, _ in items]
-            drafts.append(nd)
-        if len(drafts) == 1:
-            return drafts[0]
-        return {"multi": True, "drafts": drafts}
-
-    @_endpoint
-    def lib_add_from_session(self, plant: str = "", line: str = ""):
-        """Add the currently-open backup to the library."""
-        s = self._need_session()
-        draft = self._draft_from_session(s, str(s.root))
-        draft["plant"] = plant
-        draft["line"] = line
-        return library.add_robot(draft)
+    # (lib_delete_files, lib_scan_folder, and lib_add_from_session were removed
+    # with the v0.98 files-are-law pivot: the app never deletes backup data, and
+    # backups join the library by being COPIED into the library folder - the
+    # scan/watcher picks them up. Hiding covers the everyday remove case.)
 
     @_endpoint
     def lib_open(self, robot_id: str, which: str = "latest", side: str = "a"):
@@ -1484,6 +1540,13 @@ class Api:
         return job.snapshot()
 
     @_endpoint
+    def list_backup_jobs(self):
+        """Snapshots of every backup job this session (active AND finished), so
+        the global progress strip can watch them all with one call per tick and
+        a reloaded frontend can re-discover in-flight jobs it never started."""
+        return {"jobs": [j.snapshot() for j in self._jobs.values()]}
+
+    @_endpoint
     def cancel_backup(self, job_id: str):
         job = self._jobs.get(job_id)
         if job is None:
@@ -1506,22 +1569,6 @@ class Api:
             "adapters": discover.list_adapters(),
             "fallback": {"cidr": discover.default_cidr(), "ip": discover.local_ipv4()},
         }
-
-    @_endpoint
-    def lib_bulk_scan_start(self, path: str):
-        """Walk a parent folder for backup roots on a worker thread; poll via
-        scan_progress. Each result is a library draft (newest snapshot per robot)."""
-        p = Path(path or "")
-        if not p.is_dir():
-            raise ApiError("NOT_FOUND", f"Not a folder: {path}")
-
-        def draft_fn(root):
-            return self._draft_from_session(BackupSession(root), str(root))
-
-        job = discover.FolderScanJob(p, draft_fn)
-        self._scans[job.id] = job
-        threading.Thread(target=job.run, name="folderscan-" + job.id, daemon=True).start()
-        return {"job_id": job.id}
 
     @_endpoint
     def net_scan_start(self, spec: dict):
@@ -1553,5 +1600,18 @@ class Api:
 
     @_endpoint
     def lib_bulk_add(self, entries: list, plant: str = "", line: str = ""):
-        """Add many drafts at once under one plant/line, skipping existing robots."""
-        return library.bulk_add(entries or [], plant=plant, line=line)
+        """Add many drafts at once under one plant/line, skipping existing
+        robots. Each added robot gets its on-disk folder + sidecar immediately
+        (files are law), so the batch requires a reachable library root."""
+        if not Path(settings.library_root()).is_dir():
+            raise ApiError("BAD_PATH", "the library folder is unreachable - cannot add robots")
+        res = library.bulk_add(entries or [], plant=plant, line=line)
+        materialized = []
+        for e in res.get("added", []):
+            try:
+                materialized.append(self._materialize_robot_folder(e))
+            except ApiError as ex:
+                log.warning("could not create folder for %r: %s", e.get("robot", ""), ex)
+                materialized.append(e)
+        res["added"] = materialized
+        return res

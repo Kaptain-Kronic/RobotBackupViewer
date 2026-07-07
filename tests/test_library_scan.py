@@ -85,7 +85,9 @@ def test_rescan_preserves_overlay_edits(monkeypatch, tmp_path):
     assert len(e2["backups"]) == 1             # disk still authoritative for history
 
 
-def test_vanished_folder_kept_and_marked_stale(monkeypatch, tmp_path):
+def test_vanished_folder_dropped_on_rescan(monkeypatch, tmp_path):
+    """Files are law: deleting a robot's folder in Explorer deletes the robot -
+    the next scan simply reflects the tree."""
     _iso(monkeypatch, tmp_path)
     root = tmp_path / "lib"
     _make_robot(root, "P", "L", "R1", [("2026_01_01", "12_00_00", 1_600_000_000)], rid="rid-1")
@@ -94,9 +96,87 @@ def test_vanished_folder_kept_and_marked_stale(monkeypatch, tmp_path):
 
     shutil.rmtree(root / "P" / "L" / "R2")     # someone deleted R2 in Explorer
     by = {e["robot"]: e for e in library.scan_library_root(root)["robots"]}
-    assert set(by) == {"R1", "R2"}             # R2 kept (never auto-deleted)
-    assert by["R2"]["stale"] is True
+    assert set(by) == {"R1"}                   # R2 gone, exactly as the tree says
     assert by["R1"]["stale"] is False
+
+
+def test_unreachable_root_serves_last_known_library_stale(monkeypatch, tmp_path):
+    """An offline network drive is NOT the same as deleted folders: the last
+    known library is kept (marked stale), never wiped."""
+    _iso(monkeypatch, tmp_path)
+    root = tmp_path / "lib"
+    _make_robot(root, "P", "L", "R1", [("2026_01_01", "12_00_00", 1_600_000_000)], rid="rid-1")
+    library.scan_library_root(root)
+
+    shutil.rmtree(root)                        # the whole root vanishes (drive unplugged)
+    data = library.scan_library_root(root)
+    assert [e["robot"] for e in data["robots"]] == ["R1"]   # nothing dropped
+    assert data["robots"][0]["stale"] is True
+
+
+def test_root_change_drops_old_roots_entries(monkeypatch, tmp_path):
+    """Pointing the app at a new library folder shows THAT folder's contents -
+    the previous root's robots do not tag along (the v0.97 field bug)."""
+    _iso(monkeypatch, tmp_path)
+    root_a = tmp_path / "libA"
+    _make_robot(root_a, "P", "L", "OLDBOT", [("2026_01_01", "12_00_00", 1_600_000_000)], rid="rid-a")
+    settings.set_value("library_root", str(root_a))
+    library.scan_library_root(root_a)
+    assert [e["robot"] for e in library.list_robots()["robots"]] == ["OLDBOT"]
+
+    root_b = tmp_path / "libB"
+    _make_robot(root_b, "P", "L", "NEWBOT", [("2026_02_02", "09_00_00", 1_700_000_000)], rid="rid-b")
+    settings.set_value("library_root", str(root_b))            # user re-points the library
+    data = library.scan_library_root(root_b)
+    assert [e["robot"] for e in data["robots"]] == ["NEWBOT"]  # old entries gone with their root
+
+
+def test_sidecar_only_folder_discovered_as_robot(monkeypatch, tmp_path):
+    """A robot folder holding just a robot.json (no snapshots yet - e.g. a
+    discovery-added robot awaiting its first backup) is a real robot: it scans
+    in with its identity + IP and an empty history."""
+    _iso(monkeypatch, tmp_path)
+    root = tmp_path / "lib"
+    d = root / "P" / "L" / "FRESH"
+    d.mkdir(parents=True)
+    (d / "robot.json").write_text(json.dumps({
+        "schema": 1, "id": "rid-fresh", "plant": "P", "line": "L", "robot": "FRESH",
+        "model": "", "f_number": "", "ips": ["10.9.9.9"],
+        "ftp": {"user": "", "passive": True}, "notes": ""}), encoding="utf-8")
+
+    data = library.scan_library_root(root)
+    assert len(data["robots"]) == 1
+    e = data["robots"][0]
+    assert e["robot"] == "FRESH" and e["id"] == "rid-fresh"
+    assert e["ips"] == ["10.9.9.9"]            # the IP lives on disk, not just this machine
+    assert e["backups"] == [] and e["latest_path"] == ""
+    assert e["stale"] is False                 # 'no backup yet', not 'missing'
+
+
+def _settled_signature(root):
+    """NTFS flushes directory-mtime updates lazily; the first walk after writes
+    can observe pre-flush values. Walk until two consecutive reads agree — the
+    production watcher absorbs this settle via its debounce."""
+    s = library.scan_signature(root)
+    for _ in range(5):
+        s2 = library.scan_signature(root)
+        if s2 == s:
+            return s
+        s = s2
+    return s
+
+
+def test_scan_signature_tracks_tree_changes(monkeypatch, tmp_path):
+    _iso(monkeypatch, tmp_path)
+    root = tmp_path / "lib"
+    _make_robot(root, "P", "L", "R1", [("2026_01_01", "12_00_00", 1_600_000_000)], rid="rid-1")
+
+    s1 = _settled_signature(root)
+    assert s1 and library.scan_signature(root) == s1            # stable when unchanged
+    (root / "P" / "L" / "R2").mkdir(parents=True)               # Explorer copy begins
+    s2 = _settled_signature(root)
+    assert s2 != s1                                             # ...and the signature sees it
+    assert library.scan_signature(tmp_path / "nope") == ""      # unreachable root
 
 
 def test_sidecar_round_trip_carries_identity_to_a_fresh_library(monkeypatch, tmp_path):
@@ -151,53 +231,6 @@ def test_set_hidden_survives_rescan(monkeypatch, tmp_path):
     assert data["robots"][0]["hidden"] is True
 
 
-def test_delete_robot_files_guarded_to_root(monkeypatch, tmp_path):
-    _iso(monkeypatch, tmp_path)
-    root = tmp_path / "lib"
-    settings.set_value("library_root", str(root))
-    _make_robot(root, "P", "L", "R1", [
-        ("2026_01_01", "12_00_00", 1_600_000_000),
-        ("2026_02_02", "09_30_00", 1_700_000_000),
-    ], rid="rid-1", mirror=True)
-    library.scan_library_root(root)
-    e = library.list_robots()["robots"][0]
-    robot_dir = root / "P" / "L" / "R1"
-    mirror = root / "P" / "L" / "Latest" / "R1"
-    assert robot_dir.is_dir() and mirror.is_dir()
-
-    res = library.delete_robot_files(e["id"])
-    assert res["robot"] == "R1" and res["refused"] == []
-    assert not robot_dir.exists()                   # robot folder gone
-    assert not mirror.exists()                      # mirror gone too
-    assert library.get_robot(e["id"]) is None       # and removed from the index
-
-
-def test_lib_scan_folder_groups_multi_date(monkeypatch, tmp_path):
-    """Pointing 'add from backup' at a folder of several dated snapshots of ONE
-    robot yields a single draft carrying the full history (not a muddled scan)."""
-    from backupviewer.api import Api
-    _iso(monkeypatch, tmp_path)
-    summary = '<H2><A NAME="1">Ethernet</A></H2><PRE>\n$HOSTNAME : TIMELINE1\n</PRE>\n'
-    base = tmp_path / "lib" / "P" / "L" / "TIMELINE1"
-    for i, (date, time) in enumerate([("2026_01_01", "08_00_00"),
-                                      ("2026_02_02", "09_00_00"),
-                                      ("2026_03_03", "10_00_00")]):
-        d = base / date / time
-        d.mkdir(parents=True)
-        (d / "SUMMARY.DG").write_text(summary, encoding="cp1252")
-        (d / "backup.json").write_text(json.dumps({
-            "robot": "TIMELINE1", "line": "L", "plant": "P",
-            "taken": date.replace("_", "-") + "T" + time.replace("_", ":")}), encoding="utf-8")
-        os.utime(d, (1_600_000_000 + i, 1_600_000_000 + i))
-
-    res = Api().lib_scan_folder(str(base))["data"]
-    assert isinstance(res, dict) and not res.get("multi")
-    assert res["robot"] == "TIMELINE1"
-    assert len(res["backups"]) == 3                      # full dated history
-    assert res["backups"][0]["taken"] == "2026-03-03T10:00:00"   # newest first
-    assert res["latest_path"].endswith(os.path.join("2026_03_03", "10_00_00"))
-
-
 def test_lib_open_augments_with_history(monkeypatch, tmp_path):
     from backupviewer.api import Api
     _iso(monkeypatch, tmp_path)
@@ -212,17 +245,139 @@ def test_lib_open_augments_with_history(monkeypatch, tmp_path):
     assert len(m["backups"]) == 1
 
 
-def test_delete_refuses_outside_root(monkeypatch, tmp_path):
-    _iso(monkeypatch, tmp_path)
-    inside = tmp_path / "lib"
-    inside.mkdir()
-    settings.set_value("library_root", str(inside))
-    outside = tmp_path / "elsewhere" / "R9"          # a folder OUTSIDE the library root
-    outside.mkdir(parents=True)
-    (outside / "keep.txt").write_text("important", encoding="utf-8")
-    e = library.add_robot({"robot": "R9", "history_root": str(outside)})
+# -- api: files-are-law endpoints -------------------------------------------------
 
-    res = library.delete_robot_files(e["id"])
-    assert outside.is_dir() and (outside / "keep.txt").is_file()   # NOT deleted
-    assert res["removed"] == [] and res["refused"]                 # explicitly refused
-    assert library.get_robot(e["id"]) is None                      # still dropped from index
+def test_lib_add_materializes_folder_and_survives_rebuild(monkeypatch, tmp_path):
+    """Adding a robot (manual/discovery) creates its real folder + robot.json
+    immediately, so the robot AND its IP survive a registry rebuild - the
+    new-line workflow is durable from second one."""
+    from backupviewer.api import Api
+    _iso(monkeypatch, tmp_path)
+    root = tmp_path / "lib"
+    root.mkdir()
+    settings.set_value("library_root", str(root))
+
+    e = Api().lib_add({"robot": "NEWLINE1", "plant": "P", "line": "L9",
+                       "ips": ["10.1.2.3"]})["data"]
+    d = root / "P" / "L9" / "NEWLINE1"
+    assert d.is_dir()                                              # folder exists NOW
+    rj = json.loads((d / "robot.json").read_text(encoding="utf-8"))
+    assert rj["id"] == e["id"] and rj["ips"] == ["10.1.2.3"]
+
+    (settings.app_dir() / "library.json").unlink()                 # fresh machine / wiped cache
+    data = library.scan_library_root(root)
+    assert len(data["robots"]) == 1
+    e2 = data["robots"][0]
+    assert e2["robot"] == "NEWLINE1" and e2["ips"] == ["10.1.2.3"]
+    assert e2["id"] == e["id"]
+
+
+def test_lib_bulk_add_materializes_folders(monkeypatch, tmp_path):
+    from backupviewer.api import Api
+    _iso(monkeypatch, tmp_path)
+    root = tmp_path / "lib"
+    root.mkdir()
+    settings.set_value("library_root", str(root))
+
+    drafts = [{"robot": "D1", "ips": ["10.0.0.1"]}, {"robot": "D2", "ips": ["10.0.0.2"]}]
+    res = Api().lib_bulk_add(drafts, "P", "L")["data"]
+    assert len(res["added"]) == 2
+    assert (root / "P" / "L" / "D1" / "robot.json").is_file()
+    assert (root / "P" / "L" / "D2" / "robot.json").is_file()
+
+    settings.set_value("library_root", str(tmp_path / "gone"))     # unreachable root
+    bad = Api().lib_bulk_add([{"robot": "D3"}], "P", "L")
+    assert bad["ok"] is False and bad["error"]["code"] == "BAD_PATH"
+
+
+def test_lib_list_rescans_when_tree_changes(monkeypatch, tmp_path):
+    """The Explorer-add field bug: a folder copied into the library shows up on
+    the next listing - no manual rescan, no app restart."""
+    from backupviewer.api import Api
+    _iso(monkeypatch, tmp_path)
+    root = tmp_path / "lib"
+    _make_robot(root, "P", "L", "R1", [("2026_01_01", "12_00_00", 1_600_000_000)], rid="rid-1")
+    settings.set_value("library_root", str(root))
+    api = Api()
+    assert [e["robot"] for e in api.lib_list()["data"]["robots"]] == ["R1"]
+
+    _make_robot(root, "P", "L", "R2", [("2026_02_02", "09_00_00", 1_700_000_000)], rid="rid-2")
+    names = sorted(e["robot"] for e in api.lib_list()["data"]["robots"])
+    assert names == ["R1", "R2"]                                   # picked up automatically
+
+    calls = []
+    real = library.scan_library_root
+    monkeypatch.setattr(library, "scan_library_root", lambda r: calls.append(r) or real(r))
+    api.lib_list()                                                 # unchanged tree
+    assert calls == []                                             # -> served from cache, no scan
+
+
+def test_scan_reports_absorbed_copies(monkeypatch, tmp_path):
+    """A copied folder carrying the original's robot.json folds into that robot
+    by identity (the anti-duplicate design). The scan must SAY so — silent
+    absorption reads as 'my copied folder never showed up' (the WOWOW case)."""
+    _iso(monkeypatch, tmp_path)
+    root = tmp_path / "lib"
+    _make_robot(root, "P", "DHB01", "R1", [("2026_01_01", "12_00_00", 1_600_000_000)], rid="rid-1")
+    # a copy of the robot dropped under a DIFFERENT line, robot.json included
+    copy = _make_robot(root, "P", "WOWOW", "R1", [
+        ("2026_06_25", "16_12_02", 1_700_000_000),
+        ("2026_06_30", "08_55_42", 1_700_100_000),
+    ], rid="rid-1")
+    assert (copy / "robot.json").is_file()
+
+    data = library.scan_library_root(root)
+    assert len(data["robots"]) == 1                             # no twin spawned
+    e = data["robots"][0]
+    assert e["line"] == "DHB01"                                 # the original wins
+    assert len(e["backups"]) == 3                               # copy's snapshots joined
+    assert data["scan_absorbed"] == [{"robot": "R1", "count": 2}]
+
+    # report-only: the toast belongs to THIS scan — never cached to disk
+    cache = json.loads((settings.app_dir() / "library.json").read_text(encoding="utf-8"))
+    assert "scan_absorbed" not in cache
+
+
+def test_scan_absorbed_absent_when_nothing_absorbed(monkeypatch, tmp_path):
+    _iso(monkeypatch, tmp_path)
+    root = tmp_path / "lib"
+    _make_robot(root, "P", "L", "R1", [("2026_01_01", "12_00_00", 1_600_000_000)], rid="rid-1")
+    data = library.scan_library_root(root)
+    assert "scan_absorbed" not in data
+
+
+def test_list_backup_jobs_endpoint(monkeypatch, tmp_path):
+    from backupviewer.api import Api
+    _iso(monkeypatch, tmp_path)
+
+    class _Job:
+        def __init__(self, jid, status):
+            self._s = {"id": jid, "status": status, "host": "10.0.0.9",
+                       "robot": "R1", "total": 10, "done": 4}
+
+        def snapshot(self):
+            return dict(self._s)
+
+    api = Api()
+    api._jobs["j1"] = _Job("j1", "downloading")
+    api._jobs["j2"] = _Job("j2", "done")
+    res = api.list_backup_jobs()["data"]
+    by = {j["id"]: j for j in res["jobs"]}
+    assert set(by) == {"j1", "j2"}
+    assert by["j1"]["status"] == "downloading" and by["j1"]["robot"] == "R1"
+
+
+def test_watch_step_debounce(monkeypatch, tmp_path):
+    """The watcher fires once, after a burst of changes settles: baseline tick
+    never fires; each change arms; the first quiet tick fires."""
+    from backupviewer.api import _watch_step
+    last, pending, fire = _watch_step(None, False, "s1")           # boot baseline
+    assert (last, pending, fire) == ("s1", False, False)
+    last, pending, fire = _watch_step(last, pending, "s2")         # change seen
+    assert (last, pending, fire) == ("s2", True, False)
+    last, pending, fire = _watch_step(last, pending, "s3")         # still churning
+    assert (last, pending, fire) == ("s3", True, False)
+    last, pending, fire = _watch_step(last, pending, "s3")         # quiet -> fire once
+    assert (last, pending, fire) == ("s3", False, True)
+    last, pending, fire = _watch_step(last, pending, "s3")         # stays quiet -> silent
+    assert (last, pending, fire) == ("s3", False, False)

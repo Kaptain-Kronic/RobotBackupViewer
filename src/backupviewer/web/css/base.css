@@ -78,19 +78,21 @@ body { overflow: hidden; }
 #app {
   display: flex;
   flex-direction: column;
-  /* vh units ignore CSS zoom: at 110% scale, 100vh would be 110% of the real
-     window and the footer would slide off-screen. Dividing by the zoom factor
-     makes header + footer stay stapled at any scale. */
-  height: calc(100vh / var(--app-zoom, 1));
+  height: 100vh;
 }
 
-/* ---- topbar ---- */
+/* ---- topbar ----
+   Chrome is pinned to --chrome-fs (the "chrome scale" setting), NOT the root
+   font-size: cranking the text size grows the DATA, and the header no longer
+   swells until only a few rows fit. Sizes inside chrome blocks are em (track
+   --chrome-fs), never rem (that's the content unit). */
 #topbar {
   display: flex;
   align-items: center;
   flex-wrap: wrap;        /* skinny windows: right-side buttons drop to a row, never clip */
-  gap: 0.35rem 1.25rem;
-  padding: 0.65rem 1.25rem;
+  font-size: var(--chrome-fs, 15px);
+  gap: 0.35em 1.25em;
+  padding: 0.65em 1.25em;
   flex: none;
 }
 
@@ -105,13 +107,13 @@ body { overflow: hidden; }
 #logo svg { color: var(--accent); flex: none; }
 #logo.clickable { cursor: pointer; }
 #logo.clickable:hover .logo-text { color: var(--accent); }
-.logo-text { font-size: 1.05rem; font-weight: 600; color: var(--text); letter-spacing: -0.02em; }
+.logo-text { font-size: 1.05em; font-weight: 600; color: var(--text); letter-spacing: -0.02em; }
 .logo-accent { color: var(--accent); }
 
 #tabbar {
   display: flex;
   flex-wrap: wrap;  /* tabs stack into a second row instead of scrolling away */
-  gap: 0.1rem 0.15rem;
+  gap: 0.1em 0.15em;
   flex: 1 1 auto;
   min-width: 0;
 }
@@ -121,9 +123,9 @@ body { overflow: hidden; }
   background: none;
   border: none;
   font: inherit;
-  font-size: 0.85rem;
+  font-size: 0.85em;
   color: var(--sub);
-  padding: 0.35rem 0.7rem;
+  padding: 0.35em 0.7em;
   border-radius: var(--radius);
   cursor: pointer;
   transition: color var(--trans), background var(--trans);
@@ -135,16 +137,16 @@ body { overflow: hidden; }
 .tab-btn:disabled { color: var(--sub-alt); cursor: default; opacity: 0.55; }
 .tab-btn .tab-num { opacity: 0.5; font-size: 0.75em; margin-right: 0.3em; }
 
-#topbar-right { display: flex; gap: 0.3rem; flex: none; }
+#topbar-right { display: flex; gap: 0.3em; flex: none; }
 
 .icon-btn {
   appearance: none;
   background: none;
   border: none;
   font: inherit;
-  font-size: 0.8rem;
+  font-size: 0.8em;
   color: var(--sub);
-  padding: 0.35rem 0.65rem;
+  padding: 0.35em 0.65em;
   border-radius: var(--radius);
   cursor: pointer;
   transition: color var(--trans), background var(--trans);
@@ -187,16 +189,37 @@ body { overflow: hidden; }
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 1rem;
-  padding: 0.45rem 1.25rem;
-  font-size: 0.75rem;
+  gap: 1.3em;
+  padding: 0.6em 1.65em;
+  font-size: calc(var(--chrome-fs, 15px) * 0.75);
   color: var(--sub);
   flex: none;
   user-select: none;
 }
+
+/* the global progress strip: a slim row between #view and #statusbar that the
+   router never touches — running backups + busy ops stay visible on EVERY
+   screen. Hidden (zero height) when idle. */
+#jobstrip {
+  display: flex; align-items: center; gap: 0.9em;
+  flex: none; padding: 0.5em 1.6em;
+  border-top: 1px solid var(--edge-soft, transparent);
+  background: var(--bg2); font-size: calc(var(--chrome-fs, 15px) * 0.78);
+  color: var(--sub);
+}
+#jobstrip .membar { flex: 1 1 auto; min-width: 0; }
+#jobstrip .mb-label { font-size: 1em; }
+#jobstrip .btn { flex: none; padding: 0.2em 0.7em; font-size: 0.95em; }
+#jobstrip .jobstrip-cancel { color: var(--error); }
+#jobstrip .jobstrip-busy { display: flex; align-items: center; gap: 0.5rem; flex: none; }
+#jobstrip .busy-pulse {
+  width: 0.55rem; height: 0.55rem; border-radius: 50%;
+  background: var(--accent); animation: busypulse 1.1s ease-in-out infinite;
+}
+@keyframes busypulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
 #statusbar .sep { margin: 0 0.5em; opacity: 0.45; }
 #statusbar .accent { color: var(--accent); }
-#statusbar .credit { font-size: 0.66rem; color: var(--sub-alt); margin-left: 0.6em; }
+#statusbar .credit { font-size: 0.88em; color: var(--sub-alt); margin-left: 0.6em; }
 
 .hidden { display: none !important; }
 

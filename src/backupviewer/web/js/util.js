@@ -73,7 +73,10 @@ window.BV = {};
     toastTimer = setTimeout(function () { toastEl.classList.remove("show"); }, ms || 1800);
   };
 
-  /* simple modal helper; returns {close} */
+  /* simple modal helper; returns {close}. opts.beforeClose() -> false blocks a
+     dismissal (backdrop / Esc / cancel) — the unsaved-work guard. close(true)
+     bypasses it for a committed save or an explicit discard; the check is
+     strictly === true so event objects passed by listeners can't bypass. */
   BV.modal = function (title, bodyEl, opts) {
     var root = document.getElementById("modal-root");
     root.innerHTML = "";
@@ -84,7 +87,8 @@ window.BV = {};
     m.appendChild(body);
     root.appendChild(m);
     root.classList.remove("hidden");
-    function close() {
+    function close(force) {
+      if (force !== true && opts && opts.beforeClose && !opts.beforeClose()) return;
       root.classList.add("hidden");
       root.innerHTML = "";
       document.removeEventListener("keydown", onKey, true);
@@ -105,6 +109,22 @@ window.BV = {};
     return !document.getElementById("modal-root").classList.contains("hidden");
   };
 
+  /* opt-in unsaved-work guard for BV.modal (pass as opts.beforeClose): while
+     dirty() is true, a dismissal first warns, and only a SECOND attempt within
+     4s discards — a single stray click outside the window can never eat work.
+     (100% of theme-editor testers lost near-finished themes to exactly that.) */
+  BV.dirtyGuard = function (dirty, what) {
+    var armedAt = 0;
+    return function () {
+      if (!dirty()) return true;
+      var now = Date.now();
+      if (now - armedAt < 4000) return true;
+      armedAt = now;
+      BV.toast("unsaved " + (what || "changes") + " — press again to discard", 2600);
+      return false;
+    };
+  };
+
   /* small anchored context menu (right-click-style popup). items is a list of
      {label, onClick, danger?}. The menu floats just under anchorEl and dismisses
      itself on outside-click, Esc, scroll, or resize. Returns {close}. */
@@ -119,20 +139,13 @@ window.BV = {};
       });
       menu.appendChild(b);
     });
-    /* Append to <html>, OUTSIDE body's CSS zoom (body.style.zoom = ui_scale).
-       A position:fixed element INSIDE the zoomed body can't be positioned
-       reliably at zoom != 1 (its top/left saturate - the menu flies to a corner).
-       Out here, fixed coords == the visual viewport, which is exactly the space
-       getBoundingClientRect and window.innerWidth report, so positioning is
-       straightforward; we re-apply the UI scale to the menu itself with a
-       transform (reliable, unlike fixed+zoom). */
+    /* Append to <html> so no ancestor's overflow can clip it. (The page-zoom
+       era needed a transform compensation here; the zoom is retired with the
+       v0.98 chrome/content scale split, so fixed coords just work.) */
     document.documentElement.appendChild(menu);
-    var z = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--app-zoom")) || 1;
-    menu.style.transformOrigin = "top left";
-    menu.style.transform = "scale(" + z + ")";
 
-    var r = anchorEl.getBoundingClientRect();   /* visual viewport px */
-    var mw = menu.offsetWidth * z, mh = menu.offsetHeight * z;   /* on-screen size */
+    var r = anchorEl.getBoundingClientRect();
+    var mw = menu.offsetWidth, mh = menu.offsetHeight;
     var left = r.left;
     if (left + mw > window.innerWidth - 8) left = Math.max(8, r.right - mw);  /* spill leftward */
     var top = r.bottom + 4;

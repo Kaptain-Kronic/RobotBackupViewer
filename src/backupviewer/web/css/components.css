@@ -137,26 +137,28 @@ table.tbl { border-collapse: collapse; width: 100%; font-size: 0.85rem; font-fam
 .pill.ghost { background: transparent; color: var(--sub); border: 1px solid var(--sub-alt); }
 
 /* ---- inputs ---- */
+/* em-sized on purpose: in #topbar this tracks --chrome-fs (chrome scale), in a
+   tab's #toolbar it tracks the content font — right size in both homes */
 .search-box {
-  display: flex; align-items: center; gap: 0.5rem;
+  display: flex; align-items: center; gap: 0.5em;
   background: var(--bg2);
   border: 1px solid var(--edge);
   border-radius: var(--radius);
-  padding: 0.3rem 0.7rem;
+  padding: 0.3em 0.7em;
   flex: 1 1 14em;          /* grows into spare row space, shrinks instead of clipping */
   min-width: 9em;
   max-width: 24em;
   transition: box-shadow var(--trans);
 }
 .search-box:focus-within { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 55%, transparent); }
-.search-box .si { color: var(--sub); font-size: 0.8rem; user-select: none; }
+.search-box .si { color: var(--sub); font-size: 0.8em; user-select: none; }
 .search-box input {
   appearance: none; background: none; border: none; outline: none;
-  font: inherit; font-size: 0.85rem; color: var(--text);
+  font: inherit; font-size: 0.85em; color: var(--text);
   flex: 1 1 auto; min-width: 0;
 }
 .search-box input::placeholder { color: var(--sub); }
-.search-box .match-count { color: var(--sub); font-size: 0.72rem; white-space: nowrap; }
+.search-box .match-count { color: var(--sub); font-size: 0.72em; white-space: nowrap; }
 
 select.sel, button.btn {
   appearance: none;
@@ -298,6 +300,14 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .modal .contrast-hint { font-size: 0.7rem; color: var(--sub); padding: 0.1rem 0.7rem 0.5rem; }
 .modal .contrast-hint .warn { color: var(--warn); }
 .modal .contrast-hint .note { opacity: 0.7; }
+
+/* unsaved-draft restore offer at the top of the theme editor */
+.modal .draft-bar {
+  display: flex; align-items: center; gap: 0.5rem;
+  font-size: 0.78rem; color: var(--warn); padding: 0.25rem 0.7rem 0.5rem;
+}
+.modal .draft-bar span { flex: 1 1 auto; }
+.modal .draft-bar .btn { padding: 0.15rem 0.55rem; font-size: 0.74rem; }
 .modal .editor-actions {
   display: flex; justify-content: flex-end; gap: 0.5rem; padding: 0.6rem 0.7rem 0.3rem;
 }
@@ -895,6 +905,13 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 #global-search input { font-size: 0.8rem; }
 
 /* ---- settings rows ---- */
+/* section headers in the ⚙ settings panel (appearance / text & scale / library) */
+.set-head {
+  color: var(--sub); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em;
+  padding: 0.7rem 0.7rem 0.15rem; border-bottom: 1px solid var(--edge-soft, transparent);
+  margin-bottom: 0.25rem;
+}
+.set-head:first-child { padding-top: 0.1rem; }
 .set-row { display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; padding: 0.45rem 0.7rem; }
 .set-row .name { color: var(--text); font-size: 0.88rem; }
 .set-row .seg { flex: none; }
@@ -905,13 +922,33 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 }
 
 /* ---- home / library (the main menu) ---- */
-.home-lib-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin: 0.2rem 0 1.1rem; }
+/* the ONE action row, pinned while the plant tree scrolls (same sticky recipe
+   as .hero.stick: negative top cancels #view's padding, full-bleed margins +
+   opaque background stop rows peeking past its edges) */
+.home-lib-head {
+  position: sticky; top: -0.8rem; z-index: 5; background: var(--bg);
+  margin: -0.75rem -1.25rem 1.1rem; padding: 0.95rem 1.45rem 0.6rem;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 0.5rem 1.2rem; flex-wrap: wrap;
+}
 .home-lib-head h2 { font-size: 1.5rem; color: var(--text); text-transform: lowercase; margin: 0; letter-spacing: -0.01em; }
+.home-lib-selacts { display: flex; align-items: center; gap: 0.35rem; }
+.home-lib-selacts .btn { padding: 0.22rem 0.6rem; font-size: 0.8rem; }
+.home-lib-selacts .btn:disabled { opacity: 0.45; cursor: default; }
+.lib-sel-count { font-size: 0.78rem; min-width: 5.2em; text-align: right; }
 .home-lib-actions { display: flex; align-items: center; gap: 0.4rem; flex: none; }
 .lib-add-robot { font-size: 0.92rem; padding: 0.4rem 0.85rem; }
 .lib-cancel-all { color: var(--error); }
 .lib-cancel-all:hover { color: var(--error); background: color-mix(in srgb, var(--error) 14%, var(--bg2)); }
 .empty-lib { color: var(--sub); font-size: 0.9rem; padding: 0.8rem 0.2rem; }
+
+/* plant/line combo: input + a "▾" picker of existing values */
+.lf-combo { display: flex; align-items: center; gap: 0.3rem; flex: 1 1 auto; min-width: 0; }
+.lf-combo .lf-input { flex: 1 1 auto; min-width: 0; }
+.lf-combo-btn { flex: none; padding: 0.22rem 0.5rem; font-size: 0.72rem; }
+
+/* line label on the grouped compare-picker rows */
+.modal .opt-row .cmp-pick-line { margin-left: auto; color: var(--sub); font-size: 0.72rem; }
 
 .lib-plant { margin-bottom: 1rem; }
 .lib-plant-h {
@@ -983,7 +1020,7 @@ button.btn.danger:disabled { opacity: 0.5; cursor: default; }
   display: flex; flex-direction: column;
   /* a long list (e.g. compare-from-library) scrolls inside the menu instead of
      running off-screen; /zoom keeps the rendered cap near the viewport at any scale */
-  max-height: calc(80vh / var(--app-zoom, 1)); overflow-y: auto;
+  max-height: 80vh; overflow-y: auto;
 }
 .ctx-item {
   appearance: none; background: none; border: none; font: inherit; text-align: left;

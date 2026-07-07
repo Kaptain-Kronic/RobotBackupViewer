@@ -317,7 +317,23 @@
         if (working.subAlt !== derivedSubAlt(working)) overridden.subAlt = true;
       }
       var committed = false;
+      var dirty = false;
       var advInputs = {};
+
+      /* draft autosave: every edit persists a crash-proof draft to settings.json
+         (debounced); cleared on save or when the user declines a restore. This
+         is the net under the dirty-guard — even a power cut can't eat a theme. */
+      function writeDraft() {
+        var d = { isNew: isNew, prevId: prevId, name: nameInput.value || "",
+                  colors: working, overridden: overridden };
+        if (BV.state.settings) BV.state.settings.theme_draft = d;
+        BV.api.call("set_setting", "theme_draft", d).catch(function () {});
+      }
+      var draftWrite = BV.debounce(writeDraft, 500);
+      function clearDraft() {
+        if (BV.state.settings) BV.state.settings.theme_draft = null;
+        BV.api.call("set_setting", "theme_draft", null).catch(function () {});
+      }
 
       function applyWorking() { BV.theme.apply({ id: "__preview__", colors: working }); }
       function syncAdvancedInputs() {
@@ -330,6 +346,8 @@
         applyWorking();
         syncAdvancedInputs();
         updateContrast();
+        dirty = true;
+        draftWrite();
       }
       function colorRow(def, isAdv) {
         var rowEl = BV.el("div", { class: "editor-row" });
@@ -368,8 +386,35 @@
         type: "text", class: "editor-name", placeholder: "theme name",
         value: theme ? (theme.name || "") : "",
       });
+      nameInput.addEventListener("input", function () { dirty = true; draftWrite(); });
       nameRow.appendChild(nameInput);
       body.appendChild(nameRow);
+
+      /* offer a leftover draft (crash / discarded session) for THIS editor
+         context: the same theme being re-edited, or any new-theme session */
+      var draft = (BV.state.settings || {}).theme_draft;
+      if (draft && draft.colors && (isNew ? draft.isNew : draft.prevId === prevId)) {
+        var draftBar = BV.el("div", { class: "draft-bar" });
+        draftBar.appendChild(BV.el("span", null, "unsaved edits from last time" +
+          (draft.name ? " (“" + BV.esc(draft.name) + "”)" : "")));
+        var restoreBtn = BV.el("button", { class: "btn" }, "restore");
+        var dropBtn = BV.el("button", { class: "btn" }, "discard");
+        restoreBtn.addEventListener("click", function () {
+          Object.keys(VAR_MAP).forEach(function (k) {
+            if (draft.colors[k]) working[k] = normalizeHex(draft.colors[k]);
+          });
+          Object.keys(overridden).forEach(function (k) { delete overridden[k]; });
+          Object.keys(draft.overridden || {}).forEach(function (k) { overridden[k] = true; });
+          nameInput.value = draft.name || nameInput.value;
+          dirty = true;
+          applyWorking(); syncAdvancedInputs(); updateContrast();
+          draftBar.remove();
+        });
+        dropBtn.addEventListener("click", function () { clearDraft(); draftBar.remove(); });
+        draftBar.appendChild(restoreBtn);
+        draftBar.appendChild(dropBtn);
+        body.insertBefore(draftBar, body.firstChild);
+      }
 
       MAINS.forEach(function (d) { body.appendChild(colorRow(d, false)); });
       body.appendChild(hint);
@@ -398,6 +443,7 @@
             if (i >= 0) list[i] = saved; else list.push(saved);
             BV.theme.themes = list;
             BV.theme.applyById(saved.id, true);
+            clearDraft();                         /* safely on disk — the net comes down */
             BV.toast("saved " + nm);
           })
           .catch(function () { BV.toast("save failed"); });
@@ -414,6 +460,7 @@
       body.appendChild(actions);
 
       var modal = BV.modal(isNew ? "new custom theme" : "edit custom theme", body, {
+        beforeClose: BV.dirtyGuard(function () { return dirty && !committed; }, "theme edits"),
         onClose: function () { if (!committed) BV.theme.applyById(restoreId, false); },
       });
 
