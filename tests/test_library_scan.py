@@ -285,9 +285,13 @@ def test_lib_bulk_add_materializes_folders(monkeypatch, tmp_path):
     assert (root / "P" / "L" / "D1" / "robot.json").is_file()
     assert (root / "P" / "L" / "D2" / "robot.json").is_file()
 
-    settings.set_value("library_root", str(tmp_path / "gone"))     # unreachable root
-    bad = Api().lib_bulk_add([{"robot": "D3"}], "P", "L")
-    assert bad["ok"] is False and bad["error"]["code"] == "BAD_PATH"
+    # a brand-new library (fresh machine / first line: the root folder was never
+    # created) is BUILT by the add, not refused — the field new-line fix
+    fresh = tmp_path / "brand" / "new" / "root"
+    settings.set_value("library_root", str(fresh))
+    ok = Api().lib_bulk_add([{"robot": "D3", "ips": ["10.0.0.3"]}], "P2", "L9")["data"]
+    assert len(ok["added"]) == 1
+    assert (fresh / "P2" / "L9" / "D3" / "robot.json").is_file()   # whole tree created
 
 
 def test_lib_list_rescans_when_tree_changes(monkeypatch, tmp_path):
@@ -318,7 +322,7 @@ def test_scan_reports_absorbed_copies(monkeypatch, tmp_path):
     absorption reads as 'my copied folder never showed up' (the WOWOW case)."""
     _iso(monkeypatch, tmp_path)
     root = tmp_path / "lib"
-    _make_robot(root, "P", "DHB01", "R1", [("2026_01_01", "12_00_00", 1_600_000_000)], rid="rid-1")
+    _make_robot(root, "P", "LINEB01", "R1", [("2026_01_01", "12_00_00", 1_600_000_000)], rid="rid-1")
     # a copy of the robot dropped under a DIFFERENT line, robot.json included
     copy = _make_robot(root, "P", "WOWOW", "R1", [
         ("2026_06_25", "16_12_02", 1_700_000_000),
@@ -329,7 +333,7 @@ def test_scan_reports_absorbed_copies(monkeypatch, tmp_path):
     data = library.scan_library_root(root)
     assert len(data["robots"]) == 1                             # no twin spawned
     e = data["robots"][0]
-    assert e["line"] == "DHB01"                                 # the original wins
+    assert e["line"] == "LINEB01"                                 # the original wins
     assert len(e["backups"]) == 3                               # copy's snapshots joined
     assert data["scan_absorbed"] == [{"robot": "R1", "count": 2}]
 

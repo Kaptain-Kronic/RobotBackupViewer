@@ -13,6 +13,7 @@
   var _selected = {};           /* selected robot ids (object used as a Set) */
   var _robots = [];             /* last loaded library list, for client-side collision checks */
   var _lastAbsorbMsg = "";      /* absorption toast dedupe (same folders every rescan) */
+  var _lastClickedId = null;    /* shift+click range anchor (the last checkbox clicked) */
   var _showHidden = false;      /* reveal hidden robots in the list */
   var _showHiddenBtn = null;    /* the header toggle (shown only when some are hidden) */
   var _warnedTruncated = false; /* the scan-cap warning toast fires once per session */
@@ -117,10 +118,14 @@
     var mg = BV.el("button", { class: "btn lib-act-merge",
       title: "merge 2 selected duplicate robots into one" }, "merge");
     mg.addEventListener("click", function () { mergeSelectedInLine(_visibleRobots); });
+    var mv = BV.el("button", { class: "btn lib-act-move",
+      title: "move the selected robots (and their backups) to another plant/line" }, "move to…");
+    mv.addEventListener("click", function () { moveSelectedFlow(_visibleRobots); });
     selActs.appendChild(bk);
     selActs.appendChild(hd);
     selActs.appendChild(fx);
     selActs.appendChild(mg);
+    selActs.appendChild(mv);
     head.appendChild(selActs);
 
     var headActs = BV.el("div", { class: "home-lib-actions" });
@@ -252,11 +257,10 @@
       syncSelectionUI();
       return;
     }
-    var plants = {}, hiddenCount = 0;
-    _visibleRobots = [];
+    var plants = {}, hiddenCount = 0, anyVisible = false;
     robots.forEach(function (r) {
       if (r.hidden) { hiddenCount++; if (!_showHidden) return; }
-      _visibleRobots.push(r);
+      anyVisible = true;
       var pl = r.plant || "—", ln = r.line || "—";
       plants[pl] = plants[pl] || {};
       plants[pl][ln] = plants[pl][ln] || [];
@@ -264,7 +268,11 @@
     });
     updateHiddenToggle(hiddenCount);
     body.innerHTML = "";
-    if (!_visibleRobots.length) {
+    /* _visibleRobots is rebuilt below IN RENDER ORDER (sorted groups + sorted
+       robots), not in cache order — anything order-sensitive (shift+click
+       ranges) must see the list exactly as the user does */
+    _visibleRobots = [];
+    if (!anyVisible) {
       body.innerHTML = '<div class="empty-lib">all robots are hidden — use “show hidden” above.</div>';
       syncSelectionUI();
       return;
@@ -277,6 +285,7 @@
       var lines = plants[pl];
       groupKeys(lines).forEach(function (ln) {
         var lineRobots = lines[ln].sort(cmp);
+        lineRobots.forEach(function (r) { _visibleRobots.push(r); });
         var lineNode = BV.el("div", { class: "lib-line" });
         var lineHead = buildLineHead(ln, lineRobots);
         var lineBody = BV.el("div", { class: "lib-line-body" });
@@ -318,11 +327,37 @@
       (r.hidden ? " hidden-robot" : "") });
     row.setAttribute("data-robot-id", r.id);
 
-    var cb = BV.el("input", { type: "checkbox", class: "lf-check lib-check", title: "select" });
+    var cb = BV.el("input", { type: "checkbox", class: "lf-check lib-check",
+      title: "select (shift+click selects a range)" });
     cb.checked = !!_selected[r.id];
-    cb.addEventListener("click", function (e) { e.stopPropagation(); });
-    cb.addEventListener("change", function () {
-      if (cb.checked) _selected[r.id] = true; else delete _selected[r.id];
+    cb.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var on = cb.checked;               /* the checkbox has already toggled */
+      var ids = null, a = -1, b = -1;
+      if (e.shiftKey && _lastClickedId && _lastClickedId !== r.id && _libWrap) {
+        /* the range is the rows as the user SEES them: DOM order at click
+           time, skipping anything folded inside a collapsed plant/line —
+           never silently select robots that aren't on screen */
+        ids = Array.prototype.filter.call(
+          _libWrap.querySelectorAll(".lib-robot[data-robot-id]"),
+          function (el) { return el.offsetParent !== null; }
+        ).map(function (el) { return el.getAttribute("data-robot-id"); });
+        a = ids.indexOf(_lastClickedId);
+        b = ids.indexOf(r.id);
+      }
+      if (ids && a >= 0 && b >= 0 && a !== b) {
+        /* file-manager convention: the whole visible range between the last
+           click and this one takes THIS click's new state */
+        var lo = Math.min(a, b), hi = Math.max(a, b);
+        for (var i = lo; i <= hi; i++) {
+          if (on) _selected[ids[i]] = true; else delete _selected[ids[i]];
+        }
+      } else if (on) {
+        _selected[r.id] = true;
+      } else {
+        delete _selected[r.id];
+      }
+      _lastClickedId = r.id;
       syncSelectionUI();
     });
     row.appendChild(cb);
@@ -438,26 +473,40 @@
         sa.indeterminate = on > 0 && on < total;
       }
     });
-    var selN = _visibleRobots.filter(function (r) { return _selected[r.id]; }).length;
+    var selRobots = _visibleRobots.filter(function (r) { return _selected[r.id]; });
+    var selN = selRobots.length;
     var count = _libWrap.querySelector(".lib-sel-count");
     if (count) count.textContent = selN ? selN + " selected" : "";
-    ["backup", "hide", "fix"].forEach(function (k) {
+    ["backup", "hide", "fix", "move"].forEach(function (k) {
       var b = _libWrap.querySelector(".lib-act-" + k);
       if (b) b.disabled = selN === 0;
     });
+    var hd = _libWrap.querySelector(".lib-act-hide");
+    if (hd) {
+      /* the button says what it will DO: all-hidden selection -> unhide */
+      var unhide = selN > 0 && selRobots.every(function (r) { return r.hidden; });
+      hd.textContent = unhide ? "unhide" : "hide";
+      hd.title = unhide ? "unhide the selected robots"
+                        : "hide the selected robots from view";
+    }
     var mg = _libWrap.querySelector(".lib-act-merge");
     if (mg) mg.disabled = selN !== 2;                /* merge is strictly a pair */
   }
 
   /* ---- per-line actions ---- */
 
+  /* hide the selection — or UNHIDE it when every selected robot is hidden
+     (with "show hidden" on, select the hidden ones and the button flips, so
+     bulk unhide is one click instead of one row at a time) */
   function hideSelectedInLine(lineRobots) {
     var sel = selectedInLine(lineRobots);
     if (!sel.length) { BV.toast("select robots first"); return; }
+    var unhide = sel.every(function (r) { return r.hidden; });
     Promise.all(sel.map(function (r) {
-      return BV.api.call("lib_set_hidden", r.id, true).then(function () { delete _selected[r.id]; });
+      return BV.api.call("lib_set_hidden", r.id, !unhide).then(function () { delete _selected[r.id]; });
     })).then(function () {
-      BV.toast("hid " + sel.length + " — files kept on disk");
+      BV.toast(unhide ? "unhid " + sel.length
+                      : "hid " + sel.length + " — files kept on disk");
       refresh();
     }).catch(function (e) { BV.toast(e.message); });
   }
@@ -607,6 +656,56 @@
     }, { allowSwap: true });
   }
 
+  /* bulk "move to": relocate every selected robot — folders and backups move
+     with them — under a new plant/line in one dialog, instead of an edit per
+     robot. Names are kept; a same-named robot already at the destination merges
+     by the standard duplicate rules (identical snapshots skip, conflicts kept),
+     and a different robot whose name merely collides is refused, not merged. */
+  function moveSelectedFlow(robots) {
+    var sel = selectedInLine(robots);
+    if (!sel.length) { BV.toast("select robots first"); return; }
+    var body = BV.el("div", { class: "lib-form" });
+    body.appendChild(BV.el("div", { class: "scan-info dim" },
+      "move " + sel.length + " robot" + (sel.length === 1 ? "" : "s") +
+      " — and all of their backups — to:"));
+    var fPlant = inp(""), fLine = inp("");
+    body.appendChild(comboField("plant", fPlant, knownPlants));
+    body.appendChild(comboField("line", fLine, function () { return knownLines(fPlant.value); }));
+    var acts = BV.el("div", { class: "lf-actions" });
+    var cancel = BV.el("button", { class: "btn" }, "cancel");
+    var go = BV.el("button", { class: "btn primary" }, "move " + sel.length);
+    acts.appendChild(cancel);
+    acts.appendChild(go);
+    body.appendChild(acts);
+    var m = BV.modal("move to plant / line", body, {
+      beforeClose: BV.dirtyGuard(function () {
+        return !!(fPlant.value.trim() || fLine.value.trim());
+      }, "move destination"),
+    });
+    cancel.addEventListener("click", m.close);
+    fPlant.focus();
+    go.addEventListener("click", function () {
+      var plant = fPlant.value.trim(), line = fLine.value.trim();
+      if (!line) { BV.toast("a line name is required"); fLine.focus(); return; }
+      go.disabled = true;
+      var items = sel.map(function (r) {
+        return { id: r.id, plant: plant, line: line, robot: r.robot };
+      });
+      BV.api.call("lib_apply_renames", items).then(function (res) {
+        m.close(true);
+        var moved = (res.renamed || []).length, merged = (res.merged || []).length;
+        var failed = (res.failed || []).length;
+        var parts = [];
+        if (moved) parts.push("moved " + moved);
+        if (merged) parts.push("merged " + merged + " into existing");
+        if (failed) parts.push(failed + " failed");
+        BV.toast(parts.length ? parts.join(" · ") : "nothing to move", failed ? 5000 : undefined);
+        sel.forEach(function (r) { delete _selected[r.id]; });
+        refresh();
+      }).catch(function (e) { BV.toast(e.message); go.disabled = false; });
+    });
+  }
+
   /* the batched "Duplicate robots detected. Merge?" confirm (fix-names path) */
   function confirmMergeBatch(merges, onConfirm, onSkip) {
     var body = BV.el("div", { class: "lib-form" });
@@ -694,8 +793,7 @@
           BV.jobs.track(res.job_id, { robotId: r.id });
           setCancelAllVisible(true);
         }).catch(function (e) {
-          var slot = rowProgressSlot(r.id);
-          if (slot) slot.innerHTML = '<div class="lib-robot-result err">✗ ' + BV.esc(e.message) + "</div>";
+          renderRowProgress(r.id, { status: "error", error: e.message });
         });
         delete _selected[r.id];
       });
@@ -742,6 +840,16 @@
       else if (p.status === "cancelled") { cls = ""; txt = "cancelled"; }
       else { cls = "err"; txt = "✗ " + (p.error || "failed"); }
       slot.innerHTML = '<div class="lib-robot-result ' + cls + '">' + BV.esc(txt) + "</div>";
+      /* a long FTP error must not stretch the row sideways: CSS clamps it to
+         one ellipsized line; click (or hover) for the whole thing */
+      if (p.status === "error" && p.error) {
+        var res = slot.querySelector(".lib-robot-result");
+        res.title = p.error + "  (click for details)";
+        res.addEventListener("click", function (e) {
+          e.stopPropagation();
+          BV.toast(p.error, 7000);
+        });
+      }
       return;
     }
     var pct = p.total ? Math.round(100 * p.done / p.total) : 8;
@@ -1018,7 +1126,8 @@
     var adapterBtn = BV.el("button", { class: "btn disc-adapter", type: "button" }, "detecting…");
     var advToggle = BV.el("button", { class: "disc-advanced", type: "button" }, "advanced ▸");
     var advBox = BV.el("div", { class: "disc-adv-box hidden" });
-    var fSubnet = inp("", { placeholder: "192.168.1.0/24" });
+    /* a bare IP is enough — the backend assumes /24 unless a CIDR is given */
+    var fSubnet = inp("", { placeholder: "192.168.1.0" });
     var fPort = inp("21", { placeholder: "21" });
     advBox.appendChild(field("subnet", fSubnet));
     advBox.appendChild(field("port", fPort));
@@ -1033,7 +1142,7 @@
     var list = BV.el("div", { class: "scan-results" });
     var actions = BV.el("div", { class: "lf-actions" });
     var scanBtn = BV.el("button", { class: "btn" }, "scan");
-    var addBtn = BV.el("button", { class: "btn primary" }, "add");
+    var addBtn = BV.el("button", { class: "btn primary hidden" }, "add");
     addBtn.disabled = true;
     actions.appendChild(scanBtn);
     actions.appendChild(addBtn);
@@ -1106,6 +1215,9 @@
 
     function updateAddBtn() {
       var n = found.filter(function (h) { return sel[h.host]; }).length;
+      /* hidden (not just disabled) until something is selected — people kept
+         clicking a dead "add" before scanning */
+      addBtn.classList.toggle("hidden", n === 0);
       addBtn.disabled = n === 0;
       addBtn.textContent = n ? "add " + n : "add";
       var on = found.length && found.every(function (h) { return sel[h.host]; });

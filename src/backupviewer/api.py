@@ -1575,7 +1575,7 @@ class Api:
         """Sweep a subnet for FANUC controllers on a worker thread; poll via
         scan_progress. spec={cidr?, port?}; cidr defaults to the local /24."""
         spec = spec or {}
-        cidr = (spec.get("cidr") or "").strip() or discover.default_cidr()
+        cidr = discover.normalize_cidr(spec.get("cidr") or "") or discover.default_cidr()
         if not cidr:
             raise ApiError("BAD_SPEC", "could not determine a subnet to scan")
         job = discover.NetworkScanJob(cidr, port=spec.get("port", 21))
@@ -1602,9 +1602,14 @@ class Api:
     def lib_bulk_add(self, entries: list, plant: str = "", line: str = ""):
         """Add many drafts at once under one plant/line, skipping existing
         robots. Each added robot gets its on-disk folder + sidecar immediately
-        (files are law), so the batch requires a reachable library root."""
-        if not Path(settings.library_root()).is_dir():
-            raise ApiError("BAD_PATH", "the library folder is unreachable - cannot add robots")
+        (files are law) - and a brand-new library (fresh machine / first line,
+        root folder never created yet) is BUILT here, not refused."""
+        root = Path(settings.library_root())
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+        except OSError as ex:
+            raise ApiError("BAD_PATH",
+                           f"could not create the library folder {root}: {ex}")
         res = library.bulk_add(entries or [], plant=plant, line=line)
         materialized = []
         for e in res.get("added", []):

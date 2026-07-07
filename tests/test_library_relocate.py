@@ -486,6 +486,33 @@ def test_lib_apply_renames_batch(monkeypatch, tmp_path):
     assert (root / "P" / "L" / "NEW1").is_dir() and not (root / "P" / "L" / "OLD1").exists()
 
 
+def test_lib_apply_renames_bulk_move_to_new_line(monkeypatch, tmp_path):
+    """The bulk 'move to' flow: same names, new plant/line — folders and dated
+    backups travel (structure created as needed); a same-named robot already at
+    the destination merges by the standard duplicate rules."""
+    from backupviewer.api import Api
+    _iso(monkeypatch, tmp_path)
+    root = _lib(tmp_path)
+    for i in (1, 2):
+        r = root / "P" / "OLD" / f"R{i}"
+        _snap(r, f"2026_01_0{i}", "12_00_00", files=i, robot=f"R{i}", line="OLD", plant="P")
+        _sidecar(r, f"rid-{i}", "P", "OLD", f"R{i}")
+    dst2 = root / "P2" / "NEW" / "R2"                 # a same-named R2 already at the destination
+    _snap(dst2, "2026_03_03", "10_00_00", files=9, robot="R2", line="NEW", plant="P2")
+    _sidecar(dst2, "rid-d2", "P2", "NEW", "R2")
+    library.scan_library_root(root)
+
+    items = [{"id": "rid-1", "plant": "P2", "line": "NEW", "robot": "R1"},
+             {"id": "rid-2", "plant": "P2", "line": "NEW", "robot": "R2"}]
+    res = Api().lib_apply_renames(items)["data"]
+    assert len(res["renamed"]) == 1 and len(res["merged"]) == 1 and res["failed"] == []
+    assert (root / "P2" / "NEW" / "R1" / "2026_01_01" / "12_00_00").is_dir()   # moved whole
+    assert not (root / "P" / "OLD").exists()          # emptied source line pruned
+    surv = library.get_robot("rid-d2")                # destination owner survived the merge
+    assert len(surv["backups"]) == 2
+    assert library.get_robot("rid-1")["line"] == "NEW"
+
+
 def test_lib_merge_endpoint_multi_secondary_and_string_coercion(monkeypatch, tmp_path):
     from backupviewer.api import Api
     _iso(monkeypatch, tmp_path)

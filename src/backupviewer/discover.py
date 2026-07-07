@@ -69,6 +69,20 @@ def default_cidr() -> str:
         return ""
 
 
+def normalize_cidr(text: str) -> str:
+    """Meet users where they are: a bare IP ("192.0.2.5") means its /24 —
+    nobody on the shop floor should need to know CIDR notation. Anything with a
+    slash passes through; host bits are tolerated (strict=False downstream)."""
+    s = (text or "").strip()
+    if not s or "/" in s:
+        return s
+    try:
+        ipaddress.ip_address(s)
+    except ValueError:
+        return s                                   # not an IP - let validation speak
+    return s + "/24"
+
+
 def enumerate_hosts(cidr: str) -> list[str]:
     """Usable host addresses in a CIDR. A /32 (or /31) yields its literal address(es)."""
     net = ipaddress.ip_network(cidr, strict=False)

@@ -947,8 +947,14 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .lf-combo .lf-input { flex: 1 1 auto; min-width: 0; }
 .lf-combo-btn { flex: none; padding: 0.22rem 0.5rem; font-size: 0.72rem; }
 
-/* line label on the grouped compare-picker rows */
-.modal .opt-row .cmp-pick-line { margin-left: auto; color: var(--sub); font-size: 0.72rem; }
+/* compare picker: line sub-headers inside each plant section */
+.modal .cmp-line-head {
+  color: var(--accent); font-size: 0.78rem; font-weight: 600;
+  padding: 0.45rem 0.3rem 0.15rem; border-bottom: 1px solid var(--edge-soft, transparent);
+  margin-bottom: 0.15rem;
+}
+.modal .cmp-line-head:first-child { padding-top: 0.1rem; }
+.modal .opt-row.cmp-line-row { padding-left: 0.9rem; }
 
 .lib-plant { margin-bottom: 1rem; }
 .lib-plant-h {
@@ -993,9 +999,14 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .lib-robot-progress { flex: 1 1 16rem; min-width: 0; max-width: 24rem; }
 .lib-robot-progress:empty { display: none; }
 .lib-robot-progress .membar { margin-bottom: 0; }
-.lib-robot-result { font-size: 0.8rem; color: var(--sub); white-space: nowrap; }
+/* one ellipsized line, never a row-stretcher: long FTP errors clamp here and
+   open in full via click (toast) / hover (title) */
+.lib-robot-result {
+  font-size: 0.8rem; color: var(--sub); white-space: nowrap;
+  max-width: 34ch; overflow: hidden; text-overflow: ellipsis;
+}
 .lib-robot-result.ok { color: var(--ok); }
-.lib-robot-result.err { color: var(--error); }
+.lib-robot-result.err { color: var(--error); cursor: pointer; }
 .lib-robot-acts { display: flex; gap: 0.25rem; flex: none; }
 .lib-robot-acts .btn { padding: 0.24rem 0.6rem; font-size: 0.8rem; }
 .lib-robot-more { font-weight: 700; line-height: 1; }
@@ -1075,6 +1086,9 @@ button.btn.danger:disabled { opacity: 0.5; cursor: default; }
   position: fixed; bottom: 2.6rem; left: 50%; transform: translateX(-50%);
   background: var(--bg2); color: var(--text);
   border: 1px solid var(--edge); border-radius: var(--radius); padding: 0.5rem 1rem; font-size: 0.82rem;
+  /* long messages (full backup errors) wrap into a block instead of running
+     off-screen sideways */
+  max-width: min(64ch, 86vw); white-space: pre-wrap; overflow-wrap: break-word; text-align: left;
   box-shadow: 0 6px 24px rgba(0,0,0,0.4); z-index: 60;
   opacity: 0; transition: opacity 0.25s ease; pointer-events: none;
 }

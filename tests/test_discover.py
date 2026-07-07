@@ -50,6 +50,15 @@ def test_find_backup_roots_nested_and_empty(tmp_path):
     assert session.find_backup_roots(empty) == []
 
 
+def test_normalize_cidr_meets_users_where_they_are():
+    # a bare IP means its /24 - nobody should need to know CIDR notation
+    assert discover.normalize_cidr("192.0.2.0") == "192.0.2.0/24"
+    assert discover.normalize_cidr(" 10.0.0.5 ") == "10.0.0.5/24"      # host bits fine
+    assert discover.normalize_cidr("192.168.1.0/16") == "192.168.1.0/16"  # explicit wins
+    assert discover.normalize_cidr("") == ""                           # empty -> default kicks in
+    assert discover.normalize_cidr("not-an-ip") == "not-an-ip"         # let validation speak
+
+
 def test_find_backup_roots_reports_cap_truncation(tmp_path):
     # more backup roots than the cap -> the caller is TOLD, not silently shorted
     parent = tmp_path / "Latest"
