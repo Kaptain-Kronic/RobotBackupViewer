@@ -19,6 +19,7 @@ from . import compare
 from . import __version__
 from . import discover
 from . import ftpbackup
+from . import healthscan
 from . import library
 from . import search as search_mod
 from . import settings
@@ -964,8 +965,11 @@ class Api:
     def search_backup(self, query: str, side: str = "a"):
         # side="b" searches the compare robot - clicking a signal in a vs-mode
         # pane must search THAT robot, not always the primary one.
-        s = self._side_session(side)
+        return self._search_session(self._side_session(side), query)
 
+    def _search_session(self, s: BackupSession, query: str):
+        # the composition behind backup-wide search, session-explicit so the
+        # fleet health scan can run the same search over its own sessions
         def opt(builder, default):
             try:
                 return builder()
@@ -1383,10 +1387,11 @@ class Api:
         e = library.get_robot(robot_id)
         if e is None:
             raise ApiError("NOT_FOUND", "robot not in library")
-        path = e.get("latest_path", "") if which == "latest" else which
-        p = Path(path)
-        if not p.is_dir():
-            raise ApiError("NOT_FOUND", f"backup folder missing: {path}")
+        path = library.resolve_open_path(e, which)
+        p = Path(path) if path else None
+        if p is None or not p.is_dir():
+            raise ApiError("NOT_FOUND",
+                           f"backup folder missing: {path or '(no backup on disk)'}")
         if side == "b":
             self._need_session()  # comparing needs a primary first
             self._compare_session = BackupSession(p)
@@ -1785,6 +1790,31 @@ class Api:
             raise ApiError("NO_JOB", "unknown scan job")
         job.cancel()
         return True
+
+    # -- fleet health scan ------------------------------------------------------
+
+    @_endpoint
+    def health_checks(self):
+        """The scan-check registry (id/label/desc, display order) for the picker."""
+        return healthscan.check_list()
+
+    @_endpoint
+    def health_scan_start(self, robot_ids: list, checks: list, queries=None):
+        """Run selected checks (and/or free-text finds - a list of queries, each
+        its own report section) across the given library robots on a worker
+        thread; poll via scan_progress, stop via cancel_scan."""
+        by_id = {e.get("id"): e for e in library.load()["robots"]}
+        entries = [by_id[r] for r in (robot_ids or []) if r in by_id]
+        if not entries:
+            raise ApiError("BAD_SPEC", "no library robots to scan")
+        ids = healthscan.valid_ids(checks)
+        qs = healthscan.norm_queries(queries)
+        if not ids and not qs:
+            raise ApiError("BAD_SPEC", "pick at least one check or a find query")
+        job = healthscan.HealthScanJob(entries, ids, qs, search_fn=self._search_session)
+        self._scans[job.id] = job
+        threading.Thread(target=job.run, name="healthscan-" + job.id, daemon=True).start()
+        return {"job_id": job.id, "total": len(entries)}
 
     @_endpoint
     def lib_bulk_add(self, entries: list, plant: str = "", line: str = ""):

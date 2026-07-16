@@ -246,6 +246,24 @@ def set_hidden(robot_id: str, hidden: bool) -> dict | None:
     return update_robot(robot_id, {"hidden": bool(hidden)})
 
 
+def resolve_open_path(e: dict, which: str = "latest") -> str:
+    """The folder to open for a robot. 'latest' prefers the Latest mirror but
+    falls back to the newest dated snapshot still on disk - a stale or missing
+    mirror must not make a robot unopenable (the dated tree is the truth, the
+    mirror is a convenience copy). Any other value is an explicit backup-folder
+    path picked from the robot's history. Returns "" when nothing exists."""
+    if which != "latest":
+        return which
+    lp = e.get("latest_path", "")
+    if lp and Path(lp).is_dir():
+        return lp
+    for b in e.get("backups", []):          # newest-first
+        p = b.get("path", "")
+        if p and Path(p).is_dir():
+            return p
+    return ""
+
+
 def _within(path: Path, root: Path) -> bool:
     try:
         path.relative_to(root)

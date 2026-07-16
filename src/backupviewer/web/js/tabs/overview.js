@@ -241,6 +241,19 @@
     }).catch(function (e) { BV.toast(e.message); });
   }
 
+  /* diff the open backup against another dated snapshot of the same robot -
+     the "ran friday, broke monday - what changed?" one-click. The picked date
+     loads as the compare session (side b) and we land on #compare. */
+  function compareWith(b) {
+    var man = BV.state.manifest || {};
+    if (!man.robot_id) return;
+    BV.api.call("lib_open", man.robot_id, b.path, "b").then(function (cm) {
+      BV.state.compare = cm;
+      BV.toast("comparing with " + fmtBackupDate(b.taken));
+      location.hash = "#compare";
+    }).catch(function (e) { BV.toast(e.message); });
+  }
+
   function buildDatePicker() {
     var man = BV.state.manifest || {};
     var backups = man.backups || [];
@@ -256,6 +269,11 @@
         return {
           label: fmtBackupDate(b.taken) + (i === 0 ? "  · latest" : "") + (b.path === current ? "  ✓" : ""),
           onClick: function () { if (b.path !== current) switchBackup(b.path); },
+          /* every row except the open one gets a "vs" pill */
+          action: b.path === current ? undefined : {
+            label: "vs", title: "compare the open backup with this date",
+            onClick: function () { compareWith(b); },
+          },
         };
       }));
     });

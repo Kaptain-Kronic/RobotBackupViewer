@@ -203,11 +203,20 @@
     var mv = BV.el("button", { class: "btn lib-act-move",
       title: "move the selected robots (and their backups) to another plant/line" }, "move to…");
     mv.addEventListener("click", function () { moveSelectedFlow(_visibleRobots); });
+    var sc = BV.el("button", { class: "btn lib-act-scan",
+      title: "scan the selected robots' backups — DCS options, signatures, mastering, unused programs, or a find" },
+      "scan");
+    sc.addEventListener("click", function () {
+      var sel = _visibleRobots.filter(function (r) { return _cl.has(r.id); });
+      if (!sel.length) { BV.toast("select robots first"); return; }
+      BV.scanUI.open(sel);
+    });
     selActs.appendChild(bk);
     selActs.appendChild(hd);
     selActs.appendChild(fx);
     selActs.appendChild(mg);
     selActs.appendChild(mv);
+    selActs.appendChild(sc);
     head.appendChild(selActs);
 
     var headActs = BV.el("div", { class: "home-lib-actions" });
@@ -224,8 +233,10 @@
     _showHiddenBtn = BV.el("button", { class: "btn lib-show-hidden hidden",
       title: "show robots you've hidden" }, "show hidden");
     _showHiddenBtn.addEventListener("click", function () { _showHidden = !_showHidden; refresh(); });
+    /* "refresh library", not "rescan" - "scan" is the health-scan button now,
+       and this one re-reads folders, it doesn't scan backup contents */
     var rescanBtn = BV.el("button", { class: "btn lib-rescan",
-      title: "re-read the library folder from disk (picks up copied-in backups)" }, "rescan");
+      title: "re-read the library folder from disk (picks up copied-in backups)" }, "refresh library");
     rescanBtn.addEventListener("click", function () {
       rescanBtn.disabled = true;
       /* the tree stays up during the rescan; a slim bar above it shows the
@@ -375,7 +386,9 @@
     if (r.last_backup) meta.push("last " + BV.esc(r.last_backup));
     if (r.backups && r.backups.length) meta.push(r.backups.length + " saved");
     if (r.stale) meta.push('<span class="pill warn">missing</span>');
-    if (!r.latest_path && !r.stale) meta.push('<span class="pill ghost">no backup</span>');
+    if (!r.latest_path && !(r.backups && r.backups.length) && !r.stale) {
+      meta.push('<span class="pill ghost">no backup</span>');
+    }
     main.appendChild(BV.el("div", { class: "lib-robot-meta" },
       meta.join(' <span class="sep">·</span> ')));
     appendNote(main, r);
@@ -441,7 +454,11 @@
   }
 
   function openRobot(r) {
-    if (!r.latest_path) { BV.toast("no backup yet — take one"); return; }
+    /* a dead Latest mirror is fine - lib_open falls back to the newest dated
+       snapshot; only a robot with NO backups at all is unopenable */
+    if (!r.latest_path && !(r.backups && r.backups.length)) {
+      BV.toast("no backup yet — take one"); return;
+    }
     if (r.stale) { BV.toast("backup folder missing on disk"); return; }
     BV.api.call("lib_open", r.id, "latest").then(function (manifest) {
       BV.state.setManifest(manifest);
@@ -466,7 +483,7 @@
     var selN = selRobots.length;
     var count = _libWrap.querySelector(".lib-sel-count");
     if (count) count.textContent = selN ? selN + " selected" : "";
-    ["backup", "hide", "fix", "move"].forEach(function (k) {
+    ["backup", "hide", "fix", "move", "scan"].forEach(function (k) {
       var b = _libWrap.querySelector(".lib-act-" + k);
       if (b) b.disabled = selN === 0;
     });

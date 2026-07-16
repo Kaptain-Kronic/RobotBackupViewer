@@ -140,12 +140,25 @@ window.BV = {};
   BV.menu = function (anchorEl, items) {
     var menu = BV.el("div", { class: "ctx-menu" });
     items.forEach(function (it) {
-      var b = BV.el("button", { class: "ctx-item" + (it.danger ? " danger" : "") }, BV.esc(it.label));
+      /* it.action = {label,title,onClick}: a small trailing pill on the row with
+         its own click (e.g. the date-picker's "vs" -> compare with that date) */
+      var b = BV.el("button", { class: "ctx-item" + (it.danger ? " danger" : "") },
+        BV.esc(it.label) +
+        (it.action ? '<span class="ctx-act" title="' + BV.esc(it.action.title || "") + '">' +
+          BV.esc(it.action.label) + "</span>" : ""));
       b.addEventListener("click", function (e) {
         e.stopPropagation();
         close();
         if (it.onClick) it.onClick();
       });
+      var act = it.action && b.querySelector(".ctx-act");
+      if (act) {
+        act.addEventListener("click", function (e) {
+          e.stopPropagation();
+          close();
+          it.action.onClick();
+        });
+      }
       menu.appendChild(b);
     });
     /* Append to <html> so no ancestor's overflow can clip it. (The page-zoom
