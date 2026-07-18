@@ -82,7 +82,7 @@ One panel for backup hygiene and library tidy-up:
 | **registers** | R / PR / SR with comments, split into side-by-side columns on wide screens | `NUMREG.VA`, `POSREG.VA`, `STRREG.VA` |
 | **programs** | every program (incl. binary-only), ★ = callable from the PLC style table, syntax-highlighted source, calls / called-by panel + expandable call tree; macros sub-view | `*.LS`, `CELLIO.VA` |
 | **dcs** | safety: verify report, change history, signatures, code-styled safe-I/O logic | `DCSVRFY.DG`, `DCSCHGD*.DG` |
-| **3d view** (`0` key) | DCS cartesian zones drawn to scale — free orbit + seven snap views, ortho/persp, pan/zoom, per-zone show/hide, pendant detail inline | `DCSPOS.VA`, `DCSVRFY.DG` |
+| **3d view** (`0` key) | DCS cartesian zones drawn to scale — free orbit + viewport cube (26 snap directions), ortho/persp, pan/zoom, per-zone show/hide, pendant detail inline | `DCSPOS.VA`, `DCSVRFY.DG` |
 | **mh valves** | GM gripper / valve configuration (and magnet EOATs) | `MHGRIPDT.VA`, `MAG*.PC` |
 | **system vars** | the full `SYSTEM.VA` tree; KAREL `.PC` program variables | `SYSTEM.VA`, `*.VA`/`*.VR` |
 | **files** | raw browser for every file; text viewer + hex preview for binaries | everything |

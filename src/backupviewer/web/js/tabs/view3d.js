@@ -2,11 +2,14 @@
 
    Viewport (left) = hand-rolled SVG projection (BV.proj3d) - no WebGL, no
    libraries, so it renders fine even on the software-rendering rescue
-   path. Side panel (right) = every DCS check as a row: cartesian zones
-   get a show/hide checkbox + a color swatch matching the viewport;
-   joint/speed checks carry data only (nothing honest to draw without a
-   robot model); each row expands to its pendant-style detail
-   (BV.dcsDetail). Six fixed views + pan (drag) / zoom (wheel) / fit.
+   path. The camera is a free unbounded turntable: left-drag rotates
+   (invertible per-axis in settings), middle/shift-drag pans, wheel
+   zooms, and the viewport CUBE (top-right, rotates with the view) snaps
+   to any of 26 directions - faces, edges, corners. Side panel (right) =
+   every DCS check as a row: cartesian zones get a show/hide checkbox +
+   a color swatch matching the viewport; joint/speed checks carry data
+   only (nothing honest to draw without a robot model); each row expands
+   to its pendant-style detail (BV.dcsDetail).
    The robot itself is a base marker + axes today - an imported robot
    model would slot in as one more draw layer between grid and zones. */
 (function () {
@@ -16,16 +19,16 @@
 
   function st() {
     var s = BV.tabState("view3d");
-    if (!s.init) {
-      s.init = true;
-      s.view = "iso";
+    if (!s.init2) {      /* v2 state: the camera is ALWAYS the free orbit */
+      s.init2 = true;
+      s.az = -24.8;      /* turntable angles, unbounded */
+      s.el = 36.8;
       s.showDisabled = false;
-      s.hidden = {};   /* zone n -> true when unchecked */
-      s.group = 0;     /* 0 = all groups */
-      s.box = {};      /* per-view viewBox override from pan/zoom */
+      s.hidden = {};     /* zone n -> true when unchecked */
+      s.group = 0;       /* 0 = all groups */
+      s.box = null;      /* single pan/zoom override (null = auto-fit) */
+      s.persp = false;   /* orthographic by default */
     }
-    if (s.az === undefined) { s.az = -24.8; s.el = 36.8; } /* live orbit angles */
-    if (s.persp === undefined) s.persp = false; /* orthographic by default */
     return s;
   }
 
@@ -113,9 +116,7 @@
     R = R || 800;
 
     var persp = s.persp ? { center: C, dist: 3.5 * R } : null;
-    var proj = s.view === "orbit"
-      ? BV.proj3d.orbitProjector(s.az, s.el, persp)
-      : BV.proj3d.projector(s.view, persp);
+    var proj = BV.proj3d.orbitProjector(s.az, s.el, persp);
     svg._proj = proj;
     svg._center = C;
     svg._persp = persp;
@@ -134,7 +135,7 @@
     var c2 = proj.project(C);
     var fit = { x: c2[0] - fitR, y: c2[1] - fitR, w: 2 * fitR, h: 2 * fitR };
     svg._fitBox = fit;
-    var box = s.box[s.view] || fit;
+    var box = s.box || fit;
     svg.setAttribute("viewBox", box.x + " " + box.y + " " + box.w + " " + box.h);
 
     /* ---- scene layer (viewBox space): geometry only, never text ---- */
@@ -258,14 +259,98 @@
     ov.push('<text class="v3-hint" x="' + (rect.width - 10) + '" y="' + (rect.height - 8) +
       '" text-anchor="end" font-size="10.5">drag rotate · mid-drag pan · wheel zoom · dblclick fit</text>');
 
+    /* ---- viewport cube (top-right): rotates with the view, doubles as a
+       compass (you can SEE when you're under the floor). Click a face,
+       edge or corner to snap the camera to that direction - 26 targets,
+       named per the FANUC world frame. Purely rotational: projected with
+       the current basis, never with perspective or world offsets. ---- */
+    var bs = proj.basis;
+    function cpj(p) {
+      return [dot3(bs.right, p), -dot3(bs.up, p), dot3(bs.toViewer, p)];
+    }
+    var CS = 21, ccx = rect.width - 54, ccy = 54;
+    function cpx(p) {
+      var q = cpj(p);
+      return [ccx + q[0] * CS, ccy + q[1] * CS];
+    }
+    var cube = [];
+    CUBE_FACES.forEach(function (f) {
+      if (cpj(f.n)[2] < 0.03) return; /* backface */
+      var pts = f.corners.map(cpx).map(function (p) { return p[0] + "," + p[1]; });
+      cube.push('<polygon class="v3-cube-face" points="' + pts.join(" ") +
+        '" data-az="' + f.az + '" data-el="' + f.el + '"><title>' + f.label + ' view</title></polygon>');
+      var lc = cpx(f.n);
+      cube.push('<text class="v3-cube-lab" x="' + lc[0] + '" y="' + (lc[1] + 3) + '">' + f.label + "</text>");
+    });
+    CUBE_HITS.forEach(function (h) {
+      if (cpj(h.d)[2] < 0.1) return;
+      var p = cpx(h.at);
+      cube.push('<circle class="v3-cube-hit" cx="' + p[0] + '" cy="' + p[1] + '" r="' + h.r +
+        '" data-az="' + h.az + '" data-el="' + h.el + '"/>');
+    });
+    ov.push('<g class="v3-cube">' + cube.join("") + "</g>");
+
     ovl.innerHTML = ov.join("");
   }
 
-  /* ---- orbit / pan / zoom (per view, stored in tab state) ---- */
+  /* cube geometry: 6 labeled faces + 12 edge and 8 corner snap targets.
+     Directions live in the FANUC world frame (+X front, +Y left, +Z top);
+     each target's az/el is the turntable angle that LOOKS from there.
+     Top/bottom faces keep the canonical plan azimuths. */
+  var dot3 = function (a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; };
+  var CUBE_FACES = (function () {
+    var defs = [
+      { n: [1, 0, 0], label: "front", az: 0, el: 0 },
+      { n: [-1, 0, 0], label: "back", az: 180, el: 0 },
+      { n: [0, 1, 0], label: "left", az: 90, el: 0 },
+      { n: [0, -1, 0], label: "right", az: -90, el: 0 },
+      { n: [0, 0, 1], label: "top", az: 180, el: 90 },
+      { n: [0, 0, -1], label: "btm", az: 0, el: -90 },
+    ];
+    defs.forEach(function (f) {
+      var k = f.n[0] ? 0 : f.n[1] ? 1 : 2;
+      var a = (k + 1) % 3, b = (k + 2) % 3;
+      f.corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(function (uv) {
+        var p = [0, 0, 0];
+        p[k] = f.n[k];
+        p[a] = uv[0];
+        p[b] = uv[1];
+        return p;
+      });
+    });
+    return defs;
+  })();
+  var CUBE_HITS = (function () {
+    var out = [], i, j;
+    var R2D = 180 / Math.PI;
+    function target(v, r) {
+      var l = Math.sqrt(dot3(v, v));
+      var d = [v[0] / l, v[1] / l, v[2] / l];
+      out.push({
+        at: v, d: d, r: r,
+        az: Math.round(Math.atan2(d[1], d[0]) * R2D * 10) / 10,
+        el: Math.round(Math.asin(d[2]) * R2D * 10) / 10,
+      });
+    }
+    for (i = 0; i < 6; i++) {
+      for (j = i + 1; j < 6; j++) {
+        var n1 = CUBE_FACES[i].n, n2 = CUBE_FACES[j].n;
+        if (dot3(n1, n2) !== 0) continue; /* opposite faces share no edge */
+        target([n1[0] + n2[0], n1[1] + n2[1], n1[2] + n2[2]], 4.5);
+      }
+    }
+    [-1, 1].forEach(function (x) {
+      [-1, 1].forEach(function (y) {
+        [-1, 1].forEach(function (z) { target([x, y, z], 4); });
+      });
+    });
+    return out;
+  })();
 
-  function wireViewport(svg, s, redraw, viewSeg) {
-    function boxKey() { return s.view; }
-    function curBox() { return s.box[boxKey()] || svg._fitBox; }
+  /* ---- orbit / pan / zoom (stored in tab state) ---- */
+
+  function wireViewport(svg, s, redraw) {
+    function curBox() { return s.box || svg._fitBox; }
     /* preserveAspectRatio="meet" scales the viewBox UNIFORMLY and letterboxes
        the slack axis, so px -> viewBox conversion must use that ONE scale for
        both axes. (Using width/height independently made pan lag to a fraction
@@ -290,7 +375,7 @@
       k = nw / m.box.w;
       var cx = m.box.x + (e.clientX - m.ox) / m.sc;
       var cy = m.box.y + (e.clientY - m.oy) / m.sc;
-      s.box[boxKey()] = {
+      s.box = {
         x: cx - (cx - m.box.x) * k, y: cy - (cy - m.box.y) * k,
         w: m.box.w * k, h: m.box.h * k,
       };
@@ -302,14 +387,12 @@
       var pan = e.button === 1 || (e.button === 0 && e.shiftKey);
       if (!pan && e.button !== 0) return;
       e.preventDefault(); /* keep middle-click from starting autoscroll */
-      /* a drag out of a named view starts orbiting FROM that view's angles */
-      var a = BV.proj3d.PRESET_ANGLES[s.view];
       /* rotate about whatever sits at the viewport CENTER, not the world
          origin: when the view was panned, unproject the center point (at
          the scene center's depth, where ortho and perspective agree) and
          keep it pinned there while the angles change */
       var pv = null;
-      if (!pan && s.box[s.view] && svg._proj) {
+      if (!pan && s.box && svg._proj) {
         var bb = curBox();
         pv = svg._proj.unproject(bb.x + bb.w / 2, bb.y + bb.h / 2,
                                  svg._proj.depthOf(svg._center));
@@ -318,7 +401,7 @@
         mode: pan ? "pan" : "rotate", live: false,
         x: e.clientX, y: e.clientY,
         box: curBox(), sc: metrics().sc, pivot: pv,
-        az: a ? a[0] : s.az, el: a ? a[1] : s.el,
+        az: s.az, el: s.el,
       };
       /* synthetic pointer events (the probe) have no capturable pointerId */
       try { svg.setPointerCapture(e.pointerId); } catch (err) { /* noop */ }
@@ -328,35 +411,33 @@
       if (!drag) return;
       var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
       if (drag.mode === "pan") {
-        s.box[boxKey()] = {
+        s.box = {
           x: drag.box.x - dx / drag.sc, y: drag.box.y - dy / drag.sc,
           w: drag.box.w, h: drag.box.h,
         };
         redraw();
         return;
       }
-      /* rotate (spin-the-scene): a real drag - not click noise - leaves the
-         preset and becomes the live orbit view */
+      /* rotate: unbounded turntable - spin as far as you like, incl. over
+         the top. Vertical feel inverts app-wide via the settings toggles
+         (drag-down raises the camera by default - Cody's pick). */
       if (!drag.live && Math.abs(dx) + Math.abs(dy) < 3) return;
-      if (!drag.live) {
-        drag.live = true;
-        s.view = "orbit";
-        if (viewSeg && viewSeg.setActive) viewSeg.setActive("orbit");
-      }
-      s.az = drag.az - dx * 0.35;
-      s.el = Math.max(-89.5, Math.min(89.5, drag.el - dy * 0.35));
+      drag.live = true;
+      var prefs = BV.state.settings || {};
+      s.az = drag.az - dx * 0.35 * (prefs.v3_invert_x ? -1 : 1);
+      s.el = drag.el + dy * 0.35 * (prefs.v3_invert_y ? -1 : 1);
       if (drag.pivot) {
         var np = BV.proj3d.orbitProjector(s.az, s.el, svg._persp);
         var p2 = np.project(drag.pivot);
-        s.box.orbit = { x: p2[0] - drag.box.w / 2, y: p2[1] - drag.box.h / 2,
-                        w: drag.box.w, h: drag.box.h };
+        s.box = { x: p2[0] - drag.box.w / 2, y: p2[1] - drag.box.h / 2,
+                  w: drag.box.w, h: drag.box.h };
       }
       redraw();
     });
     ["pointerup", "pointercancel"].forEach(function (ev) {
       svg.addEventListener(ev, function () { drag = null; svg.classList.remove("dragging"); });
     });
-    svg.addEventListener("dblclick", function () { delete s.box[boxKey()]; redraw(); });
+    svg.addEventListener("dblclick", function () { s.box = null; redraw(); });
   }
 
   /* ---- side panel ---- */
@@ -531,25 +612,26 @@
 
       function redraw() { draw(svg, data, s, colors); }
 
-      /* toolbar: orbit + snap views · fit · show-disabled · group filter */
-      var viewSeg = BV.segmented(
-        [{ id: "orbit", label: "orbit", title: "free rotate — drag in the viewport" }].concat(
-          BV.proj3d.VIEW_IDS.map(function (v) { return { id: v, label: v }; })),
-        { value: s.view, onChange: function (id) {
-          s.view = id;
-          var a = BV.proj3d.PRESET_ANGLES[id];
-          if (a) { s.az = a[0]; s.el = a[1]; } /* next drag starts here */
-          redraw();
-        } }
-      );
-      toolbar.appendChild(viewSeg.el);
+      /* snap views live on the viewport cube (top-right) - click a face,
+         edge or corner. The cube markup is rebuilt every draw, so the
+         click handler is delegated from the overlay root. */
+      ovl.addEventListener("click", function (e) {
+        var t = e.target && e.target.closest ? e.target.closest("[data-az]") : null;
+        if (!t) return;
+        s.az = parseFloat(t.getAttribute("data-az"));
+        s.el = parseFloat(t.getAttribute("data-el"));
+        s.box = null; /* snapping also refits */
+        redraw();
+      });
+
+      /* toolbar: fit · perspective · show-disabled · group filter */
       var fitBtn = BV.el("button", { class: "btn", title: "reset pan/zoom (double-click does too)" }, "fit");
-      fitBtn.addEventListener("click", function () { delete s.box[s.view]; redraw(); });
+      fitBtn.addEventListener("click", function () { s.box = null; redraw(); });
       toolbar.appendChild(fitBtn);
       var perspBtn = BV.el("button", {
         class: "btn" + (s.persp ? " primary" : ""),
         title: "perspective projection — off = orthographic (parallel, true to scale)",
-      }, "persp");
+      }, "perspective");
       perspBtn.addEventListener("click", function () {
         s.persp = !s.persp;
         perspBtn.classList.toggle("primary", s.persp);
@@ -582,7 +664,7 @@
 
       buildSide(side, data, s, colors, redraw);
       redraw();
-      wireViewport(svg, s, redraw, viewSeg);
+      wireViewport(svg, s, redraw);
     }).catch(function (e) {
       view.innerHTML = '<div class="empty-state"><div class="big">no DCS zone data</div>' +
         '<div class="hint">' + BV.esc(e.message) + "</div></div>";

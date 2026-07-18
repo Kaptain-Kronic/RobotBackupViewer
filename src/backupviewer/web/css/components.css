@@ -1290,6 +1290,14 @@ text.v3-ax-z { fill: var(--accent); }
 .v3-scale text { text-anchor: middle; }
 .v3-note { fill: var(--warn); }
 .v3-hint { fill: var(--sub-alt); }
+.v3-cube-face {
+  fill: var(--bg2); fill-opacity: 0.88; stroke: var(--edge);
+  cursor: pointer; pointer-events: auto;
+}
+.v3-cube-face:hover { fill: color-mix(in srgb, var(--accent) 22%, var(--bg2)); }
+.v3-cube-lab { font-size: 8.5px; fill: var(--sub); text-anchor: middle; pointer-events: none; }
+.v3-cube-hit { fill: transparent; stroke: none; cursor: pointer; pointer-events: auto; }
+.v3-cube-hit:hover { fill: color-mix(in srgb, var(--accent) 45%, transparent); }
 .v3-side { flex: 0 0 25%; min-width: 250px; max-width: 380px; overflow-y: auto; min-height: 0; }
 .v3-cat { display: flex; align-items: center; gap: 0.45rem; margin: 0.7rem 0 0.35rem; }
 .v3-cat:first-child { margin-top: 0; }

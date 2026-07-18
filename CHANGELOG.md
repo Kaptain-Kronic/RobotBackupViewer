@@ -6,15 +6,19 @@
   and (rotated) DCS user frames — cross-checked against the pendant's
   `DCSVRFY.DG` verify text (status, method, stop type) and stamped with the
   TCP position captured when the report was written.
-- **Free orbit + seven snap views.** Drag to rotate, middle-drag (or
-  shift+drag) to pan, wheel to zoom, `fit` or double-click to reset;
-  iso / top / bottom / front / back / left / right snap the orbit to
-  known angles, and a drag out of any of them starts rotating from right
-  there. Rotation pivots about whatever sits at the viewport center, so
-  pan-then-rotate stays on target. Top and bottom are plan-oriented for
-  the FANUC world frame (right-handed, X forward / Y left / Z up): X
-  points up-screen. A `persp` button adds mild perspective; the default
-  stays orthographic (parallel, true to scale).
+- **Free orbit + the viewport cube.** Drag rotates with no limits — over
+  the top and upside down are real (the world genuinely flips, axes and
+  all); middle-drag (or shift+drag) pans, wheel zooms, `fit` or
+  double-click resets, and rotation pivots about whatever sits at the
+  viewport center, so pan-then-rotate stays on target. The cube in the
+  top-right corner rotates with the view as a compass and snaps the
+  camera to any of 26 directions — click a face, an edge, or a corner.
+  Views are named per the FANUC world frame (right-handed, X forward /
+  Y left / Z up); top and bottom are plan-oriented with X up-screen.
+  A `perspective` button adds mild depth foreshortening; the default
+  stays orthographic (parallel, true to scale). Vertical/horizontal
+  rotate feel is invertible per-axis in settings (drag-down raises the
+  camera by default).
   Auto-fit frames the scene's bounding sphere — one radius — so the view
   holds a steady scale while rotating, and the same mm-per-px carries
   across every view. Zone names, axis letters, the tcp marker and the

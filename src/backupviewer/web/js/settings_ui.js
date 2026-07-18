@@ -127,6 +127,21 @@
           BV.api.call("set_setting", "chrome_scale", v).catch(function () {});
         });
 
+      /* ---- 3d view ---- */
+      section("3d view");
+      segRow("invert rotate x", [false, true], s.v3_invert_x === true,
+        function (v) { return v ? "inverted" : "normal"; },
+        function (v) {
+          s.v3_invert_x = v;
+          BV.api.call("set_setting", "v3_invert_x", v).catch(function () {});
+        });
+      segRow("invert rotate y", [false, true], s.v3_invert_y === true,
+        function (v) { return v ? "inverted" : "normal"; },
+        function (v) {
+          s.v3_invert_y = v;
+          BV.api.call("set_setting", "v3_invert_y", v).catch(function () {});
+        });
+
       /* ---- library ---- */
       section("library");
       /* the single root that is both the FTP backup destination and the tree
