@@ -23,11 +23,13 @@ from . import discover
 from . import ftpbackup
 from . import healthscan
 from . import library
+from . import modeldb
 from . import search as search_mod
 from . import settings
-from .parsers import (alarms, callgraph, dcs, dcszones, frames, gmwizlog,
-                      io_dg, ls_program, macros, magnet, mastering, mhvalves,
-                      payloads, registers, styles, summary_dg, sysvars)
+from .parsers import (alarms, callgraph, curpos, dcs, dcszones, frames,
+                      gmwizlog, io_dg, kinematics, ls_program, macros, magnet,
+                      mastering, mhvalves, payloads, registers, styles,
+                      summary_dg, sysvars)
 from .parsers.common import is_binary, read_text
 from .session import BackupSession
 
@@ -711,6 +713,97 @@ class Api:
             return dcszones.build_zones(pos_text, vrfy)
 
         return s.cached("dcszones", build)
+
+    # -- robot pose (3D view) -------------------------------------------------
+
+    @_endpoint
+    def import_kinematics(self, path: str = ""):
+        """Import every robot def's kinematics from a Roboguide 'Robot
+        Library' folder into the local registry. With a path (the detected
+        install), no dialog; without one, the user picks the folder.
+        User-initiated, user's own licensed files - nothing ships with
+        the app."""
+        folder = path
+        if not folder:
+            import webview
+
+            result = self._window.create_file_dialog(webview.FOLDER_DIALOG)
+            if not result:
+                return None
+            folder = result[0] if isinstance(result, (list, tuple)) else result
+        out = modeldb.import_folder(folder)
+        out["counts"] = modeldb.counts()
+        return out
+
+    @_endpoint
+    def get_robot_pose(self, side: str = "a"):
+        """Everything the 3D view needs to pose the arm: the backup's robot
+        type (DCS verify report), the matching imported kinematics, the
+        CURPOS.DG pose snapshot, and the flange correction measured from
+        this backup's own numbers (see kinematics.measure_flange). All
+        fields degrade to None - the view falls back honestly."""
+        s = self._side_session(side)
+
+        robot_type = ""
+        if s.find("DCSVRFY.DG"):
+            rep = self._dcs_report(s, "DCSVRFY.DG")
+            for sec in rep.get("sections", []):
+                if sec.get("id") != "robot-setup":
+                    continue
+                for row in sec.get("rows", []):
+                    if row.get("kind") == "kv" and row.get("key") == "Robot":
+                        robot_type = row.get("value", "")
+                        break
+                break
+
+        entry = modeldb.match(robot_type) if robot_type else None
+
+        q = None
+        pose_date = ""
+        tool_n = None
+        world = None
+        cp_text = s.text("CURPOS.DG")
+        if cp_text:
+            cp = curpos.parse_curpos(cp_text)
+            if cp["groups"]:
+                g1 = cp["groups"][0]
+                q = g1["joints"] or None
+                tool_n = g1["tool"]
+                world = g1["world"]
+                pose_date = cp["date"]
+
+        tool = None
+        fr_text = s.text("FRAME.DG")
+        if fr_text and tool_n:
+            for t in curpos.parse_tool_frames(fr_text):
+                if t["n"] == tool_n:
+                    tool = t["xyzwpr"]
+                    break
+
+        calib = None
+        flange_dz = 0.0
+        if entry and q and tool and world and len(world) == 6:
+            calib = kinematics.measure_flange(entry["kin"], q, tool, world)
+            for k in ("dz", "dxy", "ori_err"):
+                calib[k] = round(calib[k], 3)
+            if calib["ok"]:
+                flange_dz = round(calib["dz"], 2)
+
+        return {
+            "backup_type": robot_type,
+            "matched": bool(entry),
+            "type_name": entry["name"] if entry else "",
+            "source_kind": entry.get("source_kind", "") if entry else "",
+            "imported_date": entry.get("imported", "") if entry else "",
+            "validated": entry.get("validated") if entry else None,
+            "kin": entry["kin"] if entry else None,
+            "counts": modeldb.counts(),
+            "q": q, "q_source": "curpos" if q else None,
+            "pose_date": pose_date,
+            "flange_dz": flange_dz,
+            "calib": calib,
+            "suggested_library": "" if entry else modeldb.default_library(),
+        }
 
     # -- system vars ----------------------------------------------------------
 

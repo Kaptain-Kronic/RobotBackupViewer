@@ -48,21 +48,38 @@ Each of these is deliberately scoped to land on its own. Good places to start.
 
 ## 3D View follow-ups
 
-- 🔨 **Robot models in the viewport** — user-imported models, stored locally,
-  matched to robots by model string (one import covers every robot of that
-  type; the exe ships zero meshes). The vendor `.rmd` model-pack format is
-  reverse-engineering-in-progress: uncompressed sectioned binary, per-part
-  float arrays mapped, record alignment + units still open. Fallbacks:
-  per-link convex hulls, or STL import if an export path exists.
-- 📋 **Static pose first** — a mesh at the base gives fence-vs-robot context;
-  posing the arm needs joint angles + per-link kinematics (much later).
-- 📋 **Program points in 3D** — plot a program's Cartesian positions among the
-  zones (compose their UFRAME); joint-rep points need forward kinematics —
-  out of scope for the first pass.
+- ✅ **Kinematics + posed arm** — FANUC's own `.def` kinematics imported once
+  from a Roboguide install into a local registry (exe ships zero FANUC
+  data), the arm posed from the backup's own `CURPOS.DG` snapshot (or by
+  hand), DCS user models drawn at their true frames. Every pose
+  self-verifies against the controller's printed TCP; "-IF" flange
+  adapters are measured per robot from the backup. Unmatched types
+  honestly stay un-posed.
+- 🔨 **Robot meshes in the viewport** — the skeleton wants a body: Roboguide
+  `.rcf`/`.hsf` mesh crack, or `.rmd`/STL/OBJ import (the `.rmd` format is
+  fully reversed), then the capsule fitter for arm bubbles ("visual approx —
+  not the DCS model" labeling per the locked ruling).
+- 📋 **Program points in 3D** — plot a program's Cartesian positions among
+  the zones (compose their UFRAME); joint-rep points can now use the same
+  forward kinematics the posed arm runs on.
+- 📋 **Rail + mount variants** — the pose validator exposed them: rail
+  robots miss by exactly their carriage travel (pure translation, perfect
+  orientation) and some mounts by a constant rotation. Both refuse to pose
+  today (honest); modeling the rail axis and mount orientation would bring
+  them in. Needs the aux-axis direction + mount angle from the backup.
 - 📋 **Compare overlay** — ghost the comparison backup's zones into the
   viewport (the "what changed in DCS" killer view).
-- ❓ **Lines-mode zones** — DCS `$MODE` values beyond the two ground-truthed
-  ones are unmapped; needs a real backup containing a polygon (Lines) zone.
+- ✅ **Lines-mode zones** — `$MODE=3` ↔ Restricted zone(Lines) and `$MODE=0`
+  ↔ Working zone (keep-in) ground-truthed against real controllers; polygon
+  zones draw with their true vertex count. Only `$MODE=2` remains unmapped
+  (never seen on a real controller — still shows `?`).
+- ✅ **User models + target refs** — `$DCSS_MODEL` (EOAT element geometry)
+  and each zone's `$MODEL_NUM` slots parsed and resolved; data-only in the
+  panel until kinematics can place link-attached shapes.
+- 📋 **Newer-vocabulary verify reports** — the "Working/Restricted zone"
+  pendant generation prints its Lines vertex table in a layout the report
+  parser shows raw (correct but unstyled); teach the pos-table parser that
+  shape when a backup needs it.
 
 ## Cameras — Keyence / Matrox (owned lane, in progress elsewhere)
 
@@ -106,9 +123,18 @@ Decided principles (these are settled — build against them):
   manifest + step-by-step pendant checklist. Direct FTP write-back comes
   later as a separately gated, human-in-the-loop tier — many sites prohibit
   it, and it must never be the default.
-- 📋 **DCS stays read/diff-only.** The viewer will not emit DCS payloads; the
-  pendant's apply/code/signature flow is the controlled path for safety
-  parameters, full stop.
+- 📋 **DCS is editable, same as other config** (decision 2026-07-17, reversing
+  an earlier read/diff-only stance). Integrators author DCS themselves, so
+  edit-and-preview is a real need — and the controller's own apply gauntlet
+  (passcode → on-pendant review of the exact changes → OK → power cycle →
+  signature re-verification) is an un-bypassable human safety gate that an
+  exported file cannot skip. So DCS rides the same apply-path + honesty rails
+  as every other edit: the export is an inert proposal, always shown
+  **un-applied and un-signed**, never as verified. Bonus — getting the numbers
+  right in the tool first means fewer trips through that gauntlet.
+- ❓ **DCS load format** is the real gate: what file the controller accepts
+  (ASCII sysvar vs binary `.SV`, via which DCS import path). Resolve by field
+  knowledge or a Roboguide spike before building.
 - ❓ Open spikes: ASCII-upload option coverage on real fleets, the web comment
   hook's availability per controller generation, macro-table writability
   inventory, edits-workspace schema.

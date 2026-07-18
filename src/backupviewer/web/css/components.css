@@ -1286,6 +1286,15 @@ text.v3-ax-z { fill: var(--accent); }
 .v3-zlab { text-anchor: middle; }
 .v3-tcp circle, .v3-tcp line { fill: none; stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .v3-tcp text { fill: var(--accent); }
+/* posed arm: capsule-limb body + centerline + DCS user-model elements
+   (world-mm strokes on purpose - they scale with the scene, unlike the
+   furniture) */
+.v3-body { stroke: color-mix(in srgb, var(--sub) 30%, transparent); stroke-linecap: round; }
+.v3-skel { fill: none; stroke: var(--sub); stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.v3-skel-j { fill: var(--bg2); stroke: var(--sub); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.v3-elem { fill: color-mix(in srgb, var(--accent) 16%, transparent); stroke: var(--accent); stroke-width: 1.4; vector-effect: non-scaling-stroke; }
+.v3-elem-cap { stroke: color-mix(in srgb, var(--accent) 26%, transparent); stroke-linecap: round; }
+.v3-elem-axis { stroke: var(--accent); stroke-width: 1.4; vector-effect: non-scaling-stroke; }
 .v3-scale line { stroke: var(--sub); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .v3-scale text { text-anchor: middle; }
 .v3-note { fill: var(--warn); }
@@ -1304,6 +1313,11 @@ text.v3-ax-z { fill: var(--accent); }
 .v3-cat-label { font-size: 0.78rem; color: var(--sub); }
 .v3-cat-count { font-size: 0.72rem; color: var(--sub-alt); flex: 1 1 auto; }
 .v3-mini { padding: 0.05rem 0.45rem; font-size: 0.7rem; }
+.v3-import-hint { font-size: 0.76rem; color: var(--sub); line-height: 1.45; padding: 0.15rem 0 0.35rem; }
+.v3-import-btn { display: block; width: 100%; margin: 0 0 0.35rem; }
+.v3-pose-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.3rem 0.5rem; padding: 0.2rem 0 0.4rem; }
+.v3-pose-cell { display: flex; align-items: center; gap: 0.3rem; font-size: 0.72rem; color: var(--sub); }
+.v3-pose-cell input { width: 100%; min-width: 0; padding: 0.15rem 0.3rem; font-size: 0.78rem; }
 .v3-row { background: var(--bg2); border: 1px solid var(--edge); border-radius: var(--radius); margin-bottom: 0.3rem; overflow: hidden; }
 .v3-row-head { display: flex; align-items: center; gap: 0.45rem; padding: 0.4rem 0.6rem; }
 .v3-row-head:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }

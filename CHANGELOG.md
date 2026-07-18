@@ -1,5 +1,60 @@
 # Changelog
 
+## Unreleased
+- **The robot poses in the 3d view.** Import FANUC's own kinematics once
+  from a Roboguide install ("import…" in the 3d view's robot panel → the
+  `Robot Library` folder; ~260 types, stored locally — the app still ships
+  zero FANUC data) and the arm appears as a to-scale stick-figure skeleton,
+  posed exactly as the robot stood when the backup ran (`CURPOS.DG`), with
+  every DCS user-model sphere and capsule riding its true frame — your EOAT
+  bubbles at the flange, among the fences they're checked against. Joint
+  fields in the panel repose the arm live; "reset pose" returns to the
+  backup's snapshot.
+- **Every FANUC robot type is built in — robots pose with zero setup.**
+  The full 228-type kinematics table ships inside the app as its own
+  dimension-sheet data (~160 KB). Types verified against real controllers'
+  position reports carry their validation record (36 robots, all
+  ≤0.23 mm); the rest are labeled "not yet validated against a
+  controller" — and any backup with a position report still self-verifies
+  at runtime regardless. The Roboguide import remains for future types
+  and overrides a built-in.
+- **The arm has a body.** Capsule limbs sized from the robot's reach,
+  tapering to the wrist — a deliberate schematic (not the DCS robot model,
+  not a mesh), so the EOAT bubbles read against a robot instead of a wire.
+- **No more over-the-top flip.** Orbit elevation now stops exactly at the
+  poles: dragging past straight-down used to carry the camera over the top
+  and invert the world's screen-vertical — seamlessly, and right at the
+  pole the compass cube is face-on so nothing warned you. Top and bottom
+  views stay exact; the portal is gone.
+- **The pose is verified against the controller's own numbers, per robot.**
+  Every backup with a position report self-checks: forward kinematics
+  through the taught tool must land on the controller's printed world TCP.
+  Plain robots verify to ~0.1 mm; dress-package variants ("-IF") carry a
+  real flange adapter the base model lacks — the app *measures* it from the
+  backup itself (+23.0 mm on R-2000iC/210F-IF and R-1000iA/100F-IF,
+  +10.07 mm on M-900iB/280L-IF across the fleet) and labels it. A backup
+  that contradicts the imported kinematics refuses to pose the arm and
+  says why. Types with no def imported (or missing from the library, like
+  ARC Mate 120iD/35) stay honestly un-posed — never a borrowed arm.
+- **DCS user models parsed from the backup** (`$DCSS_MODEL` in `DCSPOS.VA`):
+  every EOAT/gripper element with its shape, radius, positions and link —
+  cross-checked digit-for-digit against the pendant's verify report. The 3d
+  view's "user models" rows now carry the full geometry (`element 1 ·
+  line_seg r350 · faceplate`) whether or not the backup has a `DCSVRFY.DG`,
+  and "show disabled" lists the empty slots. Elements stay data-only in the
+  viewport — they are link-attached, and placing them honestly needs
+  kinematics we don't parse yet.
+- **Zones name their target models.** Each Cartesian zone's three
+  `$MODEL_NUM` slots are resolved per the pendant's own legend (`Robot
+  model` / `User model n` / `DISABLE`) with the referenced model's comment
+  attached — in the 3d view's zone detail and, as a dim note beside the
+  pendant's verbatim number, in the dcs tab's report view.
+- **Lines-mode zones ground-truthed.** `$MODE=3` ↔ `Restricted zone(Lines)`
+  (polygon keep-out, vertex count honored), `$MODE=0` ↔ `Working
+  zone(Diagnal)` (keep-in) — confirmed against real controllers, both
+  pendant vocabularies. Stop type 2 ↔ `Not stop` joins the confirmed map.
+  `$MODE=2` remains unmapped and still says so.
+
 ## v1.1 — the 3D view (DCS zones drawn to scale)
 - **New tab on the `0` key: "3d view".** DCS Cartesian Position Check zones
   drawn to scale from `DCSPOS.VA` — the authoritative vertex arrays, Z extents

@@ -10,8 +10,13 @@
    a color swatch matching the viewport; joint/speed checks carry data
    only (nothing honest to draw without a robot model); each row expands
    to its pendant-style detail (BV.dcsDetail).
-   The robot itself is a base marker + axes today - an imported robot
-   model would slot in as one more draw layer between grid and zones. */
+   The robot arm poses from imported Roboguide .def kinematics (BV.fk,
+   local registry via "import…") at the backup's own CURPOS snapshot -
+   editable per joint - drawn as an honest stick-figure skeleton with the
+   DCS user-model spheres/capsules at their true frames; the pose is
+   cross-checked against the backup's own TCP report and refuses to draw
+   on a mismatch. Meshes are a later tier - they'd slot in as one more
+   draw layer between grid and zones. */
 (function () {
   "use strict";
 
@@ -29,6 +34,8 @@
       s.box = null;      /* single pan/zoom override (null = auto-fit) */
       s.persp = false;   /* orthographic by default */
     }
+    /* older sessions could park el past a pole - normalize back in range */
+    s.el = Math.max(-90, Math.min(90, s.el));
     return s;
   }
 
@@ -82,7 +89,47 @@
     });
   }
 
-  function draw(svg, data, s, colors) {
+  /* ---- robot pose (imported .def kinematics + backup CURPOS) ---- */
+
+  function poseQ(s, robot) {
+    if (s.pose) return s.pose;
+    if (robot && robot.q) return robot.q;
+    return [];
+  }
+
+  /* frames when the arm is honestly posable: kinematics matched AND the
+     backup's own position report did not contradict them. calib=null
+     (no CURPOS to check against) still poses, flagged unverified. */
+  function robotFrames(s, robot) {
+    if (!robot || !robot.kin) return null;
+    if (robot.calib && !robot.calib.ok) return null;
+    return BV.fk.chain(robot.kin, poseQ(s, robot), robot.flange_dz || 0);
+  }
+
+  /* user-model elements drawable at this pose: enabled, structured (VA),
+     plain tool frame, on the faceplate or a numbered link */
+  function posedElements(data, frames) {
+    var out = [];
+    data.models.forEach(function (m) {
+      if (!m.active) return;
+      (m.elements || []).forEach(function (el) {
+        if (!el.enabled || !el.shape_raw || el.utool_num) return;
+        var f = el.link_no === 99 ? frames.faceplate
+          : (el.link_no >= 1 && el.link_no <= frames.joints.length)
+            ? frames.joints[el.link_no - 1] : null;
+        if (!f) return;
+        out.push({
+          el: el, model: m,
+          p1: BV.fk.apply(f, el.p1),
+          p2: el.shape_raw === 2 ? BV.fk.apply(f, el.p2) : null,
+          approx: el.link_no !== 99, /* link-frame convention unverified */
+        });
+      });
+    });
+    return out;
+  }
+
+  function draw(svg, data, s, colors, robot) {
     var zones = visibleZones(data, s);
 
     /* world geometry per zone + world bounds (grid and fit both use them) */
@@ -98,6 +145,23 @@
     });
     var tcpW = data.tcp ? BV.proj3d.frameTransform(data.tcp.frame)(data.tcp.xyz) : null;
     if (tcpW) wpts.push(tcpW);
+
+    /* the posed arm + its user-model elements join the world bounds */
+    var frames = robotFrames(s, robot);
+    var skel = null, elems = [];
+    if (frames) {
+      var zr = (robot.kin.zero || [0, 0, 0]);
+      skel = [[-zr[0], -zr[1], -zr[2]]];  /* base floor point */
+      frames.joints.forEach(function (m) { skel.push([m[0][3], m[1][3], m[2][3]]); });
+      var fpm = frames.faceplate;
+      skel.push([fpm[0][3], fpm[1][3], fpm[2][3]]);
+      wpts = wpts.concat(skel);
+      elems = posedElements(data, frames);
+      elems.forEach(function (e) {
+        wpts.push(e.p1);
+        if (e.p2) wpts.push(e.p2);
+      });
+    }
     wpts.forEach(function (p) {
       for (var k = 0; k < 3; k++) {
         if (p[k] < wmin[k]) wmin[k] = p[k];
@@ -165,6 +229,49 @@
       out.push('<line class="v3-ax v3-ax-' + ax + '" x1="' + o2[0] + '" y1="' + o2[1] +
         '" x2="' + tips[ax][0] + '" y2="' + tips[ax][1] + '"/>');
     });
+
+    /* the posed arm: joint-to-joint capsule limbs (a schematic body, sized
+       from the arm's reach and tapering to the wrist - deliberately NOT
+       the DCS robot model or a mesh, just enough girth to read as a
+       robot) + the DCS user-model elements at their true frames. Spheres
+       project as circles, capsules as round-cap strokes, all in world mm
+       so they scale with the scene. */
+    if (skel) {
+      var sp = skel.map(function (p) { return proj.project(p); });
+      var reach = 0;
+      skel.forEach(function (p) { reach = Math.max(reach, Math.hypot(p[0], p[1], p[2])); });
+      var girth = Math.max(30, Math.min(110, reach * 0.045));
+      var segN = sp.length - 1;
+      for (var si = 0; si < segN; si++) {
+        var taper = 1.25 - 0.75 * (si / (segN - 1)); /* pedestal thick, wrist slim */
+        out.push('<line class="v3-body" x1="' + sp[si][0] + '" y1="' + sp[si][1] +
+          '" x2="' + sp[si + 1][0] + '" y2="' + sp[si + 1][1] +
+          '" stroke-width="' + (2 * girth * taper) + '"/>');
+      }
+      var sd = "";
+      sp.forEach(function (p, i) { sd += (i ? "L" : "M") + p[0] + " " + p[1]; });
+      out.push('<path class="v3-skel" d="' + sd + '"/>');
+      sp.forEach(function (p, i) {
+        if (i === 0) return; /* floor anchor gets no joint dot */
+        out.push('<circle class="v3-skel-j" cx="' + p[0] + '" cy="' + p[1] + '" r="' +
+          (girth * 0.42) + '"/>');
+      });
+      elems.forEach(function (e) {
+        var a = proj.project(e.p1);
+        var dash = e.approx ? ' stroke-dasharray="10 7"' : "";
+        if (!e.p2) {
+          out.push('<circle class="v3-elem" cx="' + a[0] + '" cy="' + a[1] +
+            '" r="' + e.el.size + '"' + dash + "/>");
+          return;
+        }
+        var b = proj.project(e.p2);
+        out.push('<line class="v3-elem-cap" x1="' + a[0] + '" y1="' + a[1] +
+          '" x2="' + b[0] + '" y2="' + b[1] +
+          '" stroke-width="' + (2 * e.el.size) + '"' + dash + "/>");
+        out.push('<line class="v3-elem-axis" x1="' + a[0] + '" y1="' + a[1] +
+          '" x2="' + b[0] + '" y2="' + b[1] + '"/>');
+      });
+    }
 
     /* zone faces, painter-sorted across ALL zones so overlaps stack right */
     var faces = [];
@@ -248,6 +355,16 @@
     var notes = [];
     if (zones.some(function (z) { return z.approx || z.frame_missing; })) {
       notes.push("⚠ frame rotation unknown — geometry approximate");
+    }
+    if (robot && robot.kin && robot.calib && !robot.calib.ok) {
+      notes.push("⚠ kinematics mismatch vs backup position report (" +
+        robot.calib.dxy.toFixed(1) + " mm / " + robot.calib.ori_err.toFixed(2) +
+        "° residual) — robot not posed");
+    } else if (frames && !robot.calib) {
+      notes.push("robot pose unverified — no position report in this backup");
+    }
+    if (elems.some(function (e) { return e.approx; })) {
+      notes.push("⚠ link-attached elements: link-frame convention unverified");
     }
     if (!zones.length) {
       notes.push(data.cpc.length ? "no zones shown — check some on the right" +
@@ -425,7 +542,12 @@
       drag.live = true;
       var prefs = BV.state.settings || {};
       s.az = drag.az - dx * 0.35 * (prefs.v3_invert_x ? -1 : 1);
-      s.el = drag.el + dy * 0.35 * (prefs.v3_invert_y ? -1 : 1);
+      /* el stops EXACTLY at the poles (top/bottom stay exact) - letting it
+         run past 90 flipped the world's screen-vertical "seamlessly", and
+         right at the pole the cube is face-on from either side, so nothing
+         warned you. Over-the-top orbiting read as a portal, not a feature. */
+      s.el = Math.max(-90, Math.min(90,
+        drag.el + dy * 0.35 * (prefs.v3_invert_y ? -1 : 1)));
       if (drag.pivot) {
         var np = BV.proj3d.orbitProjector(s.az, s.el, svg._persp);
         var p2 = np.project(drag.pivot);
@@ -455,7 +577,7 @@
     if (opts.fillBody) opts.fillBody(body);
     node.appendChild(head);
     node.appendChild(body);
-    BV.collapsible(node, head, body);
+    BV.collapsible(node, head, body, { open: !!opts.open });
     return node;
   }
 
@@ -473,7 +595,8 @@
   function catHead(label, enabledCount, total, actions) {
     var el = BV.el("div", { class: "v3-cat" });
     el.innerHTML = '<span class="v3-cat-label">' + BV.esc(label) + "</span>" +
-      '<span class="v3-cat-count">' + enabledCount + "/" + total + "</span>";
+      (total === null ? "" :
+        '<span class="v3-cat-count">' + enabledCount + "/" + total + "</span>");
     (actions || []).forEach(function (a) { el.appendChild(a); });
     return el;
   }
@@ -484,7 +607,7 @@
     return b;
   }
 
-  function buildSide(side, data, s, colors, redraw) {
+  function buildSide(side, data, s, colors, redraw, robot, reload) {
     side.innerHTML = "";
     var listed = function (arr) {
       return arr.filter(function (e) {
@@ -493,6 +616,129 @@
       });
     };
 
+    /* the robot: imported .def kinematics + this backup's own pose */
+    if (robot) {
+      var doImport = function (path) {
+        BV.api.call("import_kinematics", path || "").then(function (res) {
+          if (!res) return; /* dialog cancelled */
+          BV.toast("imported " + res.imported + " robot types" +
+            (res.skipped ? " (" + res.skipped + " non-robot files skipped)" : ""), 3200);
+          reload();
+        });
+      };
+      side.appendChild(catHead("robot", null, null, [
+        miniBtn("import…", "re-import kinematics from a Roboguide “Robot Library” folder", function () { doImport(""); }),
+      ]));
+      var rtags = "";
+      if (robot.matched) {
+        rtags += BV.pill(robot.type_name, "acc");
+        if (robot.calib && robot.calib.ok) {
+          rtags += BV.pill(robot.flange_dz ? "flange +" + robot.flange_dz + " mm"
+            : "verified", "ok-soft");
+        } else if (robot.calib) {
+          rtags += BV.pill("mismatch", "err");
+        } else {
+          rtags += BV.pill("unverified", "ghost");
+        }
+      } else {
+        rtags += BV.pill("no kinematics for this type", "ghost");
+      }
+      side.appendChild(panelRow({
+        label: robot.backup_type || "unknown type",
+        tags: rtags,
+        open: !robot.matched, /* type not covered: lead with the how */
+        fillBody: function (body) {
+          if (!robot.matched) {
+            /* plain-language guidance, one-click when we can */
+            var c = robot.counts || { builtin: 0, imported: 0 };
+            var hint = "“" + (robot.backup_type || "?") + "” isn’t covered yet (" +
+              c.builtin + " built-in types" +
+              (c.imported ? " + " + c.imported + " imported" : "") +
+              ") — importing from a Roboguide install adds every type its " +
+              "library has, in one go.";
+            body.insertAdjacentHTML("beforeend",
+              '<div class="v3-import-hint">' + BV.esc(hint) + "</div>");
+            if (robot.suggested_library) {
+              var one = BV.el("button", { class: "btn primary v3-import-btn",
+                title: robot.suggested_library }, "import from this PC’s Roboguide");
+              one.addEventListener("click", function () { doImport(robot.suggested_library); });
+              body.appendChild(one);
+            } else {
+              body.insertAdjacentHTML("beforeend",
+                '<div class="v3-import-hint dim">no Roboguide found on this PC — ' +
+                "pick the folder yourself (usually " +
+                "C:\\ProgramData\\FANUC\\ROBOGUIDECore\\Robot Library, possibly " +
+                "copied from another machine)</div>");
+            }
+            var pick = BV.el("button", { class: "btn v3-import-btn" }, "pick folder…");
+            pick.addEventListener("click", function () { doImport(""); });
+            body.appendChild(pick);
+            return;
+          }
+          var cts = robot.counts || { builtin: 0, imported: 0 };
+          var src = robot.source_kind === "builtin"
+            ? "built-in" + (robot.validated
+              ? ", validated on " + robot.validated.robots + " robot" +
+                (robot.validated.robots === 1 ? "" : "s") +
+                " (≤" + robot.validated.max_xy_mm + " mm)"
+              : ", not yet validated against a controller")
+            : "imported " + robot.imported_date;
+          var kv = [
+            { key: "Backup reports", value: robot.backup_type || "—" },
+            { key: "Matched kinematics", value: robot.type_name + " (" + src + ")" },
+            { key: "Registry", value: cts.builtin + " built-in + " + cts.imported + " imported types" },
+          ];
+          if (robot.pose_date) kv.push({ key: "Pose snapshot", value: robot.pose_date });
+          if (robot.calib) {
+            kv.push({ key: "Check vs backup TCP", value:
+              robot.calib.dxy.toFixed(2) + " mm xy · " +
+              robot.calib.ori_err.toFixed(3) + "° · flange z " +
+              robot.calib.dz.toFixed(2) + " mm" + (robot.calib.ok ? "" : " — MISMATCH") });
+          }
+          body.appendChild(BV.dcsDetail(kv));
+        },
+      }));
+
+      var frames = robotFrames(s, robot);
+      if (frames) {
+        var srcPill = function () {
+          return s.pose ? BV.pill("manual", "warn")
+            : BV.pill(robot.q ? "backup" : "home", "ghost");
+        };
+        var poseRow = panelRow({
+          label: "pose",
+          tags: srcPill(),
+          fillBody: function (body) {
+            var grid = BV.el("div", { class: "v3-pose-grid" });
+            var q = poseQ(s, robot);
+            var inputs = [];
+            robot.kin.joints.forEach(function (j, i) {
+              var cell = BV.el("label", { class: "v3-pose-cell" });
+              cell.insertAdjacentHTML("beforeend", "<span>J" + j.n + "</span>");
+              var inp = BV.el("input", { type: "number", step: "1", value: String(+(q[i] || 0).toFixed(2)) });
+              inp.addEventListener("change", function () {
+                s.pose = inputs.map(function (x) { return parseFloat(x.value) || 0; });
+                poseRow.querySelector(".v3-row-tags").innerHTML = BV.pill("manual", "warn");
+                redraw();
+              });
+              inputs.push(inp);
+              cell.appendChild(inp);
+              grid.appendChild(cell);
+            });
+            body.appendChild(grid);
+            var rst = BV.el("button", { class: "btn v3-mini", title: "back to the backup’s own pose" }, "reset pose");
+            rst.addEventListener("click", function () {
+              s.pose = null;
+              buildSide(side, data, s, colors, redraw, robot, reload);
+              redraw();
+            });
+            body.appendChild(rst);
+          },
+        });
+        side.appendChild(poseRow);
+      }
+    }
+
     /* cartesian zones - the drawable category, checkbox + swatch */
     var zs = listed(data.cpc);
     if (data.cpc.length) {
@@ -500,11 +746,11 @@
       side.appendChild(catHead("cartesian position", en, data.cpc.length, [
         miniBtn("all", "show every listed zone", function () {
           zs.forEach(function (z) { delete s.hidden[z.n]; });
-          buildSide(side, data, s, colors, redraw); redraw();
+          buildSide(side, data, s, colors, redraw, robot, reload); redraw();
         }),
         miniBtn("none", "hide every listed zone", function () {
           zs.forEach(function (z) { s.hidden[z.n] = true; });
-          buildSide(side, data, s, colors, redraw); redraw();
+          buildSide(side, data, s, colors, redraw, robot, reload); redraw();
         }),
       ]));
       zs.forEach(function (z) {
@@ -550,8 +796,11 @@
       });
     });
 
-    /* DCS user models (robot/EOAT collision shapes - link-attached, so
-       placing them needs kinematics we don't have; data only) */
+    /* DCS user models (EOAT etc. collision shapes, from $DCSS_MODEL with the
+       verify report merged in). Still data-only in the viewport: every real
+       element is link/faceplate-attached, so placing one needs kinematics
+       we don't have. Element rows carry the geometry (shape · radius ·
+       link) so the panel tells the whole story. */
     var ms = data.models.filter(function (m) { return s.showDisabled || m.active; });
     if (ms.length) {
       var mn = data.models.filter(function (m) { return m.active; }).length;
@@ -563,12 +812,22 @@
           dim: !m.active,
           fillBody: function (body) {
             if (m.detail && m.detail.length) body.appendChild(BV.dcsDetail(m.detail));
-            (m.elements || []).forEach(function (el) {
+            var els = (m.elements || []).filter(function (el) {
+              return s.showDisabled || el.enabled !== false;
+            });
+            els.forEach(function (el) {
+              var sub = "element " + el.num;
+              if (el.shape) {
+                sub += " · " + el.shape.toLowerCase() +
+                  (el.size ? " r" + el.size : "") +
+                  " · " + (el.link_no === 99 ? "faceplate" : "link " + el.link_no);
+              }
               body.insertAdjacentHTML("beforeend",
-                '<div class="dcs-sub">element ' + el.num + "</div>");
+                '<div class="dcs-sub' + (el.enabled === false ? " dim" : "") + '">' +
+                BV.esc(sub) + "</div>");
               body.appendChild(BV.dcsDetail(el.detail || []));
             });
-            if (!(m.detail && m.detail.length) && !(m.elements || []).length) {
+            if (!(m.detail && m.detail.length) && !els.length) {
               body.innerHTML = '<div class="dim" style="padding:.3rem .2rem">no elements</div>';
             }
           },
@@ -588,7 +847,11 @@
   function render(view, toolbar, params) {
     view.innerHTML = "";
     toolbar.innerHTML = "";
-    BV.api.call("get_dcs_zones").then(function (data) {
+    Promise.all([
+      BV.api.call("get_dcs_zones"),
+      BV.api.call("get_robot_pose").catch(function () { return null; }),
+    ]).then(function (rs) {
+      var data = rs[0], robot = rs[1];
       var s = st();
       view.classList.add("v3-host");
 
@@ -610,7 +873,16 @@
       view.appendChild(vp);
       view.appendChild(side);
 
-      function redraw() { draw(svg, data, s, colors); }
+      function redraw() { draw(svg, data, s, colors, robot); }
+      function rebuildSide() { buildSide(side, data, s, colors, redraw, robot, reload); }
+      function reload() {
+        BV.api.call("get_robot_pose").catch(function () { return null; })
+          .then(function (r) {
+            robot = r;
+            rebuildSide();
+            redraw();
+          });
+      }
 
       /* snap views live on the viewport cube (top-right) - click a face,
          edge or corner. The cube markup is rebuilt every draw, so the
@@ -645,7 +917,7 @@
       disBtn.addEventListener("click", function () {
         s.showDisabled = !s.showDisabled;
         disBtn.classList.toggle("primary", s.showDisabled);
-        buildSide(side, data, s, colors, redraw);
+        rebuildSide();
         redraw();
       });
       toolbar.appendChild(disBtn);
@@ -656,13 +928,13 @@
           })),
           { value: String(s.group), onChange: function (id) {
             s.group = parseInt(id, 10) || 0;
-            buildSide(side, data, s, colors, redraw);
+            rebuildSide();
             redraw();
           } }
         ).el);
       }
 
-      buildSide(side, data, s, colors, redraw);
+      rebuildSide();
       redraw();
       wireViewport(svg, s, redraw);
     }).catch(function (e) {
