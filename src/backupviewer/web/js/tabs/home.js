@@ -191,6 +191,20 @@
         .then(function () { BV.toast("library rescanned"); rescanBtn.disabled = false; refresh(); })
         .catch(function (e) { BV.toast(e.message); rescanBtn.disabled = false; });
     });
+    var linkBtn = BV.el("button", { class: "btn lib-link-cams",
+      title: "auto-link cameras to the robot they inspect (by name)" }, "link cameras");
+    linkBtn.addEventListener("click", function () {
+      linkBtn.disabled = true;
+      BV.api.call("lib_auto_link").then(function (r) {
+        var n = (r.linked || []).length, un = (r.unmatched || []).length,
+            amb = (r.ambiguous || []).length;
+        BV.toast("linked " + n + " camera" + (n === 1 ? "" : "s") +
+          (amb ? " · " + amb + " ambiguous — same robot name in several lines; " +
+                 "pick the right one in the camera's edit" : "") +
+          (un ? " · " + un + " need manual linking (edit the camera)" : ""), 8000);
+        linkBtn.disabled = false; refresh();
+      }).catch(function (e) { BV.toast(e.message); linkBtn.disabled = false; });
+    });
     var addBtn = BV.el("button", { class: "btn lib-add-robot", id: "lib-add-robot",
       title: "add a robot to the library" }, "+ add robot");
     addBtn.addEventListener("click", function () {
@@ -206,6 +220,7 @@
     headActs.appendChild(cancelAll);
     headActs.appendChild(_showHiddenBtn);
     headActs.appendChild(rescanBtn);
+    headActs.appendChild(linkBtn);
     headActs.appendChild(addBtn);
     head.appendChild(headActs);
     return head;
@@ -328,7 +343,22 @@
           lineBody.appendChild(BV.el("div", { class: "dim lib-empty-note" },
             "empty line folder — no robot folders yet"));
         }
-        lineRobots.forEach(function (r) { lineBody.appendChild(robotRow(r)); });
+        /* nest linked cameras under the robot they inspect (same line); unlinked
+           cameras and cross-line links stay at top level so nothing disappears */
+        var lineRobotIds = {};
+        lineRobots.forEach(function (r) {
+          if ((r.device_type || "robot") === "robot") lineRobotIds[r.id] = 1;
+        });
+        lineRobots.forEach(function (r) {
+          var isCam = (r.device_type || "").indexOf("camera") === 0;
+          if (isCam && r.linked_robot_id && lineRobotIds[r.linked_robot_id]) return;
+          lineBody.appendChild(robotRow(r));
+          lineRobots.forEach(function (c) {
+            if ((c.device_type || "").indexOf("camera") === 0 && c.linked_robot_id === r.id) {
+              lineBody.appendChild(robotRow(c, true));
+            }
+          });
+        });
         makeCollapsible(lineNode, lineHead, lineBody, pl + "|||" + ln);
         plantBody.appendChild(lineNode);
       });
@@ -361,9 +391,11 @@
     return head;
   }
 
-  function robotRow(r) {
+  function robotRow(r, nested) {
     var row = BV.el("div", { class: "lib-robot" + (r.stale ? " stale" : "") +
-      (r.hidden ? " hidden-robot" : "") });
+      (r.hidden ? " hidden-robot" : "") + (nested ? " lib-robot-nested" : "") });
+    if (nested) row.style.cssText =
+      "margin-left:1.6rem;border-left:2px solid var(--sub-alt);padding-left:0.6rem";
     row.setAttribute("data-robot-id", r.id);
 
     var cb = BV.el("input", { type: "checkbox", class: "lf-check lib-check",
@@ -404,6 +436,14 @@
     var main = BV.el("div", { class: "lib-robot-main" });
     var nameHtml = '<span class="lib-robot-name">' + BV.esc(r.robot || "(unnamed)") + "</span>";
     if (r.model) nameHtml += '<span class="lib-robot-model">' + BV.esc(r.model) + "</span>";
+    if (r.device_type === "camera-mtx") nameHtml += ' <span class="pill acc">mtx cam</span>';
+    else if (r.device_type === "camera-keyence") nameHtml += ' <span class="pill acc">cv-x cam</span>';
+    else {
+      /* which twin holds the cameras? (duplicate robot names exist across lines,
+         and a link to the WRONG twin looks like "nothing happened") */
+      var nCams = _robots.filter(function (c) { return c.linked_robot_id === r.id; }).length;
+      if (nCams) nameHtml += ' <span class="pill acc">' + nCams + " cam" + (nCams > 1 ? "s" : "") + "</span>";
+    }
     main.appendChild(BV.el("div", null, nameHtml));
     var meta = [];
     if (r.ips && r.ips.length) meta.push(BV.esc(r.ips[0]));
@@ -849,11 +889,17 @@
       runnable.forEach(function (r) {
         var spec = {
           host: r.ips[0], robot: r.robot, line: r.line, plant: r.plant,
+          device_type: r.device_type || "robot",
           user: (r.ftp && r.ftp.user) || "",
           passive: !r.ftp || r.ftp.passive !== false,
           passwd: (r.ftp && r.ftp.user) ? pw : "",
           note: "",
         };
+        /* a multi-camera station pulls each IP into its own CAM<n> subfolder;
+           credentials (MTXuser/MATROX, or anonymous for CV-X) fill server-side */
+        if ((r.device_type || "").indexOf("camera") === 0 && r.ips.length > 1) {
+          spec.cameras = r.ips.map(function (ip, i) { return { label: "CAM" + (i + 1), host: ip }; });
+        }
         renderRowProgress(r.id, { status: "pending", total: 0, done: 0 });
         BV.api.call("start_backup", spec).then(function (res) {
           BV.jobs.track(res.job_id, { robotId: r.id });
@@ -1020,6 +1066,26 @@
     var fLine = inp(entry.line);
     var fRobot = inp(entry.robot || entry.robot_name);
     var fModel = inp(entry.model);
+    var fType = BV.el("select", { class: "lf-input" });
+    [["robot", "robot (FANUC)"], ["camera-mtx", "matrox camera"],
+     ["camera-keyence", "keyence camera (CV-X)"]].forEach(function (o) {
+      var opt = BV.el("option", { value: o[0] }, o[1]);
+      if ((entry.device_type || "robot") === o[0]) opt.selected = true;
+      fType.appendChild(opt);
+    });
+    /* a camera can be linked to the robot it inspects (shows in the robot's
+       Cameras tab); the picker lists robot entries, hidden for robot entries */
+    var fLinked = BV.el("select", { class: "lf-input" });
+    fLinked.appendChild(BV.el("option", { value: "" }, "(none)"));
+    _robots.filter(function (r) { return (r.device_type || "robot") === "robot"; })
+      .forEach(function (r) {
+        /* duplicate robot names exist across lines/plants (test-cell copies!) -
+           show the full plant/line so the RIGHT twin gets linked */
+        var where = [r.plant, r.line].filter(Boolean).join("/");
+        var o = BV.el("option", { value: r.id }, r.robot + (where ? " · " + where : ""));
+        if (entry.linked_robot_id === r.id) o.selected = true;
+        fLinked.appendChild(o);
+      });
     var fIps = inp((entry.ips || []).join(", "));
     var fPath = inp(entry.latest_path, entry.latest_path ? { readonly: "readonly" } : null);
     var fUser = inp((entry.ftp || {}).user);
@@ -1034,6 +1100,14 @@
     form.appendChild(comboField("line", fLine, function () { return knownLines(fPlant.value); }));
     form.appendChild(field("robot", fRobot));
     form.appendChild(field("model", fModel));
+    form.appendChild(field("device", fType));
+    var linkedRow = field("linked robot", fLinked);
+    form.appendChild(linkedRow);
+    function syncLinkedVis() {
+      linkedRow.classList.toggle("hidden", fType.value.indexOf("camera") !== 0);
+    }
+    fType.addEventListener("change", syncLinkedVis);
+    syncLinkedVis();
     form.appendChild(field("ip(s)", fIps));
     form.appendChild(field("folder", fPath));
     form.appendChild(field("ftp user", fUser));
@@ -1042,16 +1116,45 @@
     if (hasFolders) form.appendChild(field("also move backup folders", fMove));
 
     var actions = BV.el("div", { class: "lf-actions" });
+    var test = BV.el("button", { class: "btn" }, "test connection");
     var cancel = BV.el("button", { class: "btn" }, "cancel");
     var save = BV.el("button", { class: "btn primary" }, isNew ? "add" : "save");
+    actions.appendChild(test);
     actions.appendChild(cancel);
     actions.appendChild(save);
     form.appendChild(actions);
 
+    /* pre-flight probe straight from the form (read-only, no backup): a wedged
+       controller or an off/moved camera shows up here in seconds instead of as
+       a timed-out backup. Uses the form's CURRENT values, saved or not. */
+    test.addEventListener("click", function () {
+      var ip = fIps.value.split(",")[0].trim();
+      if (!ip) { BV.toast("enter an IP first"); return; }
+      test.disabled = true;
+      test.textContent = "testing…";
+      BV.api.call("probe_controller",
+                  { host: ip, device_type: fType.value, user: fUser.value.trim() })
+        .then(function (r) {
+          if (!r.reachable) {
+            BV.toast("no answer from " + ip + (r.error ? " · " + r.error : ""), 6000);
+          } else if (fType.value === "camera-mtx") {
+            BV.toast("matrox camera reachable · da " + (r.has_da ? "✓" : "✗") +
+                     " · images " + (r.has_images ? "✓" : "✗"), 6000);
+          } else if (fType.value === "camera-keyence") {
+            BV.toast("CV-X camera reachable · setting " + (r.has_setting ? "✓" : "✗"), 6000);
+          } else {
+            BV.toast("robot reachable · MD: " + (r.has_md ? "✓" : "✗"), 6000);
+          }
+        })
+        .catch(function (e) { BV.toast("probe failed: " + e.message, 6000); })
+        .finally(function () { test.disabled = false; test.textContent = "test connection"; });
+    });
+
     /* unsaved-work guard: a stray click outside the form can't eat typed edits */
     function fieldsSnapshot() {
-      return [fPlant.value, fLine.value, fRobot.value, fModel.value, fIps.value,
-              fPath.value, fUser.value, fPassive.checked, fNotes.value].join("\n");
+      return [fPlant.value, fLine.value, fRobot.value, fModel.value, fType.value,
+              fLinked.value, fIps.value, fPath.value, fUser.value, fPassive.checked,
+              fNotes.value].join("\n");
     }
     var initialSnapshot = fieldsSnapshot();
     var m = BV.modal(isNew ? "add robot" : "edit robot", form, {
@@ -1067,6 +1170,8 @@
       var fields = {
         plant: fPlant.value.trim(), line: fLine.value.trim(),
         robot: robot, model: fModel.value.trim(),
+        device_type: fType.value,
+        linked_robot_id: fType.value.indexOf("camera") === 0 ? fLinked.value : "",
         ips: fIps.value.split(",").map(function (s) { return s.trim(); }).filter(Boolean),
         latest_path: fPath.value.trim(), notes: fNotes.value.trim(),
         ftp: { user: fUser.value.trim(), passive: fPassive.checked },
@@ -1205,6 +1310,9 @@
     var selAll = BV.el("input", { type: "checkbox", class: "lf-check" });
     selRow.appendChild(selAll);
     selRow.appendChild(BV.el("span", null, "select all"));
+    var devFilter = "all";   /* all | robots | cameras */
+    var filterBox = BV.el("span", { class: "scan-filter", style: "margin-left:auto" });
+    selRow.appendChild(filterBox);
     var list = BV.el("div", { class: "scan-results" });
     var actions = BV.el("div", { class: "lf-actions" });
     var scanBtn = BV.el("button", { class: "btn" }, "scan");
@@ -1279,6 +1387,27 @@
       }).catch(function () {});
     });
 
+    function matchFilter(h) {
+      var dt = h.device_type || "robot";
+      if (devFilter === "robots") return dt === "robot";
+      if (devFilter === "cameras") return dt.indexOf("camera") === 0;
+      return true;
+    }
+    function visible() { return found.filter(matchFilter); }
+
+    function renderFilter() {
+      filterBox.innerHTML = "";
+      if (!found.length) return;
+      var nRobots = found.filter(function (h) { return (h.device_type || "robot") === "robot"; }).length;
+      var nCams = found.filter(function (h) { return (h.device_type || "").indexOf("camera") === 0; }).length;
+      var seg = BV.segmented([
+        { id: "all", label: "all " + found.length },
+        { id: "robots", label: "robots " + nRobots },
+        { id: "cameras", label: "cameras " + nCams },
+      ], { value: devFilter, onChange: function (id) { devFilter = id; renderList(); } });
+      filterBox.appendChild(seg.el);
+    }
+
     function updateAddBtn() {
       var n = found.filter(function (h) { return sel[h.host]; }).length;
       /* hidden (not just disabled) until something is selected — people kept
@@ -1286,15 +1415,18 @@
       addBtn.classList.toggle("hidden", n === 0);
       addBtn.disabled = n === 0;
       addBtn.textContent = n ? "add " + n : "add";
-      var on = found.length && found.every(function (h) { return sel[h.host]; });
+      /* select-all reflects only the VISIBLE (filtered) rows */
+      var vis = visible();
+      var on = vis.length && vis.every(function (h) { return sel[h.host]; });
       selAll.checked = !!on;
-      selAll.indeterminate = !on && found.some(function (h) { return sel[h.host]; });
+      selAll.indeterminate = !on && vis.some(function (h) { return sel[h.host]; });
     }
 
     function renderList() {
       selRow.classList.toggle("hidden", found.length === 0);
+      renderFilter();
       list.innerHTML = "";
-      found.forEach(function (h) {
+      visible().forEach(function (h) {
         var row = BV.el("div", { class: "scan-row" });
         var cb = BV.el("input", { type: "checkbox", class: "lf-check" });
         cb.checked = !!sel[h.host];
@@ -1302,6 +1434,15 @@
         row.appendChild(cb);
         var label = '<span class="lib-robot-name">' + BV.esc(h.name || h.host) + "</span>";
         var meta = [BV.esc(h.host)];
+        if (h.device_type === "camera-mtx") {
+          meta.push(BV.pill("MTX CAM", "acc"));
+          if (h.model) meta.push(BV.esc(h.model));
+          /* found by EtherNet/IP identity but no reachable SMB share yet */
+          if (h.backup_ready === false) meta.push(BV.pill("no share", "warn"));
+        } else if (h.device_type === "camera-keyence") {
+          meta.push(BV.pill("CV-X CAM", "acc"));
+          if (h.model) meta.push(BV.esc(h.model));
+        }
         if (h.has_md) meta.push(BV.pill("MD", "acc"));
         if (h.has_fr) meta.push(BV.pill("FR", "acc"));
         label += ' <span class="lib-robot-meta">' + meta.join(" · ") + "</span>";
@@ -1313,7 +1454,7 @@
 
     selAll.addEventListener("change", function () {
       var on = selAll.checked;
-      found.forEach(function (h) { if (on) sel[h.host] = true; else delete sel[h.host]; });
+      visible().forEach(function (h) { if (on) sel[h.host] = true; else delete sel[h.host]; });
       renderList();
     });
 
@@ -1332,7 +1473,7 @@
           renderScanBar(bar, p);
           found = p.results || []; renderList();
           scanning = false; scanBtn.textContent = "scan";
-          if (p.status === "done" && !found.length) BV.toast("no FANUC robots found");
+          if (p.status === "done" && !found.length) BV.toast("no robots or cameras found");
         });
       }).catch(function (e) { BV.toast(e.message); scanning = false; scanBtn.textContent = "scan"; });
     });
@@ -1375,6 +1516,7 @@
     addBtn.addEventListener("click", function () {
       var drafts = found.filter(function (h) { return sel[h.host]; }).map(function (h) {
         return { robot: h.name || h.host, model: h.model || "", f_number: h.f_number || "",
+          device_type: h.device_type || "robot",
           ips: [h.host], ftp: { user: "", passive: true } };
       });
       if (!drafts.length) return;

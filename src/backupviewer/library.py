@@ -80,6 +80,12 @@ def _normalize(entry: dict) -> dict:
     e.setdefault("line", "")
     e["robot"] = e.get("robot") or e.get("robot_name") or ""
     e.pop("robot_name", None)
+    # "robot" (FANUC) or "camera-mtx" (Matrox) - drives the backup source + which
+    # viewer tabs light up. Defaults to robot so every existing entry is a robot.
+    e.setdefault("device_type", "robot")
+    # a camera can be linked to the robot it inspects (its Cameras tab); the id of
+    # that robot entry, or "" for a robot / an unlinked camera.
+    e.setdefault("linked_robot_id", "")
     e.setdefault("model", "")
     e.setdefault("f_number", "")
     e.setdefault("ips", [])
@@ -246,6 +252,88 @@ def set_hidden(robot_id: str, hidden: bool) -> dict | None:
     return update_robot(robot_id, {"hidden": bool(hidden)})
 
 
+# -- camera <-> robot linking ----------------------------------------------------
+# A camera inspects a robot; linking the two lets the robot's viewer show its
+# cameras' photos. Matrox camera names encode the station + robot (the camera
+# 'FAB-01RB172-R01CAM02' and the robot 'RB172R01B01' both key to 'RB172R01'), so
+# most links can be auto-made; Keyence CV-X (named by IP) and misses are assigned
+# by hand. The link is a config field (linked_robot_id), persisted in the sidecar.
+
+_STATION_RE = re.compile(r"([A-Z]{2}\d{2,4})")
+_ROBOT_RE = re.compile(r"(R\d{1,2})(?!\d)")
+
+
+def _station_robot_key(name: str) -> str:
+    """A normalized STATION+ROBOT key ('RB172R01') from a robot or Matrox camera
+    name. '' when it can't be read (e.g. a CV-X named by IP)."""
+    up = (name or "").upper()
+    st = _STATION_RE.search(up)
+    rb = _ROBOT_RE.search(up, st.end() if st else 0)
+    return (st.group(1) + rb.group(1)) if (st and rb) else ""
+
+
+def link_camera(camera_id: str, robot_id: str) -> dict | None:
+    """Point a camera entry at the robot it inspects (robot_id='' clears it)."""
+    return update_robot(camera_id, {"linked_robot_id": robot_id or ""})
+
+
+def cameras_for_robot(robot_id: str) -> list:
+    """Camera entries linked to a robot (newest-backup first)."""
+    if not robot_id:
+        return []
+    cams = [e for e in list_robots()["robots"]
+            if e.get("linked_robot_id") == robot_id
+            and str(e.get("device_type", "")).startswith("camera")]
+    cams.sort(key=lambda e: e.get("last_backup", ""), reverse=True)
+    return cams
+
+
+def auto_link_cameras() -> dict:
+    """Link every UNLINKED camera to a robot whose station+robot key matches its
+    name (manual links are left alone). Only links on an unambiguous single match.
+    Returns {linked:[{camera,robot}], ambiguous:[names], unmatched:[names]}."""
+    with _LOCK:
+        data = load()
+        by_key: dict = {}
+        for e in data["robots"]:
+            if e.get("device_type", "robot") == "robot":
+                k = _station_robot_key(e.get("robot", ""))
+                if k:
+                    by_key.setdefault(k, []).append(e)
+        linked, ambiguous, unmatched = [], [], []
+        touched = []
+        for e in data["robots"]:
+            if not str(e.get("device_type", "")).startswith("camera"):
+                continue
+            if e.get("linked_robot_id"):
+                continue                                # keep an existing (manual) link
+            k = _station_robot_key(e.get("robot", ""))
+            matches = by_key.get(k, []) if k else []
+            if len(matches) > 1:
+                # the same robot name lives under several lines (test-cell copies,
+                # legacy folders). Prefer the robot in the CAMERA's own cell -
+                # they're physically together - which usually resolves it uniquely.
+                same_cell = [r for r in matches
+                             if (r.get("plant", ""), r.get("line", "")) ==
+                                (e.get("plant", ""), e.get("line", ""))]
+                if len(same_cell) == 1:
+                    matches = same_cell
+            if len(matches) == 1:
+                e["linked_robot_id"] = matches[0]["id"]
+                linked.append({"camera": e.get("robot", ""), "robot": matches[0].get("robot", "")})
+                touched.append(e)
+            elif len(matches) > 1:
+                ambiguous.append(e.get("robot", ""))
+            else:
+                unmatched.append(e.get("robot", ""))
+        if touched:
+            _reconcile(data)
+            _write(data)
+            for e in touched:
+                _persist_sidecar(e)
+        return {"linked": linked, "ambiguous": ambiguous, "unmatched": unmatched}
+
+
 def _within(path: Path, root: Path) -> bool:
     try:
         path.relative_to(root)
@@ -275,6 +363,9 @@ def register_backup(match: dict, backup: dict, *, latest_path: str = "") -> dict
             for k in ("plant", "line", "model", "f_number", "history_root"):
                 if match.get(k) and not e.get(k):
                     e[k] = match[k]
+            dt = match.get("device_type")
+            if dt and dt != "robot" and e.get("device_type", "robot") == "robot":
+                e["device_type"] = dt          # a camera pull teaches an old entry its type
             ips = e.get("ips", [])
             for ip in match.get("ips", []):
                 if ip and ip not in ips:
@@ -337,12 +428,15 @@ def _robot_folder(e: dict) -> Path | None:
 
 
 def _write_robot_sidecar(e: dict, folder: Path) -> None:
-    """Write robot.json for `e` into `folder`. Best-effort; no password. Schema 2
+    """Write robot.json for `e` into `folder`. Best-effort; no password. Schema 3
     carries NO plant/line/robot — the folder's location/name is that truth;
-    legacy schema-1 identity fields are shed whenever a sidecar is rewritten."""
+    legacy schema-1 identity fields are shed whenever a sidecar is rewritten.
+    Schema 3 adds device_type (robot | camera-mtx); older sidecars read as robot."""
     ftp = e.get("ftp") or {}
     data = {
-        "schema": 2, "id": e.get("id", ""),
+        "schema": 3, "id": e.get("id", ""),
+        "device_type": e.get("device_type", "robot"),
+        "linked_robot_id": e.get("linked_robot_id", ""),
         "model": e.get("model", ""), "f_number": e.get("f_number", ""),
         "ips": list(e.get("ips", []) or []),
         "ftp": {"user": ftp.get("user", ""), "passive": ftp.get("passive", True)},
@@ -496,6 +590,8 @@ def _scan_disk(root: Path, stats: dict | None = None) -> tuple:
             ftp = rjson.get("ftp") if isinstance(rjson.get("ftp"), dict) else {}
             g = {
                 "id": rid, "plant": plant, "line": line, "robot": robot,
+                "device_type": rjson.get("device_type") or meta.get("device_type") or "robot",
+                "linked_robot_id": rjson.get("linked_robot_id", "") or "",
                 "model": rjson.get("model", "") or meta.get("model", ""),
                 "f_number": rjson.get("f_number", "") or "",
                 "ips": list(rjson.get("ips", []) or []),
@@ -547,6 +643,8 @@ def _scan_disk(root: Path, stats: dict | None = None) -> tuple:
         ftp = rj.get("ftp") if isinstance(rj.get("ftp"), dict) else {}
         groups[key] = {
             "id": rid, "plant": plant, "line": line, "robot": robot,
+            "device_type": rj.get("device_type") or "robot",
+            "linked_robot_id": rj.get("linked_robot_id", "") or "",
             "model": rj.get("model", ""), "f_number": rj.get("f_number", "") or "",
             "ips": list(rj.get("ips", []) or []),
             "ftp": {"user": ftp.get("user", ""), "passive": ftp.get("passive", True)},
@@ -615,6 +713,10 @@ def _apply_disk(e: dict, disk: dict) -> None:
     e["plant"], e["line"], e["robot"] = disk["plant"], disk["line"], disk["robot"]
     if old[2]:
         _add_alias(e, *old)                            # no-op when identity unchanged
+    if disk.get("device_type"):
+        e["device_type"] = disk["device_type"]         # sidecar is authoritative
+    if disk.get("linked_robot_id"):
+        e["linked_robot_id"] = disk["linked_robot_id"]
     for k in ("model", "f_number", "notes"):
         if not e.get(k) and disk.get(k):
             e[k] = disk[k]

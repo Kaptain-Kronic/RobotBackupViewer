@@ -116,7 +116,7 @@ def test_relocate_records_alias_in_entry_and_sidecar(monkeypatch, tmp_path):
     rj = json.loads((root / "P" / "L" / "R1NEW" / "robot.json").read_text(encoding="utf-8"))
     assert any(a["robot"] == "R1" for a in rj.get("aliases", []))   # and travels in the sidecar
     # the rewrite also sheds the legacy identity fields: the folder IS the identity
-    assert rj["schema"] == 2
+    assert rj["schema"] == 3
     assert "plant" not in rj and "line" not in rj and "robot" not in rj
 
 

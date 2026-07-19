@@ -73,6 +73,126 @@ def latest_dir(root: Path, plant: str, line: str, robot: str) -> Path:
     return Path(*parts)
 
 
+# -- reusable transfer primitives -----------------------------------------------
+# Shared by the FANUC BackupJob and the Matrox CameraBackupJob (mtxbackup.py) so
+# the gentle, crash-safe download + mirror behaviour is written once.
+
+def long_path(p) -> str:
+    r"""A Windows extended-length path string (\\?\...) so a file whose full path
+    exceeds the legacy 260-char MAX_PATH still opens. Camera trees blow past it
+    easily (deep dated snapshot + `CAM1\Documents\Matrox Design Assistant\
+    SavedImages\<date>\` + a long inspection filename + the `.part` suffix).
+    No-op off Windows or when already prefixed; needs an absolute path."""
+    s = str(p)
+    if os.name != "nt" or s.startswith("\\\\?\\"):
+        return s
+    if s.startswith("\\\\"):            # UNC \\host\share -> \\?\UNC\host\share
+        return "\\\\?\\UNC\\" + s[2:]
+    return "\\\\?\\" + s                # local C:\... -> \\?\C:\...
+
+
+def retrieve(ftp, retr_arg: str, dest: Path, *, retries: int = RETRIES) -> int:
+    r"""Download one file to `dest` via the .part-then-rename protocol with
+    bounded retries + backoff, so a crash never leaves a half-file that looks
+    complete. `retr_arg` is the RETR argument - a bare basename when the caller
+    has already positioned CWD (the flat FANUC MD: case), or a path the server
+    resolves relative to CWD (the nested Matrox case). Returns bytes written;
+    raises the last ftplib error if every attempt fails. Long dest paths use the
+    \\?\ prefix so a deep camera tree never trips the 260-char limit."""
+    os.makedirs(long_path(dest.parent), exist_ok=True)
+    part = dest.with_name(dest.name + ".part")
+    part_l, dest_l = long_path(part), long_path(dest)
+    last_err = None
+    for attempt in range(retries + 1):
+        try:
+            counter = {"n": 0}
+            with open(part_l, "wb") as fh:
+                def _w(chunk, _fh=fh, _c=counter):
+                    _fh.write(chunk)
+                    _c["n"] += len(chunk)
+                ftp.retrbinary("RETR " + retr_arg, _w)
+            os.replace(part_l, dest_l)
+            return counter["n"]
+        except ftplib.all_errors as e:
+            last_err = e
+            if os.path.exists(part_l):
+                try:
+                    os.remove(part_l)
+                except OSError:
+                    pass
+            if attempt < retries:
+                time.sleep(0.4 * (attempt + 1))
+    raise last_err if last_err else RuntimeError("download failed: " + retr_arg)
+
+
+def mirror_latest(dated: Path, latest: Path, *, label: str = "") -> Path | None:
+    """Overwrite `latest` with a copy of the `dated` snapshot, built in a sibling
+    .__tmp dir then atomically swapped, so a half-written mirror is never visible
+    and a failure here leaves the (good) dated snapshot untouched. Returns the
+    mirror path, or None on failure (logged)."""
+    tmp = latest.with_name(latest.name + ".__tmp")
+    try:
+        latest.parent.mkdir(parents=True, exist_ok=True)
+        if tmp.exists():
+            shutil.rmtree(tmp, ignore_errors=True)
+        shutil.copytree(dated, tmp)
+        if latest.exists():
+            shutil.rmtree(latest, ignore_errors=True)
+        os.replace(tmp, latest)
+        return latest
+    except OSError:
+        log.exception("Latest mirror failed for %s (dated snapshot is intact)",
+                      label or latest.name)
+        shutil.rmtree(tmp, ignore_errors=True)
+        return None
+
+
+# -- read-only FTP tree walk (shared by the Keyence CV-X camera backup) ----------
+# The Matrox side moved to SMB, but Keyence CV-X cameras speak real FTP, so these
+# gentle listing helpers live here next to the transfer primitives.
+
+WALK_MAX_FILES = 20_000        # guard against a runaway card
+
+
+def _names(ftp) -> list[str]:
+    """Basenames in the current FTP directory (nlst tolerated to fail on an empty
+    or odd dir; some servers return full paths, so strip to the basename)."""
+    try:
+        raw = ftp.nlst()
+    except ftplib.all_errors:
+        return []
+    out = []
+    for n in raw:
+        base = n.rsplit("/", 1)[-1]
+        if base and base not in (".", ".."):
+            out.append(base)
+    return out
+
+
+def _walk(ftp, rel: str, out: list, cancel=None) -> None:
+    """Recursively collect file relpaths under the CURRENT directory (whose path
+    from the walk root is `rel`). Directories are detected by descending into them
+    (cwd succeeds) and files fall through. Leaves CWD where it started (each
+    descent is matched by a cwd('..'))."""
+    for name in sorted(_names(ftp)):
+        if cancel is not None and cancel():
+            return
+        if len(out) >= WALK_MAX_FILES:
+            log.warning("ftp walk hit file cap %d under %s", WALK_MAX_FILES, rel)
+            return
+        child = f"{rel}/{name}" if rel else name
+        try:
+            ftp.cwd(name)                 # success => it's a directory, now inside it
+        except ftplib.all_errors:
+            out.append(child)             # not a directory => a file to pull
+            continue
+        _walk(ftp, child, out, cancel)
+        try:
+            ftp.cwd("..")
+        except ftplib.all_errors:
+            return
+
+
 class BackupJob:
     """One backup run. Construct, then .run() on a worker thread; poll .snapshot()
     for live progress; .cancel() requests a graceful stop between files."""
@@ -220,7 +340,7 @@ class BackupJob:
                 # some servers root straight at MD: - if the only device can't be
                 # entered, fall back to listing the current dir
                 if len(self.devices) == 1:
-                    pass
+                    self._guard_not_camera(ftp)
                 else:
                     log.info("device %s not available on %s", dev, self.host)
                     continue
@@ -252,6 +372,27 @@ class BackupJob:
                 return
             out.append((dev, child))
 
+    def _guard_not_camera(self, ftp):
+        """The FANUC fallback (no MD: device -> flat-list the login dir) pointed
+        at a Matrox camera would 'succeed' with a couple of loose shell scripts
+        and then choke on the da/ directory - a junk backup that LOOKS like it
+        ran (field bug: 'the backup didn't grab the camera data'). If the login
+        dir carries the camera signature, refuse loudly instead."""
+        try:
+            names = {n.rsplit("/", 1)[-1].lower() for n in ftp.nlst()}
+        except ftplib.all_errors:
+            return
+        if "da" in names and "documents" in names:
+            raise RuntimeError(
+                "this host looks like a Matrox camera (da/ + Documents/ at its "
+                "FTP root), not a FANUC robot - set its device type to 'matrox "
+                "camera' in the library and back it up again")
+        if "cv-x" in names:
+            raise RuntimeError(
+                "this host looks like a Keyence CV-X camera (cv-x/ at its FTP "
+                "root), not a FANUC robot - set its device type to 'keyence "
+                "camera' in the library and back it up again")
+
     def _is_dir(self, ftp, name) -> bool:
         try:
             ftp.cwd(name)
@@ -266,30 +407,9 @@ class BackupJob:
             pass
 
     def _download_one(self, ftp, dev, rel, dated: Path) -> int:
-        dest = dated / rel.replace("/", os.sep)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        part = dest.with_name(dest.name + ".part")
-        last_err = None
-        for attempt in range(RETRIES + 1):
-            try:
-                counter = {"n": 0}
-                with open(part, "wb") as fh:
-                    def _w(chunk, _fh=fh, _c=counter):
-                        _fh.write(chunk)
-                        _c["n"] += len(chunk)
-                    ftp.retrbinary("RETR " + rel.rsplit("/", 1)[-1], _w)
-                part.replace(dest)
-                return counter["n"]
-            except ftplib.all_errors as e:
-                last_err = e
-                if part.exists():
-                    try:
-                        part.unlink()
-                    except OSError:
-                        pass
-                if attempt < RETRIES:
-                    time.sleep(0.4 * (attempt + 1))
-        raise last_err if last_err else RuntimeError("download failed: " + rel)
+        # MD: is flat, so CWD is already the device and a bare basename RETRs;
+        # the dest keeps the (possibly nested FR:) relpath.
+        return retrieve(ftp, rel.rsplit("/", 1)[-1], dated / rel.replace("/", os.sep))
 
     # -- on disk -------------------------------------------------------------
 
@@ -306,24 +426,9 @@ class BackupJob:
         (dated / "backup.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
     def _mirror_latest(self, dated: Path) -> Path | None:
-        """Overwrite <...>/Latest/<robot> with this snapshot. Built in a sibling
-        temp dir then swapped, so a half-written mirror is never visible and a
-        failure here leaves the (good) dated snapshot untouched."""
+        """Overwrite <...>/Latest/<robot> with this snapshot (see mirror_latest)."""
         latest = latest_dir(self.dest_root, self.plant, self.line, self.robot)
-        tmp = latest.with_name(latest.name + ".__tmp")
-        try:
-            latest.parent.mkdir(parents=True, exist_ok=True)
-            if tmp.exists():
-                shutil.rmtree(tmp, ignore_errors=True)
-            shutil.copytree(dated, tmp)
-            if latest.exists():
-                shutil.rmtree(latest, ignore_errors=True)
-            os.replace(tmp, latest)
-            return latest
-        except OSError:
-            log.exception("Latest mirror failed for %s (dated snapshot is intact)", self.robot)
-            shutil.rmtree(tmp, ignore_errors=True)
-            return None
+        return mirror_latest(dated, latest, label=self.robot)
 
     # -- library record ------------------------------------------------------
 

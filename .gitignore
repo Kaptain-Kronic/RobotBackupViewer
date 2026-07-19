@@ -19,3 +19,6 @@ Diag/
 
 # claude code local settings
 .claude/
+
+# keyence-helper build output (exe + logs that may carry live camera IPs)
+keyence-helper/bin/

@@ -69,6 +69,32 @@ def test_scan_builds_history_newest_first_excluding_mirror(monkeypatch, tmp_path
     assert "Latest" not in e["latest_path"]    # never the mirror
 
 
+def test_scan_attaches_camera_snapshot(monkeypatch, tmp_path):
+    """A camera snapshot carries NO FANUC files (.LS/.VA/...) - just a CAM<n>/
+    tree + backup.json. The scan must still see it as a backup (the field bug:
+    'the program doesn't see the actual backup'), attach it to the entry, and
+    carry the camera device_type through."""
+    _iso(monkeypatch, tmp_path)
+    root = tmp_path / "lib"
+    snap = root / "Test Cell" / "Test1" / "192.0.2.117" / "2026_07_14" / "17_20_24"
+    (snap / "CAM1" / "cv-x" / "setting").mkdir(parents=True)
+    (snap / "CAM1" / "cv-x" / "setting" / "env.dat").write_text("blob", encoding="utf-8")
+    (snap / "backup.json").write_text(json.dumps({
+        "robot": "192.0.2.117", "line": "Test1", "plant": "Test Cell",
+        "taken": "2026-07-14T17:20:24", "type": "keyence cv-x setting",
+        "device_type": "camera-keyence", "files": 1, "bytes": 4, "source": "ftp",
+    }), encoding="utf-8")
+    (snap / "notes.txt").write_text("cvx pull\n", encoding="utf-8")
+
+    robots = library.scan_library_root(root)["robots"]
+    assert len(robots) == 1
+    e = robots[0]
+    assert (e["robot"], e["line"], e["plant"]) == ("192.0.2.117", "Test1", "Test Cell")
+    assert e["device_type"] == "camera-keyence"       # carried from backup.json
+    assert len(e["backups"]) == 1
+    assert e["latest_path"].endswith(os.path.join("2026_07_14", "17_20_24"))
+
+
 def test_rescan_preserves_config_but_identity_follows_disk(monkeypatch, tmp_path):
     """Files are law: the folder's location/name IS the identity, so a rescan
     reverts a registry-only rename (real renames go through relocate_robot,
@@ -316,9 +342,10 @@ def test_sidecar_round_trip_carries_identity_to_a_fresh_library(monkeypatch, tmp
     assert rj["id"] == e["id"] and rj["notes"] == "travels with the folder"
     assert "passwd" not in rj and "password" not in json.dumps(rj)   # never a password
     assert rj["ftp"]["user"] == "fanuc"
-    # schema 2: identity lives in the tree, NEVER in the sidecar — nothing to go
+    # schema 3: identity lives in the tree, NEVER in the sidecar — nothing to go
     # stale when the folder is later moved/renamed in Explorer
-    assert rj["schema"] == 2
+    assert rj["schema"] == 3
+    assert rj["device_type"] == "robot"          # default; cameras record camera-mtx
     assert "plant" not in rj and "line" not in rj and "robot" not in rj
 
     (settings.app_dir() / "library.json").unlink()      # a fresh machine

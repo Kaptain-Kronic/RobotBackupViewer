@@ -17,20 +17,31 @@ import ipaddress
 import json
 import logging
 import socket
+import struct
 import subprocess
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from . import ftpbackup, session
+from . import ftpbackup, keyencebackup, mtxbackup, session
 from .parsers import summary_dg
 
 log = logging.getLogger(__name__)
 
 PORT = 21
+SMB_PORT = 445            # Matrox cameras are a Samba share (no FTP), not port 21
 PORT_TIMEOUT = 0.7        # fast TCP pre-check before the heavier FTP probe
 SCAN_WORKERS = 48
+
+# EtherNet/IP identity: one broadcast ListIdentity packet (the mechanism RSLinx
+# uses) enumerates every industrial device on the subnet at once. Matrox cameras
+# answer with the ODVA vendor id 1144 - a transport-independent signal that finds
+# a camera even when its file-share port (SMB/FTP) is closed, and is far cheaper
+# than SMB-probing all 254 addresses. Live-confirmed: 21 cameras on one /24.
+EIP_PORT = 44818
+MATROX_VENDOR_ID = 1144
 _NAME_LS_TRIES = 8        # report .LS files to sniff for a robot name
 # SUMMARY.DG is synthesized on GET; its F Number sits in the first lines, so a
 # small prefix is enough (confirmed on a live R-30iB: --diagnose). The robot name
@@ -196,6 +207,87 @@ def _tcp_open(host: str, port: int, timeout: float) -> bool:
         return False
 
 
+# -- EtherNet/IP identity (transport-independent camera discovery) ----------------
+
+def _parse_list_identity(data: bytes) -> dict | None:
+    """Pull {vendor, serial, product} out of an EtherNet/IP ListIdentity reply.
+    ODVA layout: 24-byte encapsulation header, item count/type/length, protocol
+    version, 16-byte socket address, then the CIP Identity object - vendor id at
+    byte 48, serial at 58, a length-prefixed product name at 62. Returns None for
+    anything too short/odd to be a real reply."""
+    if len(data) < 64:
+        return None
+    try:
+        vendor = struct.unpack_from("<H", data, 48)[0]
+        serial = struct.unpack_from("<I", data, 58)[0]
+        product = ""
+        nl = data[62]
+        if 0 < nl < 64 and 63 + nl <= len(data):
+            product = data[63:63 + nl].decode("ascii", "replace").strip()
+        return {"vendor": vendor, "serial": serial, "product": product}
+    except (struct.error, IndexError):
+        return None
+
+
+def eip_list_identity(broadcast_ip: str, *, timeout: float = 1.5, port: int = EIP_PORT,
+                      sock_factory=None) -> list[dict]:
+    """Broadcast one EtherNet/IP ListIdentity (CIP encapsulation command 0x63) and
+    collect every responder as {ip, vendor, serial, product}. Read-only - no
+    writes to any device (identical to what RSLinx / an industrial browse does).
+    Best-effort: returns [] if the network blocks broadcast, so discovery degrades
+    to the per-host SMB/FTP probes."""
+    req = bytearray(24)
+    req[0] = 0x63                                  # ListIdentity
+    make = sock_factory or (lambda: socket.socket(socket.AF_INET, socket.SOCK_DGRAM))
+    sock = make()
+    out: list[dict] = []
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.settimeout(timeout)
+        # send twice: on a busy shop /24 a single ListIdentity broadcast loses a
+        # few replies to UDP collisions; a second send catches most stragglers
+        sock.sendto(bytes(req), (broadcast_ip, port))
+        sock.sendto(bytes(req), (broadcast_ip, port))
+        deadline = time.time() + timeout
+        seen: set = set()
+        while time.time() < deadline:
+            try:
+                data, addr = sock.recvfrom(2048)
+            except socket.timeout:
+                break
+            except OSError:
+                break
+            if addr[0] in seen:
+                continue                       # deduped (we sent the request twice)
+            info = _parse_list_identity(data)
+            if info:
+                seen.add(addr[0])
+                info["ip"] = addr[0]
+                out.append(info)
+    except OSError:
+        pass
+    finally:
+        try:
+            sock.close()
+        except OSError:
+            pass
+    return out
+
+
+def matrox_hosts(broadcast_ip: str, probe=eip_list_identity) -> dict:
+    """{ip: {vendor, serial, product}} for every Matrox camera (vendor 1144) that
+    answered the EtherNet/IP broadcast. Never raises - a failed probe just yields
+    {}."""
+    out: dict = {}
+    try:
+        for d in probe(broadcast_ip):
+            if d.get("vendor") == MATROX_VENDOR_ID and d.get("ip"):
+                out[d["ip"]] = d
+    except Exception:  # noqa: BLE001 - identity is a nicety; never sink a scan
+        log.exception("EtherNet/IP identity probe failed")
+    return out
+
+
 # -- base job --------------------------------------------------------------------
 
 class _ScanJob:
@@ -256,26 +348,42 @@ class _StopRead(Exception):
 
 
 class NetworkScanJob(_ScanJob):
-    """Sweep a subnet for FANUC controllers reachable over FTP."""
+    """Sweep a subnet for FANUC controllers (FTP), Keyence CV-X cameras (FTP) and
+    Matrox cameras (EtherNet/IP identity + SMB)."""
     kind = "network"
 
-    def __init__(self, cidr, *, port=PORT, port_timeout=PORT_TIMEOUT,
+    def __init__(self, cidr, *, port=PORT, smb_port=SMB_PORT, port_timeout=PORT_TIMEOUT,
                  ftp_factory=ftplib.FTP, host_provider=enumerate_hosts,
-                 port_check=_tcp_open, workers=SCAN_WORKERS):
+                 port_check=_tcp_open, workers=SCAN_WORKERS, mtx_mount=None, eip_probe=None):
         super().__init__()
         self.cidr = cidr
         self.port = int(port or PORT)
+        self.smb_port = int(smb_port or SMB_PORT)
         self.port_timeout = port_timeout
         self._ftp_factory = ftp_factory
         self._host_provider = host_provider
         self._port_check = port_check
         self._workers = workers
+        self._mtx_mount = mtx_mount or mtxbackup._smb_mount   # SMB mount (injectable for tests)
+        self._eip_probe = eip_probe or eip_list_identity      # EtherNet/IP (injectable for tests)
+        self._matrox_eip: dict = {}                           # ip -> identity from the broadcast
+
+    def _identity_sweep(self) -> dict:
+        """One EtherNet/IP broadcast up front → {ip: identity} for Matrox cameras,
+        so a camera is discovered by identity even when its SMB share is closed.
+        Best-effort: {} if the CIDR has no broadcast address or the net blocks it."""
+        try:
+            bcast = str(ipaddress.ip_network(self.cidr, strict=False).broadcast_address)
+        except ValueError:
+            return {}
+        return matrox_hosts(bcast, probe=self._eip_probe)
 
     def run(self):
         try:
             self._set(status="scanning")
             hosts = self._host_provider(self.cidr)
             self._set(total=len(hosts))
+            self._matrox_eip = self._identity_sweep()
             with ThreadPoolExecutor(max_workers=self._workers) as ex:
                 futs = {ex.submit(self._scan_host, h): h for h in hosts}
                 for fut in as_completed(futs):
@@ -296,24 +404,58 @@ class NetworkScanJob(_ScanJob):
     def _scan_host(self, host: str):
         if self.cancelled:
             return None
-        if not self._port_check(host, self.port, self.port_timeout):
-            return None
-        info = ftpbackup.probe_controller(host, port=self.port, ftp_factory=self._ftp_factory)
-        if not info.get("reachable"):
-            return None
-        banner = info.get("banner", "") or ""
-        if "FANUC" not in banner.upper() and not info.get("has_md"):
-            return None  # an FTP server, but not a FANUC controller
-        ident = resolve_robot_name(self._ftp_factory, host, self.port)
-        return {
-            "host": host,
-            "name": ident["name"],
-            "model": ident["model"],
-            "f_number": ident["f_number"],
-            "banner": banner,
-            "has_md": bool(info.get("has_md")),
-            "has_fr": bool(info.get("has_fr")),
-        }
+        # --- FTP path (port 21): FANUC robots + Keyence CV-X cameras ---
+        if self._port_check(host, self.port, self.port_timeout):
+            info = ftpbackup.probe_controller(host, port=self.port, ftp_factory=self._ftp_factory)
+            banner = info.get("banner", "") or ""
+            if info.get("reachable") and ("FANUC" in banner.upper() or info.get("has_md")):
+                ident = resolve_robot_name(self._ftp_factory, host, self.port)
+                return {
+                    "host": host, "device_type": "robot",
+                    "name": ident["name"], "model": ident["model"],
+                    "f_number": ident["f_number"], "banner": banner,
+                    "has_md": bool(info.get("has_md")), "has_fr": bool(info.get("has_fr")),
+                }
+            # A Keyence CV-X announces itself in the banner and speaks ANONYMOUS
+            # FTP - the plain robot probe already reached it; a cv-x/ sighting
+            # makes it a camera (not merely a bare ftpd that allows anon).
+            if "CV-X" in banner.upper():
+                kc = keyencebackup.probe_keyence(host, port=self.port, ftp_factory=self._ftp_factory)
+                if kc.get("reachable") and (kc.get("has_cvx") or kc.get("has_setting")):
+                    return {
+                        "host": host, "device_type": "camera-keyence", "name": "",
+                        "model": banner.split("(")[0].replace("220", "").strip() or "CV-X",
+                        "f_number": "", "banner": banner,
+                        "has_setting": bool(kc.get("has_setting")),
+                    }
+
+        # --- Matrox cameras: EtherNet/IP identity (vendor 1144) and/or the SMB
+        # `mtxuser` share ---
+        # A Matrox camera has NO FTP (port 21 closed). The EtherNet/IP broadcast
+        # already told us which hosts are Matrox (transport-independent - works
+        # even if SMB is off); the SMB probe then confirms the camera is BACKUP-ABLE
+        # (mtxuser share + da/) and reads its real name from a saved-image sidecar.
+        # A camera known by identity but with no reachable share is still emitted,
+        # flagged backup_ready=False, so it shows up for manual handling.
+        eip = self._matrox_eip.get(host)
+        smb_open = self._port_check(host, self.smb_port, self.port_timeout)
+        if eip or smb_open:
+            cam = mtxbackup.probe_camera(host, mount=self._mtx_mount) if smb_open else {}
+            backup_ready = bool(cam.get("reachable") and (cam.get("has_da") or cam.get("has_images")))
+            if eip or backup_ready:   # identity OR a confirmed share => it's a camera
+                ident = (mtxbackup.resolve_camera_name(host, mount=self._mtx_mount)
+                         if backup_ready else {"name": "", "model": ""})
+                return {
+                    "host": host, "device_type": "camera-mtx",
+                    "name": ident["name"],
+                    "model": ident["model"] or (eip.get("product", "") if eip else ""),
+                    "serial": (eip.get("serial") if eip else None),
+                    "f_number": "", "banner": "",
+                    "has_da": bool(cam.get("has_da")), "has_images": bool(cam.get("has_images")),
+                    "backup_ready": backup_ready,
+                    "via": "eip" if eip else "smb",
+                }
+        return None
 
 
 # -- live name resolution --------------------------------------------------------

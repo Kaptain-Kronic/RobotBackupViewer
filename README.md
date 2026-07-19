@@ -5,7 +5,24 @@ pendant — frames, IO, registers, programs, alarms, DCS — in a clean, keyboar
 themeable UI. Keep a library of your robots, and pull fresh backups straight off a
 controller over FTP.
 
-![status](https://img.shields.io/badge/status-v0.9-e2b714)
+**Smart cameras too** — the library holds cameras alongside robots, each over whatever
+the camera actually speaks:
+
+- **Matrox (MTX)**: back up its Design Assistant `da/` folder + the newest day of saved
+  images over **SMB** (the `\\<ip>\mtxuser` share, `MTXuser`/`MATROX`), and browse it with
+  a **photos** view showing the most recent inspection image, its pass/fail result and the
+  metadata parsed from the camera's own sidecar. **Remote** embeds the camera's own web UI
+  in-app with tabs — the portal home **and its Design Assistant operator page(s)**, auto-
+  discovered — fullscreen-capable, with a separate-window fallback if a page refuses framing.
+- **Keyence (CV-X)**: back up its `cv-x/setting/` config tree over **anonymous FTP**, and
+  **remote into its live screen** — a fullscreen-capable mirror of the controller's 1024×768
+  display with mouse control, speaking the CV-X's own remote-desktop protocol (no Keyence
+  software or Terminal PC needed).
+
+Network discovery sweeps both FTP (robots + CV-X) and SMB (Matrox) and files everything
+under the right device type automatically; a robot/camera filter keeps a busy cell legible.
+
+![status](https://img.shields.io/badge/status-v0.99q-e2b714)
 ![license](https://img.shields.io/badge/license-GPLv3-7ec384)
 
 ## The shell
@@ -32,6 +49,7 @@ On launch you land on a **home menu**:
 | **dcs** | safety: verify report, change history, signatures, code-styled safe-I/O logic | `DCSVRFY.DG`, `DCSCHGD*.DG` |
 | **mh valves** | GM gripper / valve configuration | `MHGRIPDT.VA` |
 | **system vars** | the full `SYSTEM.VA` tree; KAREL `.PC` program variables | `SYSTEM.VA`, `*.VA`/`*.VR` |
+| **photos** *(camera)* | the most recent Matrox inspection image + pass/fail, recipe, exposure, camera identity and per-tool results, over a pass/fail-filterable thumbnail grid | `SavedImages/*.jpg` `.png` `.txt` |
 | **files** | raw browser for every file; text viewer + hex preview for binaries | everything |
 | **compare** | two backups side by side, per-category, with program diffs | — |
 
@@ -95,6 +113,10 @@ src/backupviewer/
   session.py      backup folder scan, case-insensitive index, lazy parse cache
   library.py      the saved-robot registry (library.json)
   ftpbackup.py    the FTP backup engine (MD: "all of above", gentle/throttled)
+  mtxbackup.py    the Matrox camera SMB backup (da/ + newest SavedImages, per-camera)
+  keyencebackup.py the Keyence CV-X camera FTP backup (cv-x/setting, per-camera)
+  cvx_remote.py   the Keyence CV-X live remote desktop (screen mirror + mouse, MJPEG bridge)
+  cvx_handshake/  captured CV-X remote-desktop handshake blobs, replayed at connect time
   parsers/        pure text -> dict parsers (one per file family)
   web/            vanilla JS frontend, no build step (classic scripts, BV namespace)
 ```

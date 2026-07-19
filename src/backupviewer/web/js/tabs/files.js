@@ -46,6 +46,23 @@
         toolbar.appendChild(typeSeg.el);
       }
 
+      /* a camera backup gets a live remote button: CV-X mirrors the controller's
+         screen + mouse (cvxremote.js); Matrox embeds the camera's own web UI
+         (mtxremote.js) */
+      var m = BV.state.manifest || {};
+      if ((m.device_type || "").indexOf("camera") === 0 && m.camera_ip) {
+        var isCvx = m.device_type === "camera-keyence";
+        var rb = BV.el("button", { class: "btn", style: "margin-left:auto",
+          title: (isCvx ? "mirror this camera's live screen ("
+                        : "open this camera's web UI (") + BV.esc(m.camera_ip) + ")" },
+          "🖥 remote");
+        rb.addEventListener("click", function () {
+          if (isCvx) BV.openCvxRemote(m.camera_ip, m.camera_name);
+          else BV.openMtxRemote(m.camera_ip, m.camera_name);
+        });
+        toolbar.appendChild(rb);
+      }
+
       var host = BV.el("div", { style: "height:100%;margin:0 1.25rem 1rem" });
       view.appendChild(host);
 

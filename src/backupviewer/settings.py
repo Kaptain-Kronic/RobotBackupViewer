@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -50,7 +51,18 @@ def save(settings: dict) -> None:
 def _write(settings: dict) -> None:
     tmp = _settings_file().with_suffix(".tmp")
     tmp.write_text(json.dumps(settings, indent=2), encoding="utf-8")
-    tmp.replace(_settings_file())
+    # Windows: replace() throws WinError 5 while ANY other handle has the target
+    # open - a concurrent reader thread (load() runs unlocked), a second app
+    # instance, or an AV scan. Seen in the field as a burst of start_backups all
+    # dying on this rename. Those holds clear in milliseconds - retry briefly.
+    for attempt in range(4):
+        try:
+            tmp.replace(_settings_file())
+            return
+        except PermissionError:
+            if attempt == 3:
+                raise
+            time.sleep(0.05 * (attempt + 1))
 
 
 def get(key: str, default=None):

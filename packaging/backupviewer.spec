@@ -10,6 +10,10 @@ a = Analysis(
     binaries=[],
     datas=[
         (str(ROOT / "src" / "backupviewer" / "web"), "backupviewer/web"),
+        # the captured CV-X remote-desktop handshake blobs, replayed at connect
+        # time by cvx_remote.py (loaded via __file__-relative path in both dev
+        # and frozen builds).
+        (str(ROOT / "src" / "backupviewer" / "cvx_handshake"), "backupviewer/cvx_handshake"),
     ],
     hiddenimports=[
         "webview.platforms.winforms",
@@ -17,7 +21,12 @@ a = Analysis(
     ],
     hookspath=[],
     runtime_hooks=[],
-    excludes=["tkinter", "test", "unittest"],
+    # paramiko was briefly installed while confirming the Matrox transport, and
+    # PyInstaller's static analysis drags it (+ its cryptography/nacl/bcrypt stack,
+    # ~4 MB) into the graph via an optional import - the app never uses it (Matrox
+    # is SMB via native ctypes), so exclude it to keep the exe lean.
+    excludes=["tkinter", "test", "unittest",
+              "paramiko", "cryptography", "nacl", "bcrypt"],
     noarchive=False,
 )
 

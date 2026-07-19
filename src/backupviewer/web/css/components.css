@@ -1096,3 +1096,52 @@ button.btn.danger:disabled { opacity: 0.5; cursor: default; }
   opacity: 0; transition: opacity 0.25s ease; pointer-events: none;
 }
 #toast.show { opacity: 1; }
+
+/* CV-X live remote-desktop overlay (cvxremote.js) */
+.cvx-remote {
+  position: fixed; inset: 0; z-index: 80; background: #0b0c0e;
+  display: flex; flex-direction: column;
+}
+.cvx-bar {
+  display: flex; align-items: center; gap: 0.6rem; flex: none;
+  padding: 0.4rem 0.7rem; background: var(--bg2); border-bottom: 1px solid var(--edge);
+}
+.cvx-title { color: var(--text); font-size: 0.9rem; font-weight: 600; }
+.cvx-status { color: var(--sub); font-size: 0.78rem; }
+.cvx-status.err { color: var(--error); }
+.cvx-stage {
+  flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center;
+  padding: 0.5rem; overflow: hidden;
+}
+.cvx-screen {
+  position: relative; background: #000; cursor: crosshair;
+  box-shadow: 0 0 0 1px var(--edge), 0 8px 40px rgba(0,0,0,0.6);
+}
+.cvx-screen img {
+  width: 100%; height: 100%; display: block; object-fit: fill;
+  user-select: none; -webkit-user-drag: none;
+}
+.cvx-hint {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: var(--sub); font-size: 0.85rem; pointer-events: none; text-align: center; padding: 1rem;
+}
+.cvx-error {
+  position: absolute; inset: 0; display: flex; flex-direction: column; gap: 0.3rem;
+  align-items: center; justify-content: center; text-align: center; padding: 1.5rem;
+  background: rgba(0,0,0,0.72);
+}
+.cvx-error .big { color: var(--text); font-size: 1.3rem; }
+.cvx-error .hint { color: var(--sub); font-size: 0.82rem; max-width: 46ch; }
+/* "web" variant: an embedded camera web page (Matrox) fills the stage instead
+   of holding the CV-X 4:3 screen box; tabs = stacked iframes (kept alive) */
+.cvx-screen.web { position: relative; width: 100%; height: 100%; cursor: default; background: #fff; }
+.cvx-screen.web iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; background: #fff; }
+.cvx-tabs { display: flex; gap: 0.3rem; margin-left: 0.5rem; min-width: 0; overflow: hidden; }
+button.cvx-tab {
+  appearance: none; border: 1px solid var(--edge); border-radius: var(--radius);
+  background: transparent; color: var(--sub); font: inherit; font-size: 0.78rem;
+  padding: 0.14rem 0.55rem; cursor: pointer; white-space: nowrap;
+  max-width: 18ch; overflow: hidden; text-overflow: ellipsis;
+}
+button.cvx-tab:hover { color: var(--text); }
+button.cvx-tab.on { color: var(--bg); background: var(--accent); border-color: var(--accent); font-weight: 600; }

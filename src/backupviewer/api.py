@@ -13,18 +13,23 @@ import os
 import re
 import threading
 import time
+import uuid
 from pathlib import Path
 
 from . import compare
 from . import __version__
+from . import cvx_remote
 from . import discover
 from . import ftpbackup
+from . import keyencebackup
 from . import library
+from . import mtxbackup
 from . import search as search_mod
 from . import settings
 from .parsers import (alarms, callgraph, dcs, frames, gmwizlog, io_dg,
-                      ls_program, macros, magnet, mastering, mhvalves, payloads,
-                      registers, styles, summary_dg, sysvars)
+                      ls_program, macros, magnet, mastering, mhvalves,
+                      mtx_saved_image, payloads, registers, styles, summary_dg,
+                      sysvars)
 from .parsers.common import is_binary, read_text
 from .session import BackupSession
 
@@ -32,6 +37,11 @@ log = logging.getLogger(__name__)
 
 MAX_TEXT_BYTES = 2_000_000
 HEX_PREVIEW_BYTES = 4096
+MAX_IMAGE_BYTES = 12_000_000
+_IMAGE_MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+               ".png": "image/png", ".bmp": "image/bmp"}
+_RESULT_RE = re.compile(r"-(Pass|Fail)-", re.IGNORECASE)
+_TS_RE = re.compile(r"(\d{4})_(\d{2})_(\d{2})-(\d{2})\.(\d{2})\.(\d{2})\.(\d+)")
 
 
 class ApiError(Exception):
@@ -53,6 +63,96 @@ def _endpoint(fn):
             log.exception("api %s failed", fn.__name__)
             return {"ok": False, "error": {"code": "INTERNAL", "message": f"{type(e).__name__}: {e}"}}
     return wrapper
+
+
+def _require_ip(spec: dict) -> str:
+    """The validated camera IP out of a remote-connect spec, or ApiError."""
+    ip = ((spec or {}).get("ip") or "").strip()
+    if not ip:
+        raise ApiError("BAD_SPEC", "camera IP is required")
+    try:
+        import ipaddress
+        ipaddress.ip_address(ip)
+    except ValueError:
+        raise ApiError("BAD_SPEC", f"not a valid IP: {ip}")
+    return ip
+
+
+def _probe_http(url: str, timeout: float = 4.0):
+    """GET url; returns (status, headers, final_url, body_text). An HTTP error
+    response (401/404/...) is still a live server and is returned, not raised;
+    only socket-level failures propagate (as OSError). Injectable for tests."""
+    import urllib.error
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "BackupViewer"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            body = r.read(262144).decode("utf-8", "replace")
+            return r.status, dict(r.headers), r.geturl(), body
+    except urllib.error.HTTPError as e:
+        try:
+            body = e.read(262144).decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001
+            body = ""
+        return e.code, dict(e.headers or {}), url, body
+
+
+# a Matrox portal launches its operator page(s) as popups to
+# /DesignAssistant/<project>/default.htm - harvest those links from the page
+# markup so the remote view can offer them as in-app tabs instead.
+_DA_LINK_RE = re.compile(
+    r"""["']((?:https?://[^"'\s]+?)?[^"'\s]*?DesignAssistant/[^"'\s]+?\.html?"""
+    r"""(?:\?[^"'\s]*)?)["']""", re.IGNORECASE)
+# DA 9.x portals never write that link in HTML: each project row carries a
+# prj-name attribute (unquoted in the wild) and projectsTableView.js does
+#   window.open("/DesignAssistant/" + project + "/default.htm?pgx=" + Math.random())
+# - so harvest the project names and build the same URL the portal builds.
+_PRJ_NAME_RE = re.compile(r"""prj-name\s*=\s*["']?([A-Za-z0-9_.\-]+)""", re.IGNORECASE)
+
+
+def _find_da_pages(ip: str, html: str) -> list[dict]:
+    """DesignAssistant page links scraped from portal markup, absolutized and
+    restricted to the camera itself (never embed a foreign host a page names).
+    The portal's per-launch ?pgx= cache-buster is stripped; the viewer adds its
+    own. Each: {label, url}."""
+    import urllib.parse
+    pages, seen = [], set()
+    for m in _DA_LINK_RE.finditer(html or ""):
+        url = urllib.parse.urljoin(f"http://{ip}/", m.group(1))
+        parts = urllib.parse.urlsplit(url)
+        if parts.scheme not in ("http", "https") or parts.hostname != ip:
+            continue
+        q = [kv for kv in urllib.parse.parse_qsl(parts.query) if kv[0] != "pgx"]
+        url = urllib.parse.urlunsplit(
+            (parts.scheme, parts.netloc, parts.path, urllib.parse.urlencode(q), ""))
+        if url in seen:
+            continue
+        seen.add(url)
+        segs = [s for s in parts.path.split("/") if s]
+        low = [s.lower() for s in segs]
+        try:
+            label = segs[low.index("designassistant") + 1]
+            if label.lower().endswith((".htm", ".html")):   # no project folder in path
+                label = "design assistant"
+        except (ValueError, IndexError):
+            label = "design assistant"
+        pages.append({"label": label, "url": url})
+        if len(pages) >= 8:
+            break
+    # DA 9.x: no literal links - build the URL from each project row's prj-name,
+    # exactly as the portal's own projectsTableView.js does
+    for m in _PRJ_NAME_RE.finditer(html or ""):
+        if len(pages) >= 8:
+            break
+        name = m.group(1)
+        url = f"http://{ip}/DesignAssistant/{name}/default.htm"
+        if url in seen:
+            continue
+        seen.add(url)
+        pages.append({"label": name, "url": url})
+    if len(pages) == 1:
+        pages[0]["label"] = "design assistant"
+    return pages
 
 
 # -- merge-identity evidence ------------------------------------------------------
@@ -110,6 +210,8 @@ class Api:
         self._jobs: dict[str, ftpbackup.BackupJob] = {}  # active/finished backup jobs
         self._scans: dict[str, discover._ScanJob] = {}  # folder + network scan jobs
         self._lib_sig: str | None = None  # tree signature at the last scan (None = never)
+        self._cvx: dict[str, cvx_remote.CvxRemoteSession] = {}  # live CV-X remote sessions
+        self._cvx_server = None  # lazy MJPEG frame server (one for all sessions)
 
     def bind(self, window, initial_backup: str | None = None):
         self._window = window
@@ -1056,6 +1158,273 @@ class Api:
         return {"kind": "text", "name": p.name, "rel": s.rel(p), "size": size,
                 "text": text, "truncated": truncated}
 
+    # -- matrox camera photos --------------------------------------------------------
+    # A Matrox DA camera saves each inspection as a jpg (preview) + png (full) +
+    # txt (metadata) triple under Documents/.../SavedImages/<date>/. get_photos
+    # groups the triples, parses the sidecar (pass/fail, camera identity, per-tool
+    # results), and returns them newest-first; get_image streams one image as a
+    # base64 data-URI (the reliable path under pywebview's private-mode CSP).
+
+    @staticmethod
+    def _photo_sort_key(name: str, mtime: int) -> tuple:
+        m = _TS_RE.search(name)
+        return ("".join(m.groups()) if m else "", mtime)
+
+    def _camera_session(self, camera_id: str) -> BackupSession:
+        """Open (and cache) a library camera's latest backup as a session, so a
+        robot's Cameras tab can show a linked camera's photos without making it
+        the primary open backup."""
+        e = library.get_robot(camera_id)
+        if e is None:
+            raise ApiError("NOT_FOUND", "camera not in library")
+        path = e.get("latest_path", "")
+        if not path or not Path(path).is_dir():
+            raise ApiError("NO_BACKUP", f"{e.get('robot', 'camera')} has no backup yet")
+        cache = getattr(self, "_camera_sessions", None)
+        if cache is None:
+            cache = self._camera_sessions = {}
+        sess = cache.get(camera_id)
+        if sess is None or str(sess.root) != str(Path(path)):
+            sess = cache[camera_id] = BackupSession(Path(path))
+        return sess
+
+    def _photos_data(self, s: BackupSession):
+        def build():
+            groups: dict[str, dict] = {}
+            for key, p in s.files.items():
+                if "SAVEDIMAGES/" not in key:
+                    continue
+                ext = p.suffix.lower()
+                if ext not in (".jpg", ".jpeg", ".png", ".bmp", ".txt"):
+                    continue
+                rel = s.rel(p)
+                stem = rel[: len(rel) - len(p.suffix)]
+                g = groups.setdefault(stem, {})
+                if ext == ".txt":
+                    g["txt"], g["txt_p"] = rel, p
+                elif ext == ".png":
+                    g["png"], g["png_p"] = rel, p
+                else:  # jpg/jpeg/bmp
+                    g["jpg"], g["jpg_p"] = rel, p
+
+            photos = []
+            for g in groups.values():
+                if not (g.get("jpg") or g.get("png")):
+                    continue  # a stray sidecar with no image
+                rel_any = g.get("jpg") or g.get("png")
+                parts = rel_any.split("/")
+                name = parts[-1]
+                date = parts[-2] if len(parts) >= 2 else ""
+                info: dict = {}
+                if g.get("txt_p"):
+                    try:
+                        info = mtx_saved_image.parse_saved_image(read_text(g["txt_p"]))
+                    except Exception:  # noqa: BLE001 - a bad sidecar must not sink the grid
+                        log.exception("saved-image sidecar parse failed: %s", g.get("txt"))
+                img_p = g.get("jpg_p") or g.get("png_p")
+                try:
+                    mtime = int(img_p.stat().st_mtime)
+                except OSError:
+                    mtime = 0
+                rname = _RESULT_RE.search(name)
+                photos.append({
+                    "name": name,
+                    "date": date,
+                    "thumb": g.get("jpg") or g.get("png"),   # small preview for the grid
+                    "full": g.get("png") or g.get("jpg"),    # full image for the hero
+                    "txt": g.get("txt", ""),
+                    "result": info.get("result") or (rname.group(1).title() if rname else ""),
+                    "timestamp": info.get("timestamp", ""),
+                    "camera": info.get("camera", {}),
+                    "recipe": info.get("recipe", {}),
+                    "tools": info.get("tools", []),
+                    "sections": info.get("sections", []),
+                    "_sort": self._photo_sort_key(name, mtime),
+                })
+            photos.sort(key=lambda x: x.pop("_sort"), reverse=True)
+            camera = photos[0]["camera"] if photos else {}
+            return {"photos": photos, "count": len(photos), "camera": camera}
+
+        return s.cached("photos", build)
+
+    def _image_data(self, s: BackupSession, rel: str):
+        p = s.find(rel)
+        if p is None:
+            raise ApiError("NOT_FOUND", f"image not found: {rel}")
+        ext = p.suffix.lower()
+        mime = _IMAGE_MIME.get(ext)
+        if mime is None:
+            raise ApiError("NOT_IMAGE", f"not a viewable image: {p.name}")
+        size = p.stat().st_size
+        if size > MAX_IMAGE_BYTES:
+            raise ApiError("TOO_BIG", f"image too large to preview ({size // 1_000_000} MB)")
+        import base64
+        data = base64.b64encode(p.read_bytes()).decode("ascii")
+        return {"rel": s.rel(p), "name": p.name, "mime": mime, "size": size,
+                "data_uri": f"data:{mime};base64,{data}"}
+
+    @_endpoint
+    def get_photos(self):
+        return self._photos_data(self._need_session())
+
+    @_endpoint
+    def get_image(self, rel: str):
+        return self._image_data(self._need_session(), rel)
+
+    # -- a robot's linked cameras (its Cameras tab) --------------------------------
+
+    @_endpoint
+    def get_camera_photos(self, camera_id: str):
+        """Full photos payload for a linked camera's latest backup (same shape as
+        get_photos) - drives the Photos view inside a robot's Cameras tab."""
+        return self._photos_data(self._camera_session(camera_id))
+
+    @_endpoint
+    def get_camera_image(self, camera_id: str, rel: str):
+        return self._image_data(self._camera_session(camera_id), rel)
+
+    @_endpoint
+    def lib_robot_cameras(self, robot_id: str):
+        """The cameras linked to a robot, each with a light summary (newest photo
+        thumb + pass/fail) for the Cameras tab list."""
+        out = []
+        for cam in library.cameras_for_robot(robot_id):
+            row = {
+                "id": cam["id"], "name": cam.get("robot", ""),
+                "device_type": cam.get("device_type", ""), "model": cam.get("model", ""),
+                "ips": cam.get("ips", []), "last_backup": cam.get("last_backup", ""),
+                "has_backup": bool(cam.get("latest_path")),
+                "photos": 0, "result": "", "thumb": "", "timestamp": "",
+            }
+            try:
+                data = self._photos_data(self._camera_session(cam["id"]))
+                row["photos"] = data["count"]
+                if data["photos"]:
+                    top = data["photos"][0]
+                    row["result"] = top.get("result", "")
+                    row["thumb"] = top.get("thumb", "")
+                    row["timestamp"] = top.get("timestamp", "") or top.get("date", "")
+            except ApiError:
+                pass   # camera has no backup yet - listed, just no preview
+            out.append(row)
+        return {"cameras": out}
+
+    @_endpoint
+    def lib_link_camera(self, camera_id: str, robot_id: str = ""):
+        """Link a camera to the robot it inspects (robot_id='' unlinks)."""
+        e = library.link_camera(camera_id, robot_id)
+        if e is None:
+            raise ApiError("NOT_FOUND", "camera not in library")
+        return e
+
+    @_endpoint
+    def lib_auto_link(self):
+        """Auto-link unlinked cameras to robots by matching the station+robot in
+        their names. Manual links are preserved. Returns linked/ambiguous/unmatched."""
+        return library.auto_link_cameras()
+
+    # -- CV-X live remote-desktop (screen mirror + mouse) -----------------------------
+    # A Keyence CV-X controller's live screen, mirrored over its custom TCP protocol
+    # (cvx_remote.py). Frames stream to the frontend as MJPEG over a localhost HTTP
+    # server; mouse events come back through the bridge. Wholly separate from the
+    # CV-X anon-FTP backup path. One session per controller.
+
+    def _cvx_frame_server(self):
+        if self._cvx_server is None:
+            self._cvx_server = cvx_remote.start_frame_server(self._cvx)
+        return self._cvx_server
+
+    @_endpoint
+    def cvx_remote_start(self, spec: dict):
+        """Open a live remote-desktop session to a CV-X at spec['ip']; returns a
+        session id + the MJPEG stream URL to point an <img> at."""
+        ip = _require_ip(spec)
+        sess = cvx_remote.CvxRemoteSession(ip)
+        if not sess.start():
+            raise ApiError("CVX_CONNECT", sess.error or "could not connect to the camera")
+        sid = uuid.uuid4().hex
+        self._cvx[sid] = sess
+        port = self._cvx_frame_server().server_address[1]
+        return {"session_id": sid, "stream_url": f"http://127.0.0.1:{port}/cvx/{sid}",
+                "screen": {"w": cvx_remote.SCREEN_W, "h": cvx_remote.SCREEN_H}}
+
+    @_endpoint
+    def cvx_remote_status(self, session_id: str):
+        sess = self._cvx.get(session_id)
+        if sess is None:
+            raise ApiError("NO_SESSION", "unknown remote session")
+        return {"alive": sess.alive, "frames": sess.frames,
+                "handshake_done": sess.handshake_done, "error": sess.error}
+
+    @_endpoint
+    def cvx_remote_mouse(self, session_id: str, event_id: int, x: int, y: int):
+        sess = self._cvx.get(session_id)
+        if sess is None:
+            raise ApiError("NO_SESSION", "unknown remote session")
+        sess.send_mouse(int(event_id), int(x), int(y))
+        return True
+
+    @_endpoint
+    def cvx_remote_stop(self, session_id: str):
+        sess = self._cvx.pop(session_id, None)
+        if sess is not None:
+            sess.stop()
+        return True
+
+    # -- Matrox live remote (the camera's own web UI) ---------------------------------
+    # A Matrox camera is operated through the web page it serves on port 80, so
+    # "remote" = that page. Preferred: embed it in an in-app overlay (iframe).
+    # Some pages refuse framing (X-Frame-Options / CSP frame-ancestors), so the
+    # probe reports embeddability and the fallback opens a separate app window.
+
+    @_endpoint
+    def mtx_remote_start(self, spec: dict):
+        """Probe http://<ip>/ - is the camera's web page up, and may we embed it?
+        Returns {url, embeddable, pages} where pages are the portal's
+        DesignAssistant operator page(s), scraped so the viewer can show them as
+        in-app tabs instead of letting the portal pop a browser window. An HTTP
+        error status (401 login etc) still counts as up; only a dead socket
+        raises."""
+        ip = _require_ip(spec)
+        url = f"http://{ip}/"
+        try:
+            status, headers, final, body = _probe_http(url)
+        except OSError as e:
+            raise ApiError(
+                "MTX_CONNECT",
+                f"no web page answered at {url} - is the camera on this network? ({e})")
+        h = {k.lower(): v for k, v in headers.items()}
+        xfo = (h.get("x-frame-options") or "").strip().lower()
+        csp = (h.get("content-security-policy") or "").lower()
+        embeddable = xfo in ("", "allowall") and "frame-ancestors" not in csp
+        pages = _find_da_pages(ip, body)
+        if not pages:
+            # portal home didn't name any operator page - try the DA root itself
+            try:
+                pages = _find_da_pages(ip, _probe_http(f"http://{ip}/DesignAssistant/")[3])
+            except OSError:
+                pass
+        return {"url": final or url, "embeddable": embeddable, "status": status,
+                "pages": pages}
+
+    @_endpoint
+    def mtx_remote_window(self, spec: dict):
+        """Open a camera web page in its own app window (the fallback when the
+        page can't be embedded, or on user request). spec.url may name a specific
+        page, but only one served by that same camera."""
+        ip = _require_ip(spec)
+        label = (spec.get("label") or "").strip() or ip
+        url = f"http://{ip}/"
+        want = (spec.get("url") or "").strip()
+        if want:
+            import urllib.parse
+            p = urllib.parse.urlsplit(want)
+            if p.scheme in ("http", "https") and p.hostname == ip:
+                url = want
+        import webview   # pywebview supports create_window after start()
+        webview.create_window(f"MTX remote · {label}", url, width=1200, height=850)
+        return True
+
     # -- themes & settings ------------------------------------------------------------
 
     # A theme is these 9 colors. User-made themes live as individual JSON files in
@@ -1352,6 +1721,22 @@ class Api:
         m["robot_id"] = e["id"]
         m["backups"] = e.get("backups", [])
         m["current_path"] = str(p)
+        # a camera carries its brand + IP so the viewer can offer "remote" (a live
+        # CV-X screen-mirror, or the Matrox web UI) alongside its saved photos.
+        dt = e.get("device_type", "robot")
+        if dt.startswith("camera"):
+            m["device_type"] = dt
+            m["camera_name"] = e.get("name", "")
+            ips = e.get("ips") or []
+            m["camera_ip"] = ips[0] if ips else ""
+        # light up the photos tab for a robot that has linked cameras (their photos
+        # live in their own backups; lib_robot_cameras fetches them on demand). The
+        # photos tab handles both a camera's own images and a robot's linked cameras.
+        if dt == "robot":
+            cams = library.cameras_for_robot(e["id"])
+            if cams:
+                m.setdefault("tabs", {})["photos"] = True
+                m["cameras_count"] = len(cams)
         return m
 
     # -- rename / merge / tidy + open backup location -------------------------
@@ -1610,50 +1995,98 @@ class Api:
 
     @_endpoint
     def probe_controller(self, spec: dict):
-        """Pre-flight reachability check - connect + sniff devices, no writes."""
+        """Pre-flight reachability check - connect + sniff devices, no writes.
+        A Matrox camera (device_type='camera-mtx') sniffs da/ + SavedImages with
+        the MTXuser/MATROX default login instead of the FANUC MD:/FR: devices."""
         spec = spec or {}
-        if not (spec.get("host") or "").strip():
-            raise ApiError("BAD_SPEC", "robot host/IP is required")
+        host = (spec.get("host") or "").strip()
+        if not host:
+            raise ApiError("BAD_SPEC", "host/IP is required")
+        if spec.get("device_type") == "camera-mtx":
+            return mtxbackup.probe_camera(
+                host, user=spec.get("user") or mtxbackup.MTX_USER,
+                passwd=spec.get("passwd") or mtxbackup.MTX_PASS)   # SMB, no port/passive
+        if spec.get("device_type") == "camera-keyence":
+            return keyencebackup.probe_keyence(
+                host, passive=spec.get("passive", True), port=spec.get("port", 21))
         return ftpbackup.probe_controller(
-            spec["host"].strip(), user=spec.get("user", ""), passwd=spec.get("passwd", ""),
+            host, user=spec.get("user", ""), passwd=spec.get("passwd", ""),
             passive=spec.get("passive", True), port=spec.get("port", 21),
         )
 
     @_endpoint
     def diagnose_controller(self, spec: dict):
-        """Read-only FTP probe to debug auto-naming on a live robot: writes a JSON
-        summary to app.log (banner, cwd behaviour, listings, sniffed headers,
-        resolved name) and returns it. No writes to the controller."""
+        """Read-only probe (writes a JSON summary to app.log and returns it, no
+        writes to the device). Robots: banner/cwd/listings/auto-name (FTP). Matrox
+        cameras (device_type='camera-mtx'): the SMB share's home + da/ + SavedImages
+        layout, so the real login can be confirmed before the first real pull."""
         spec = spec or {}
         host = (spec.get("host") or "").strip()
         if not host:
-            raise ApiError("BAD_SPEC", "robot host/IP is required")
+            raise ApiError("BAD_SPEC", "host/IP is required")
+        if spec.get("device_type") == "camera-mtx":
+            return mtxbackup.diagnose_camera(
+                host, user=spec.get("user") or mtxbackup.MTX_USER,
+                passwd=spec.get("passwd") or mtxbackup.MTX_PASS)   # SMB, no port/passive
+        if spec.get("device_type") == "camera-keyence":
+            return keyencebackup.diagnose_keyence(
+                host, passive=spec.get("passive", True), port=spec.get("port", 21))
         return discover.diagnose_controller(host, port=spec.get("port", 21))
 
     @_endpoint
     def start_backup(self, spec: dict):
-        """Kick off an FTP backup on a worker thread; returns a job_id to poll."""
+        """Kick off an FTP backup on a worker thread; returns a job_id to poll.
+        device_type='camera-mtx' runs a Matrox CameraBackupJob (da/ + newest
+        SavedImages, MTXuser/MATROX); anything else runs the FANUC BackupJob.
+        Both jobs share the snapshot()/cancel()/library_* shape the poll + strip
+        endpoints rely on."""
         spec = spec or {}
         host = (spec.get("host") or "").strip()
         if not host:
-            raise ApiError("BAD_SPEC", "robot host/IP is required")
+            raise ApiError("BAD_SPEC", "host/IP is required")
         root = (spec.get("dest_root") or settings.library_root())
-        settings.set_value("library_root", str(root))
-        settings.set_value("backup_root", str(root))   # keep the legacy key in sync
+        # Persisting the root is incidental - it must never kill the backup, and
+        # a 20-robot multi-select fires 20 of these at once (write only on change;
+        # the field failure was every one of those backups dying on a settings
+        # rename race before a single file was pulled).
+        try:
+            if settings.get("library_root") != str(root):
+                settings.set_value("library_root", str(root))
+            if settings.get("backup_root") != str(root):
+                settings.set_value("backup_root", str(root))   # keep the legacy key in sync
+        except OSError:
+            log.warning("could not persist library root (backup continues)")
 
-        def _register(job: ftpbackup.BackupJob):
+        def _register(job):
             library.register_backup(
                 job.library_match(), job.library_backup(),
                 latest_path=job.snapshot().get("latest_path", ""),
             )
 
-        job = ftpbackup.BackupJob(
-            host, root, spec.get("plant", ""), spec.get("line", ""), spec.get("robot", ""),
-            user=spec.get("user", ""), passwd=spec.get("passwd", ""),
-            passive=spec.get("passive", True), port=spec.get("port", 21),
-            devices=spec.get("devices"), note=spec.get("note", ""),
-            recurse_fr=spec.get("recurse_fr", False), on_complete=_register,
-        )
+        if spec.get("device_type") == "camera-mtx":
+            job = mtxbackup.CameraBackupJob(
+                host, root, spec.get("plant", ""), spec.get("line", ""), spec.get("robot", ""),
+                cameras=spec.get("cameras"),
+                user=spec.get("user") or mtxbackup.MTX_USER,
+                passwd=spec.get("passwd") or mtxbackup.MTX_PASS,   # SMB, no port/passive
+                note=spec.get("note", ""), on_complete=_register,
+            )
+        elif spec.get("device_type") == "camera-keyence":
+            job = keyencebackup.KeyenceBackupJob(
+                host, root, spec.get("plant", ""), spec.get("line", ""), spec.get("robot", ""),
+                cameras=spec.get("cameras"),
+                passive=spec.get("passive", True), port=spec.get("port", 21),
+                include_box=bool(spec.get("include_box")),
+                note=spec.get("note", ""), on_complete=_register,
+            )
+        else:
+            job = ftpbackup.BackupJob(
+                host, root, spec.get("plant", ""), spec.get("line", ""), spec.get("robot", ""),
+                user=spec.get("user", ""), passwd=spec.get("passwd", ""),
+                passive=spec.get("passive", True), port=spec.get("port", 21),
+                devices=spec.get("devices"), note=spec.get("note", ""),
+                recurse_fr=spec.get("recurse_fr", False), on_complete=_register,
+            )
         self._jobs[job.id] = job
         threading.Thread(target=job.run, name="backup-" + job.id, daemon=True).start()
         return {"job_id": job.id}

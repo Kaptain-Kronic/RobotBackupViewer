@@ -32,24 +32,37 @@ _KAREL_HEADER = re.compile(r"^\[([^\]]+)\]")
 
 MAX_SCAN_FILES = 20_000  # guard against opening C:\ by accident
 _BINARY_PROGRAM_EXTS = (".TP", ".PC", ".MR")
+_IMAGE_EXTS = (".JPG", ".JPEG", ".PNG", ".BMP")
 
 # signatures that mark a folder as a FANUC backup root (used by the bulk-add
 # walker - kept in sync with _detect_type's markers)
 _BACKUP_MARKER_DIRS = {"mnt_data", "md_ls", "mdb"}
 _BACKUP_FILE_EXTS = (".LS", ".VA", ".TP", ".PC", ".MR", ".DG", ".SV", ".IO", ".DT")
+# camera backups hold none of the FANUC file types - they're marked by their
+# content dir (da/ = Matrox Design Assistant, cv-x/ = Keyence) or the CAM<n>
+# multi-camera wrapper the backup engine lays down.
+_CAMERA_MARKER_DIRS = {"da", "cv-x"}
+_CAM_DIR_RE = re.compile(r"^CAM\d+$", re.IGNORECASE)
 
 
 def looks_like_backup(d: Path) -> bool:
     """Conservative, NON-recursive test: does this folder directly look like a
-    FANUC backup root? True when it holds any backup file (.LS/.VA/.TP/.DG/...)
-    or a maintenance-data marker subfolder (mnt_data/md_ls/mdb). Deliberately
-    strict so the bulk-add walker never mistakes an ordinary folder for a backup."""
+    backup root? True when it holds any FANUC backup file (.LS/.VA/.TP/.DG/...),
+    a maintenance-data marker subfolder (mnt_data/md_ls/mdb), the app's own
+    snapshot sidecar (backup.json - the reliable marker for ANY app-taken backup,
+    robot or camera), or a camera content dir (da/ · cv-x/ · a CAM<n>/ wrapper).
+    Deliberately strict so the scan never mistakes an ordinary folder for a backup."""
     try:
         for p in d.iterdir():
             try:
                 if p.is_dir():
-                    if p.name.lower() in _BACKUP_MARKER_DIRS:
+                    n = p.name.lower()
+                    if n in _BACKUP_MARKER_DIRS or n in _CAMERA_MARKER_DIRS:
                         return True
+                    if _CAM_DIR_RE.match(p.name):
+                        return True
+                elif p.name.lower() == "backup.json":
+                    return True
                 elif p.suffix.upper() in _BACKUP_FILE_EXTS:
                     return True
             except OSError:
@@ -217,9 +230,50 @@ class BackupSession:
     def has_binary_programs(self) -> bool:
         return any(n.endswith(_BINARY_PROGRAM_EXTS) for n in self.by_name)
 
+    # -- matrox camera --------------------------------------------------------
+
+    def saved_image_files(self) -> list[Path]:
+        """Every runtime inspection image (jpg/png/…) sitting under a
+        SavedImages/ path - the Matrox camera's saved photos. Kept narrow (a
+        SavedImages ancestor) so a robot backup or a UI logo never lights up the
+        photos tab."""
+        out = []
+        for key, p in self.files.items():
+            if "SAVEDIMAGES/" in key and key.endswith(_IMAGE_EXTS):
+                out.append(p)
+        return out
+
+    def has_photos(self) -> bool:
+        return bool(self.saved_image_files())
+
+    def _is_keyence(self) -> bool:
+        """A Keyence CV-X backup: the camera's `cv-x/` tree (setting/, box/)."""
+        for key in self.files:
+            if "CV-X" in key.split("/")[:-1]:
+                return True
+        return False
+
+    def _is_matrox(self) -> bool:
+        """A Matrox Design Assistant camera backup: a `da/` project folder, saved
+        images, or the DA marker paths. (A camera carries no FANUC program/report
+        files, so the FANUC branches below never fire on one.)"""
+        for key in self.files:
+            parts = key.split("/")
+            if "DA" in parts[:-1]:                     # a 'da' folder in the path
+                return True
+            if "SAVEDIMAGES" in parts:
+                return True
+            if "MATROX DESIGN ASSISTANT" in key or ".MATROX_IMAGING" in key:
+                return True
+        return False
+
     # -- backup type ----------------------------------------------------------
 
     def _detect_type(self) -> str:
+        if self._is_keyence():
+            return "keyence camera"
+        if self._is_matrox():
+            return "matrox camera"
         markers = {"mnt_data", "md_ls", "mdb"}
         if self.root.name.lower() in markers or any(
             part.lower() in markers
@@ -256,6 +310,8 @@ class BackupSession:
                 tabs[tab] = bool(self.program_files) or self.has_binary_programs()
             elif needs == ["*alarms"]:
                 tabs[tab] = bool(self.alarm_files())
+            elif needs == ["*photos"]:
+                tabs[tab] = self.has_photos()
             else:
                 tabs[tab] = any(self.find(n) for n in needs)
 
