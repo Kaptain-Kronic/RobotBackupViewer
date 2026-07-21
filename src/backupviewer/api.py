@@ -31,8 +31,8 @@ from . import search as search_mod
 from . import settings
 from .parsers import (alarms, callgraph, curpos, dcs, dcszones, frames,
                       gmwizlog, io_dg, kinematics, ls_program, macros, magnet,
-                      mastering, mhvalves, mtx_saved_image, payloads, registers,
-                      styles, summary_dg, sysvars)
+                      mastering, mhvalves, mtx_portal, mtx_saved_image,
+                      payloads, registers, styles, summary_dg, sysvars)
 from .parsers.common import is_binary, read_text
 from .session import BackupSession
 
@@ -43,8 +43,6 @@ HEX_PREVIEW_BYTES = 4096
 MAX_IMAGE_BYTES = 12_000_000
 _IMAGE_MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                ".png": "image/png", ".bmp": "image/bmp"}
-_RESULT_RE = re.compile(r"-(Pass|Fail)-", re.IGNORECASE)
-_TS_RE = re.compile(r"(\d{4})_(\d{2})_(\d{2})-(\d{2})\.(\d{2})\.(\d{2})\.(\d+)")
 
 
 class ApiError(Exception):
@@ -98,64 +96,6 @@ def _probe_http(url: str, timeout: float = 4.0):
         except Exception:  # noqa: BLE001
             body = ""
         return e.code, dict(e.headers or {}), url, body
-
-
-# a Matrox portal launches its operator page(s) as popups to
-# /DesignAssistant/<project>/default.htm - harvest those links from the page
-# markup so the remote view can offer them as in-app tabs instead.
-_DA_LINK_RE = re.compile(
-    r"""["']((?:https?://[^"'\s]+?)?[^"'\s]*?DesignAssistant/[^"'\s]+?\.html?"""
-    r"""(?:\?[^"'\s]*)?)["']""", re.IGNORECASE)
-# DA 9.x portals never write that link in HTML: each project row carries a
-# prj-name attribute (unquoted in the wild) and projectsTableView.js does
-#   window.open("/DesignAssistant/" + project + "/default.htm?pgx=" + Math.random())
-# - so harvest the project names and build the same URL the portal builds.
-_PRJ_NAME_RE = re.compile(r"""prj-name\s*=\s*["']?([A-Za-z0-9_.\-]+)""", re.IGNORECASE)
-
-
-def _find_da_pages(ip: str, html: str) -> list[dict]:
-    """DesignAssistant page links scraped from portal markup, absolutized and
-    restricted to the camera itself (never embed a foreign host a page names).
-    The portal's per-launch ?pgx= cache-buster is stripped; the viewer adds its
-    own. Each: {label, url}."""
-    import urllib.parse
-    pages, seen = [], set()
-    for m in _DA_LINK_RE.finditer(html or ""):
-        url = urllib.parse.urljoin(f"http://{ip}/", m.group(1))
-        parts = urllib.parse.urlsplit(url)
-        if parts.scheme not in ("http", "https") or parts.hostname != ip:
-            continue
-        q = [kv for kv in urllib.parse.parse_qsl(parts.query) if kv[0] != "pgx"]
-        url = urllib.parse.urlunsplit(
-            (parts.scheme, parts.netloc, parts.path, urllib.parse.urlencode(q), ""))
-        if url in seen:
-            continue
-        seen.add(url)
-        segs = [s for s in parts.path.split("/") if s]
-        low = [s.lower() for s in segs]
-        try:
-            label = segs[low.index("designassistant") + 1]
-            if label.lower().endswith((".htm", ".html")):   # no project folder in path
-                label = "design assistant"
-        except (ValueError, IndexError):
-            label = "design assistant"
-        pages.append({"label": label, "url": url})
-        if len(pages) >= 8:
-            break
-    # DA 9.x: no literal links - build the URL from each project row's prj-name,
-    # exactly as the portal's own projectsTableView.js does
-    for m in _PRJ_NAME_RE.finditer(html or ""):
-        if len(pages) >= 8:
-            break
-        name = m.group(1)
-        url = f"http://{ip}/DesignAssistant/{name}/default.htm"
-        if url in seen:
-            continue
-        seen.add(url)
-        pages.append({"label": name, "url": url})
-    if len(pages) == 1:
-        pages[0]["label"] = "design assistant"
-    return pages
 
 
 # -- merge-identity evidence ------------------------------------------------------
@@ -1342,11 +1282,6 @@ class Api:
     # results), and returns them newest-first; get_image streams one image as a
     # base64 data-URI (the reliable path under pywebview's private-mode CSP).
 
-    @staticmethod
-    def _photo_sort_key(name: str, mtime: int) -> tuple:
-        m = _TS_RE.search(name)
-        return ("".join(m.groups()) if m else "", mtime)
-
     def _camera_session(self, camera_id: str) -> BackupSession:
         """Open (and cache) a library camera's latest backup as a session, so a
         robot's Cameras tab can show a linked camera's photos without making it
@@ -1373,58 +1308,28 @@ class Api:
         return cached[2]
 
     def _photos_data(self, s: BackupSession):
+        """Thin wrapper: the grouping + record shaping is the parser's
+        (mtx_saved_image.group_photo_files / photo_record); this layer owns the
+        session index, sidecar reads and file stats."""
         def build():
-            groups: dict[str, dict] = {}
-            for key, p in s.files.items():
-                if "SAVEDIMAGES/" not in key:
-                    continue
-                ext = p.suffix.lower()
-                if ext not in (".jpg", ".jpeg", ".png", ".bmp", ".txt"):
-                    continue
-                rel = s.rel(p)
-                stem = rel[: len(rel) - len(p.suffix)]
-                g = groups.setdefault(stem, {})
-                if ext == ".txt":
-                    g["txt"], g["txt_p"] = rel, p
-                elif ext == ".png":
-                    g["png"], g["png_p"] = rel, p
-                else:  # jpg/jpeg/bmp
-                    g["jpg"], g["jpg_p"] = rel, p
-
+            by_rel = {s.rel(p): p for key, p in s.files.items()
+                      if "SAVEDIMAGES/" in key}
             photos = []
-            for g in groups.values():
-                if not (g.get("jpg") or g.get("png")):
-                    continue  # a stray sidecar with no image
-                rel_any = g.get("jpg") or g.get("png")
-                parts = rel_any.split("/")
-                name = parts[-1]
-                date = parts[-2] if len(parts) >= 2 else ""
+            for g in mtx_saved_image.group_photo_files(by_rel).values():
                 info: dict = {}
-                if g.get("txt_p"):
+                if g.get("txt"):
                     try:
-                        info = mtx_saved_image.parse_saved_image(read_text(g["txt_p"]))
+                        info = mtx_saved_image.parse_saved_image(read_text(by_rel[g["txt"]]))
                     except Exception:  # noqa: BLE001 - a bad sidecar must not sink the grid
                         log.exception("saved-image sidecar parse failed: %s", g.get("txt"))
-                img_p = g.get("jpg_p") or g.get("png_p")
+                img_p = by_rel.get(g.get("jpg") or g.get("png") or "")
                 try:
-                    mtime = int(img_p.stat().st_mtime)
+                    mtime = int(img_p.stat().st_mtime) if img_p else 0
                 except OSError:
                     mtime = 0
-                rname = _RESULT_RE.search(name)
-                photos.append({
-                    "name": name,
-                    "date": date,
-                    "thumb": g.get("jpg") or g.get("png"),   # small preview for the grid
-                    "full": g.get("png") or g.get("jpg"),    # full image for the hero
-                    "txt": g.get("txt", ""),
-                    "result": info.get("result") or (rname.group(1).title() if rname else ""),
-                    "timestamp": info.get("timestamp", ""),
-                    "camera": info.get("camera", {}),
-                    "recipe": info.get("recipe", {}),
-                    "tools": info.get("tools", []),
-                    "sections": info.get("sections", []),
-                    "_sort": self._photo_sort_key(name, mtime),
-                })
+                rec = mtx_saved_image.photo_record(g, info, mtime)
+                if rec is not None:   # None = a stray sidecar with no image
+                    photos.append(rec)
             photos.sort(key=lambda x: x.pop("_sort"), reverse=True)
             camera = photos[0]["camera"] if photos else {}
             return {"photos": photos, "count": len(photos), "camera": camera}
@@ -1581,11 +1486,11 @@ class Api:
         xfo = (h.get("x-frame-options") or "").strip().lower()
         csp = (h.get("content-security-policy") or "").lower()
         embeddable = xfo in ("", "allowall") and "frame-ancestors" not in csp
-        pages = _find_da_pages(ip, body)
+        pages = mtx_portal.find_da_pages(ip, body)
         if not pages:
             # portal home didn't name any operator page - try the DA root itself
             try:
-                pages = _find_da_pages(ip, _probe_http(f"http://{ip}/DesignAssistant/")[3])
+                pages = mtx_portal.find_da_pages(ip, _probe_http(f"http://{ip}/DesignAssistant/")[3])
             except OSError:
                 pass
         return {"url": final or url, "embeddable": embeddable, "status": status,

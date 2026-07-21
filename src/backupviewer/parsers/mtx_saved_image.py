@@ -103,3 +103,67 @@ def parse_saved_image(text: str) -> dict:
         "tools": tools,
         "sections": sections,
     }
+
+
+# -- photo-triple grouping --------------------------------------------------------
+# A DA camera saves each inspection as a jpg (preview) + png (full) + txt
+# (metadata) triple sharing one stem. Pure path-shaping: rel-paths in, grouped
+# records out - the api layer owns reading sidecars and stat'ing files.
+
+_RESULT_RE = re.compile(r"-(Pass|Fail)-", re.IGNORECASE)
+_TS_RE = re.compile(r"(\d{4})_(\d{2})_(\d{2})-(\d{2})\.(\d{2})\.(\d{2})\.(\d+)")
+
+PHOTO_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".txt")
+
+
+def photo_sort_key(name: str, mtime: int) -> tuple:
+    """Newest-first ordering: the filename's own timestamp when present (the
+    camera stamps one), the filesystem mtime as tie-break/fallback."""
+    m = _TS_RE.search(name)
+    return ("".join(m.groups()) if m else "", mtime)
+
+
+def group_photo_files(rels) -> dict:
+    """{stem: {"jpg"/"png"/"txt": rel}} for SavedImages rel-paths. jpg/jpeg/bmp
+    class as the grid preview, png as the full frame, txt as the sidecar."""
+    groups: dict[str, dict] = {}
+    for rel in rels:
+        stem, dot, ext = rel.rpartition(".")
+        ext = ("." + ext.lower()) if dot else ""
+        if ext not in PHOTO_EXTS:
+            continue
+        g = groups.setdefault(stem, {})
+        if ext == ".txt":
+            g["txt"] = rel
+        elif ext == ".png":
+            g["png"] = rel
+        else:  # jpg/jpeg/bmp
+            g["jpg"] = rel
+    return groups
+
+
+def photo_record(group: dict, info: dict, mtime: int) -> dict | None:
+    """One grid/hero record from a grouped triple + its parsed sidecar (info may
+    be {} when the txt was missing or unreadable). None for a stray sidecar with
+    no image. "_sort" carries the newest-first key; the caller sorts and pops it."""
+    rel_any = group.get("jpg") or group.get("png")
+    if not rel_any:
+        return None
+    parts = rel_any.split("/")
+    name = parts[-1]
+    date = parts[-2] if len(parts) >= 2 else ""
+    rname = _RESULT_RE.search(name)
+    return {
+        "name": name,
+        "date": date,
+        "thumb": group.get("jpg") or group.get("png"),   # small preview for the grid
+        "full": group.get("png") or group.get("jpg"),    # full image for the hero
+        "txt": group.get("txt", ""),
+        "result": info.get("result") or (rname.group(1).title() if rname else ""),
+        "timestamp": info.get("timestamp", ""),
+        "camera": info.get("camera", {}),
+        "recipe": info.get("recipe", {}),
+        "tools": info.get("tools", []),
+        "sections": info.get("sections", []),
+        "_sort": photo_sort_key(name, mtime),
+    }

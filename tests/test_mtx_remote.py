@@ -5,7 +5,8 @@ import sys
 import types
 
 import backupviewer.api as api_mod
-from backupviewer.api import Api, _find_da_pages
+from backupviewer.api import Api
+from backupviewer.parsers.mtx_portal import find_da_pages
 
 
 def _probe(status=200, headers=None, final=None, body=""):
@@ -14,11 +15,11 @@ def _probe(status=200, headers=None, final=None, body=""):
     return fake
 
 
-# -- _find_da_pages (the operator-page scraper) ------------------------------
+# -- find_da_pages (the operator-page scraper, parsers/mtx_portal) -----------
 
 def test_scrape_relative_href_with_pgx_stripped():
     html = '<a href="DesignAssistant/SAMPLEPROJ_9_1_V2_0/default.htm?pgx=0.858566">op</a>'
-    pages = _find_da_pages("198.51.100.50", html)
+    pages = find_da_pages("198.51.100.50", html)
     assert pages == [{
         "label": "design assistant",
         "url": "http://198.51.100.50/DesignAssistant/SAMPLEPROJ_9_1_V2_0/default.htm",
@@ -27,33 +28,33 @@ def test_scrape_relative_href_with_pgx_stripped():
 
 def test_scrape_window_open_and_absolute_url():
     html = "<script>window.open('http://198.51.100.50/DesignAssistant/PROJ_A/default.htm');</script>"
-    pages = _find_da_pages("198.51.100.50", html)
+    pages = find_da_pages("198.51.100.50", html)
     assert len(pages) == 1
     assert pages[0]["url"].endswith("/DesignAssistant/PROJ_A/default.htm")
 
 
 def test_scrape_rejects_foreign_host():
     html = '<a href="http://evil.example/DesignAssistant/X/default.htm">x</a>'
-    assert _find_da_pages("198.51.100.50", html) == []
+    assert find_da_pages("198.51.100.50", html) == []
 
 
 def test_scrape_dedupes_and_labels_multiple_projects():
     html = ('<a href="/DesignAssistant/PROJ_A/default.htm?pgx=0.1">a</a>'
             '<a href="/DesignAssistant/PROJ_A/default.htm?pgx=0.2">a again</a>'
             '<a href="/DesignAssistant/PROJ_B/default.htm">b</a>')
-    pages = _find_da_pages("10.0.0.1", html)
+    pages = find_da_pages("10.0.0.1", html)
     assert [p["label"] for p in pages] == ["PROJ_A", "PROJ_B"]
 
 
 def test_scrape_keeps_non_pgx_query():
     html = '<a href="/DesignAssistant/P/default.htm?pgx=0.5&view=op">x</a>'
-    pages = _find_da_pages("10.0.0.1", html)
+    pages = find_da_pages("10.0.0.1", html)
     assert pages[0]["url"] == "http://10.0.0.1/DesignAssistant/P/default.htm?view=op"
 
 
 def test_scrape_empty_html():
-    assert _find_da_pages("10.0.0.1", "") == []
-    assert _find_da_pages("10.0.0.1", None) == []
+    assert find_da_pages("10.0.0.1", "") == []
+    assert find_da_pages("10.0.0.1", None) == []
 
 
 def test_scrape_da9_project_row_unquoted_attr():
@@ -62,7 +63,7 @@ def test_scrape_da9_project_row_unquoted_attr():
     projectsTableView.js builds it. Markup captured off a live camera."""
     html = ("<tr class='project-inf-cntr bottom-row-round' "
             "prj-name=SAMPLEPROJ_9_1_V2_0>\n<td>SAMPLEPROJ_9_1_V2_0</td>")
-    pages = _find_da_pages("198.51.100.50", html)
+    pages = find_da_pages("198.51.100.50", html)
     assert pages == [{
         "label": "design assistant",
         "url": "http://198.51.100.50/DesignAssistant/SAMPLEPROJ_9_1_V2_0/default.htm",
@@ -72,7 +73,7 @@ def test_scrape_da9_project_row_unquoted_attr():
 def test_scrape_da9_project_rows_quoted_and_multiple():
     html = ('<tr prj-name="PROJ_A"></tr><tr prj-name=\'PROJ_B\'></tr>'
             "<tr prj-name=PROJ_A></tr>")   # dup ignored
-    pages = _find_da_pages("10.0.0.1", html)
+    pages = find_da_pages("10.0.0.1", html)
     assert [p["label"] for p in pages] == ["PROJ_A", "PROJ_B"]
     assert pages[0]["url"] == "http://10.0.0.1/DesignAssistant/PROJ_A/default.htm"
 
@@ -82,7 +83,7 @@ def test_scrape_literal_link_and_prj_name_dedupe():
     not produce a duplicate tab."""
     html = ('<a href="/DesignAssistant/PROJ_A/default.htm?pgx=0.3">open</a>'
             "<tr prj-name=PROJ_A></tr>")
-    pages = _find_da_pages("10.0.0.1", html)
+    pages = find_da_pages("10.0.0.1", html)
     assert len(pages) == 1
     assert pages[0]["url"] == "http://10.0.0.1/DesignAssistant/PROJ_A/default.htm"
 
