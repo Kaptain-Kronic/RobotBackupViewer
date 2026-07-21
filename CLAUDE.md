@@ -105,8 +105,10 @@ F-numbers, or real backup-tree paths — not in code, comments, tests,
 fixtures, or commit messages.
 
 - Fixture IPs come from TEST-NET (`192.0.2.x`). Fixture robots use fake
-  families (`FA…`, `RB…`, `RC…` — e.g. `RB010R01B01`). Plants are
-  `FakePlant`/`YourPlant`.
+  families (`RB…`, `RC…` — e.g. `RB010R01B01`). Plants are
+  `FakePlant`/`YourPlant`. **Before inventing a family prefix, check it is not
+  in `robots.json` (untracked) — some obvious-looking two-letter prefixes are
+  real lines, so never pick one from memory; `RB`/`RC` are known-safe.**
 - Probes/tools that need the real tree stay untracked via
   `.git/info/exclude`. `SampleBackup/`, `robots.json`, and anything with
   live hardware references never enter git.
