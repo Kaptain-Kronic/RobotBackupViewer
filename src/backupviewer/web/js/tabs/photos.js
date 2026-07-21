@@ -24,11 +24,20 @@
     view.classList.add("no-pad");
     if (source.leading) toolbar.appendChild(source.leading);   /* e.g. a back button */
 
-    var imgCache = {};   /* rel -> data_uri, per render (avoids cross-camera mixups) */
+    /* rel -> data_uri, per render (avoids cross-camera mixups). Capped LRU: a
+       real Matrox pull is hundreds of images, and unbounded data-URIs pin
+       tens-to-hundreds of MB on a plant PC - evict oldest, refetch on demand */
+    var CACHE_MAX = 40;
+    var imgCache = new Map();
     function loadImage(rel) {
-      if (imgCache[rel]) return Promise.resolve(imgCache[rel]);
+      if (imgCache.has(rel)) {
+        var uri = imgCache.get(rel);
+        imgCache.delete(rel); imgCache.set(rel, uri);   /* re-mark most recent */
+        return Promise.resolve(uri);
+      }
       return source.image(rel).then(function (im) {
-        imgCache[rel] = im.data_uri;
+        imgCache.set(rel, im.data_uri);
+        if (imgCache.size > CACHE_MAX) imgCache.delete(imgCache.keys().next().value);
         return im.data_uri;
       });
     }
