@@ -6,8 +6,10 @@
   lands in the library as its bare IP; now, the moment a backup completes, the
   camera reads its real name + model out of the snapshot it just pulled (the
   newest saved-image sidecar — the camera twin of a robot naming itself from
-  `SUMMARY.DG`), keeps the old IP name as an alias so nothing recorded under it
-  is orphaned, and auto-linking runs to seat it under its robot. A name someone
+  `SUMMARY.DG`), renames its folder to match — the folder is identity, so a
+  name the folder didn't carry would have been reverted by the very next
+  library scan — keeps the old IP name as an alias so nothing recorded under
+  it is orphaned, and auto-linking runs to seat it under its robot. A name someone
   typed by hand is never overwritten. Auto-link also gained a **same-name
   fallback**: a robot and camera(s) sharing one name across device types link
   even when the station+robot key can't parse the name — with the same

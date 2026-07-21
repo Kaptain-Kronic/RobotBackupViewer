@@ -7,6 +7,9 @@ def _iso(monkeypatch, tmp_path):
     appdir = tmp_path / "appdata"
     appdir.mkdir()
     monkeypatch.setattr(settings, "app_dir", lambda: appdir)
+    # teach_camera_name renames folders via relocate, which resolves the library
+    # root - point it inside tmp so no test can ever look at (or touch) a real one
+    monkeypatch.setattr(settings, "library_root", lambda: str(tmp_path / "lib"))
 
 
 def test_station_robot_key():
@@ -112,6 +115,38 @@ def test_teach_camera_name(monkeypatch, tmp_path):
     assert library.teach_camera_name(rob["id"], "X") is None    # robots refuse
     assert library.teach_camera_name("nope", "X") is None       # unknown id
     assert library.teach_camera_name(cam["id"], "") is None     # blank name
+
+
+def test_taught_name_survives_rescan(monkeypatch, tmp_path):
+    """The self-taught name must STICK: teach renames the camera's FOLDER (via
+    relocate), so the next scan re-derives the same name. Regression: a name
+    patched only into the registry reverted to the IP on the first rescan after
+    the very backup that taught it (the folder still carried the IP, and the
+    folder is identity - files are law)."""
+    _iso(monkeypatch, tmp_path)
+    import json
+    root = tmp_path / "lib"
+    cam_home = root / "P" / "RBB01" / "192.0.2.7"
+    snap = cam_home / "2026_07_16" / "12_00_00"
+    snap.mkdir(parents=True)
+    (snap / "backup.json").write_text("{}", encoding="utf-8")
+    (cam_home / "robot.json").write_text(json.dumps({
+        "schema": 3, "id": "cam-1", "device_type": "camera-mtx",
+        "ips": ["192.0.2.7"]}), encoding="utf-8")
+    library.scan_library_root(root)
+    cam = next(e for e in library.list_robots()["robots"] if e["robot"] == "192.0.2.7")
+
+    e = library.teach_camera_name(cam["id"], "CELL-01RB172-R01CAM02", "Matrox GTX2000")
+    assert e["robot"] == "CELL-01RB172-R01CAM02"
+    # the folder moved with the name (id + snapshot history along with it) ...
+    assert not cam_home.exists()
+    moved = root / "P" / "RBB01" / "CELL-01RB172-R01CAM02"
+    assert (moved / "2026_07_16" / "12_00_00" / "backup.json").is_file()
+    # ... so a rescan re-derives the SAME name instead of reverting to the IP
+    library.scan_library_root(root)
+    e2 = next(x for x in library.list_robots()["robots"] if x["id"] == cam["id"])
+    assert e2["robot"] == "CELL-01RB172-R01CAM02"
+    assert {"plant": "P", "line": "RBB01", "robot": "192.0.2.7"} in e2["aliases"]
 
 
 def test_link_persists_across_rescan(monkeypatch, tmp_path):
