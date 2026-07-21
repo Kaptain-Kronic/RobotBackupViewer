@@ -2227,6 +2227,8 @@ class Api:
             # saved-image sidecar) when its entry only carries a placeholder -
             # the camera twin of a robot naming itself from SUMMARY.DG - and
             # then auto-linking gets a fresh chance to seat it under its robot.
+            # The teach renames the camera's FOLDER along with the entry (files
+            # are law), so the name still stands after the next library rescan.
             # Best-effort: identity work must never fail a finished backup.
             if spec.get("device_type") == "camera-mtx":
                 try:

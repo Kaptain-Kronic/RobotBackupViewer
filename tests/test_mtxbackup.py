@@ -265,6 +265,10 @@ def test_camera_self_names_and_links_after_first_backup(monkeypatch, tmp_path):
     filled) and auto-links to its robot - the user story 'first backup teaches
     the camera who it is'."""
     _iso_lib(monkeypatch, tmp_path)
+    # the dest root IS the library root (api._start_backup_job persists it as
+    # such before every job starts) - teach renames the camera folder under it
+    lib_root = tmp_path / "MTXBackups"
+    monkeypatch.setattr(settings, "library_root", lambda: str(lib_root))
     home = _make_camera(tmp_path)
     robot = library.add_robot({"robot": "RB172R01B01", "plant": "FAKEPLANT",
                                "line": "RBB01", "device_type": "robot"})
@@ -280,7 +284,7 @@ def test_camera_self_names_and_links_after_first_backup(monkeypatch, tmp_path):
             library.teach_camera_name(entry["id"], ident["name"], ident.get("model", ""))
         library.auto_link_cameras()
 
-    job = mtxbackup.CameraBackupJob("10.0.0.7", tmp_path / "MTXBackups", "FAKEPLANT",
+    job = mtxbackup.CameraBackupJob("10.0.0.7", lib_root, "FAKEPLANT",
                                     "RBB01", "10.0.0.7", mount=_mount_factory(home),
                                     throttle=0, on_complete=register)
     assert job.run()["status"] == "done"
@@ -290,6 +294,16 @@ def test_camera_self_names_and_links_after_first_backup(monkeypatch, tmp_path):
     assert e["model"] == "Matrox GTX2000"
     assert {"plant": "FAKEPLANT", "line": "RBB01", "robot": "10.0.0.7"} in e["aliases"]
     assert e["linked_robot_id"] == robot["id"]             # and auto-linked
+
+    # the teach renamed the camera's FOLDER with it - so the first library
+    # rescan (a finished backup always triggers one) re-derives the same name
+    # instead of reverting it to the IP. The revert was the original bug: the
+    # name held only until the next scan, which believed the folder.
+    assert (lib_root / "FAKEPLANT" / "RBB01" / "CELL-01RB172-R01CAM02").is_dir()
+    library.scan_library_root(lib_root)
+    e2 = next(x for x in library.list_robots()["robots"] if x["id"] == cam["id"])
+    assert e2["robot"] == "CELL-01RB172-R01CAM02"          # STILL self-named
+    assert e2["linked_robot_id"] == robot["id"]
 
 
 # -- the FANUC guard still refuses an FTP host that looks like a camera ----------

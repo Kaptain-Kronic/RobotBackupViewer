@@ -293,6 +293,11 @@ def teach_camera_name(camera_id: str, name: str, model: str = "") -> dict | None
     a robot self-names from SUMMARY.DG. A real name someone typed (or discovery
     resolved) is NEVER overwritten; the old placeholder is remembered as an alias
     so anything recorded under it still re-merges. Model fills only when blank.
+    The rename goes through relocate_robot so the camera's FOLDER moves with it -
+    files are law: a name patched only into the registry was reverted by the next
+    scan (the folder still said the IP). May raise what relocate_robot raises
+    (ValueError/PathGuard/OSError) when the folder can't move - the entry then
+    keeps its placeholder honestly instead of flickering back on the next scan.
     Returns the entry (unchanged when there was nothing to teach), None on a bad
     id / non-camera."""
     name = (name or "").strip()
@@ -300,26 +305,24 @@ def teach_camera_name(camera_id: str, name: str, model: str = "") -> dict | None
         return None
     with _LOCK:
         data = load()
-        for e in data["robots"]:
-            if e.get("id") != camera_id:
-                continue
-            if not str(e.get("device_type", "")).startswith("camera"):
-                return None
-            changed = False
-            if model and not e.get("model"):
-                e["model"] = model
-                changed = True
-            old = e.get("robot", "")
-            if _is_placeholder_name(e) and old != name:
-                e["robot"] = name                       # rename FIRST, then record
-                _add_alias(e, e.get("plant", ""), e.get("line", ""), old)
-                changed = True
-            if changed:
-                _reconcile(data)
-                _write(data)
-                _persist_sidecar(e)
-            return e
-        return None
+        e = next((x for x in data["robots"] if x.get("id") == camera_id), None)
+        if e is None or not str(e.get("device_type", "")).startswith("camera"):
+            return None
+        if model and not e.get("model"):
+            e["model"] = model
+            _reconcile(data)
+            _write(data)
+            _persist_sidecar(e)
+        teach = _is_placeholder_name(e) and e.get("robot", "") != name
+        plant, line = e.get("plant", ""), e.get("line", "")
+    if not teach:
+        return e
+    # outside _LOCK (it is not reentrant): relocate re-finds the entry and does
+    # the identity + folder + alias + sidecar change under its own hold. It may
+    # also MERGE into an entry that already owns the taught name's folder - the
+    # result's id says which entry carries the name now.
+    res = relocate_robot(camera_id, plant, line, name)
+    return get_robot(res.get("id") or camera_id)
 
 
 def cameras_for_robot(robot_id: str) -> list:
