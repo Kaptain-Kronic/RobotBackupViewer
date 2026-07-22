@@ -34,7 +34,10 @@
                                (nested = a camera indented under its linked robot)
        lineExtras(ln, lineRobots, key) -> node|null   appended to a line head
                                (home hangs its select-all checkbox here)
-       matches(r, q) -> bool   row filter (default: robot/model/IP/notes text)
+       matches(r, q) -> bool   row filter (default: robot/model/IP/notes text;
+                               BV.libTree.defaultMatches is exposed so a custom
+                               matcher can extend it instead of re-listing fields)
+       noun: "cameras"         what the no-match note calls the rows ("robots")
        skeleton: true          show the "empty plant/line folder" notes (the
                                files-are-law skeleton; leave off for pickers)
        counts: true            robot-count badge on plant + line heads (for
@@ -171,11 +174,16 @@
           body.appendChild(plantNode);
         });
         if (q && !body.childNodes.length) {
-          body.innerHTML = '<div class="empty-lib">no robots match “' + BV.esc(ropts.q) +
+          body.innerHTML = '<div class="empty-lib">no ' + (opts.noun || "robots") +
+            ' match “' + BV.esc(ropts.q) +
             '” — clear the filter to see the library.</div>';
         }
         return { shown: shown, total: total, visible: visible };
       },
     };
   };
+
+  /* the default row matcher, shared so a caller's matches() can extend it
+     (match MORE than these fields) without copying the field list */
+  BV.libTree.defaultMatches = defaultMatches;
 })();
