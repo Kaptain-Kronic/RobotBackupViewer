@@ -3,7 +3,12 @@
    (root font-size -> every rem in the tables); "chrome scale" drives the
    header/tabs/footer via --chrome-fs. The old whole-page zoom is retired - it
    inflated the chrome together with the text until the data had no room, and
-   it needed the 100vh/--app-zoom and menu-transform workarounds. */
+   it needed the 100vh/--app-zoom and menu-transform workarounds.
+
+   The appearance / text & scale ROWS moved to the 🎨 theme window
+   (theme_ui.js) — ⚙ keeps app behavior only (3d view, library folder).
+   apply() and the pref tables stay here because apply() runs at boot and
+   the theme window builds its rows from the exported tables. */
 (function () {
   "use strict";
 
@@ -15,12 +20,16 @@
   /* shop-floor friendly defaults - old eyes and young eyes both read this */
   var DEFAULT_FONT = 15;
   var DEFAULT_CHROME = 1.0;
-  /* switchable UI font. "mono" keeps the classic look; "rog" uses the bundled
-     Orbitron display face (web/fonts) - applied only to UI chrome, never to data
-     or code (those are pinned to --font-mono in css), so columns stay aligned. */
+  /* switchable UI chrome font. "mono" keeps the classic look; "rog" uses the
+     bundled Orbitron display face (web/fonts); sans/serif are zero-byte system
+     stacks (the app ships offline — no webfonts). Applied only to UI chrome,
+     never to data or code (those are pinned to --font-mono in css), so
+     columns stay aligned. */
   var FONT_OPTIONS = [
     { id: "mono", label: "mono", css: "var(--font-mono)" },
     { id: "rog", label: "ROG", css: '"Orbitron", var(--font-mono)' },
+    { id: "sans", label: "sans", css: 'system-ui, "Segoe UI", sans-serif' },
+    { id: "serif", label: "serif", css: 'Georgia, "Times New Roman", serif' },
   ];
   var DEFAULT_FONT_FAMILY = "mono";
 
@@ -34,6 +43,14 @@
   }
 
   BV.uiPrefs = {
+    /* the theme window (theme_ui.js) builds its rows from these */
+    FONT_SIZES: FONT_SIZES,
+    CHROME_SCALES: CHROME_SCALES,
+    FONT_OPTIONS: FONT_OPTIONS,
+    DEFAULT_FONT: DEFAULT_FONT,
+    DEFAULT_FONT_FAMILY: DEFAULT_FONT_FAMILY,
+    chromeScale: chromeScale,
+
     apply: function (settings) {
       var fs = settings.font_size || DEFAULT_FONT;
       var ff = settings.font_family || DEFAULT_FONT_FAMILY;
@@ -48,7 +65,7 @@
       document.documentElement.style.removeProperty("--app-zoom");
       /* accent panel borders on by default; "off" flattens the UI (see base.css .no-edges) */
       document.documentElement.classList.toggle("no-edges", settings.edges === false);
-      if (BV.bgfx) BV.bgfx.apply(settings);   /* idempotent - only reacts to a changed id */
+      if (BV.bgfx) BV.bgfx.apply(settings);   /* idempotent - only reacts to changes */
       BV.state.emit("uiprefs", settings);
     },
 
@@ -76,67 +93,6 @@
         rowEl.appendChild(seg);
         body.appendChild(rowEl);
       }
-
-      /* ---- appearance ---- */
-      section("appearance");
-      var themeRow = BV.el("div", { class: "set-row" });
-      themeRow.appendChild(BV.el("span", { class: "name" }, "theme"));
-      var themeWrap = BV.el("div", { class: "set-path" });
-      var active = (BV.theme.themes || []).find(function (t) { return t.id === BV.theme.activeId; });
-      themeWrap.appendChild(BV.el("span", { class: "set-path-val dim" },
-        BV.esc((active && active.name) || BV.theme.activeId || "—")));
-      var themeBtn = BV.el("button", { class: "btn" }, "choose…");
-      themeWrap.appendChild(themeBtn);
-      themeRow.appendChild(themeWrap);
-      body.appendChild(themeRow);
-
-      var fxRow = BV.el("div", { class: "set-row" });
-      fxRow.appendChild(BV.el("span", { class: "name" }, "background"));
-      var fxWrap = BV.el("div", { class: "set-path" });
-      fxWrap.appendChild(BV.el("span", { class: "set-path-val dim" },
-        BV.esc(BV.bgfx ? BV.bgfx.activeName() : "off")));
-      var fxBtn = BV.el("button", { class: "btn" }, "choose…");
-      fxWrap.appendChild(fxBtn);
-      fxRow.appendChild(fxWrap);
-      body.appendChild(fxRow);
-
-      segRow("font", FONT_OPTIONS.map(function (o) { return o.id; }),
-        s.font_family || DEFAULT_FONT_FAMILY,
-        function (id) {
-          var o = FONT_OPTIONS.find(function (x) { return x.id === id; });
-          return o ? o.label : id;
-        },
-        function (id) {
-          s.font_family = id;
-          BV.uiPrefs.apply(s);
-          BV.api.call("set_setting", "font_family", id).catch(function () {});
-        });
-
-      segRow("borders", [true, false], s.edges !== false,
-        function (v) { return v ? "on" : "off"; },
-        function (v) {
-          s.edges = v;
-          BV.uiPrefs.apply(s);
-          BV.api.call("set_setting", "edges", v).catch(function () {});
-        });
-
-      /* ---- text & scale ---- */
-      section("text & scale");
-      segRow("text size", FONT_SIZES, s.font_size || DEFAULT_FONT,
-        function (v) { return v + "px"; },
-        function (v) {
-          s.font_size = v;
-          BV.uiPrefs.apply(s);
-          BV.api.call("set_setting", "font_size", v).catch(function () {});
-        });
-
-      segRow("chrome scale", CHROME_SCALES, chromeScale(s),
-        function (v) { return Math.round(v * 100) + "%"; },
-        function (v) {
-          s.chrome_scale = v;
-          BV.uiPrefs.apply(s);
-          BV.api.call("set_setting", "chrome_scale", v).catch(function () {});
-        });
 
       /* ---- 3d view ---- */
       section("3d view");
@@ -181,15 +137,7 @@
       });
 
       BV.state.settings = s;
-      var m = BV.modal("settings", body);
-      themeBtn.addEventListener("click", function () {
-        m.close();               /* the picker owns #modal-root next */
-        BV.theme.picker();
-      });
-      fxBtn.addEventListener("click", function () {
-        m.close();
-        BV.bgfx.picker();
-      });
+      BV.modal("settings", body);
     },
   };
 })();

@@ -29,7 +29,7 @@
       ["j / k or ↓ / ↑", "move selection"],
       ["h / l or ← / →", "switch pane (split views)"],
       ["enter", "open selection · search signal"],
-      ["t / shift+t", "theme picker / cycle theme"],
+      ["t / shift+t", "theme window / cycle theme"],
       ["?", "this help"],
     ];
     body.innerHTML = rows.map(function (r) {
@@ -110,7 +110,7 @@
         history.back();
         break;
       case "t":
-        BV.theme.picker();
+        BV.themeUI.open();
         break;
       case "T":
         BV.theme.cycle();

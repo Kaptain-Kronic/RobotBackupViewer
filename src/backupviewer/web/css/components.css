@@ -1461,3 +1461,17 @@ text.v3-ax-z { fill: var(--accent); }
 .v3-row-body { padding: 0.15rem 0.6rem 0.5rem; border-top: 1px solid var(--edge-soft); }
 .v3-check { width: 15px; height: 15px; accent-color: var(--accent); flex: none; }
 .v3-swatch { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+
+/* ---- theme window (theme_ui.js) ---- */
+.modal.theme-win { width: 640px; }
+.theme-win .theme-tabs {
+  display: inline-flex; align-self: flex-start;
+  margin: 0.1rem 0.6rem 0.55rem;
+}
+.theme-win .theme-tabs button { padding: 0.3rem 1.1rem; }
+/* the sliders (background intensity / size) */
+.range-wrap { display: flex; align-items: center; gap: 0.6rem; flex: 1; max-width: 17rem; }
+.range-wrap input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.range-wrap .range-val { color: var(--sub); font-size: 0.8rem; min-width: 3.4ch; text-align: right; }
+/* the effect dropdown button shows the current pick */
+.btn.fx-pick { min-width: 10rem; text-align: left; }

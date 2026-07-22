@@ -1,12 +1,20 @@
 # Changelog
 
 ## Unreleased
-- **Animated backgrounds.** Settings → appearance grows a "background" row:
+- **The 🎨 theme window.** A new topbar button (and `t`) opens a two-tab
+  window that owns everything about how the app looks: **themes** is the
+  familiar category accordion (hover previews, j/k/enter, custom-theme
+  edit/delete), **customize** collects the appearance and text & scale rows
+  that used to crowd ⚙ settings, two new zero-byte system font choices
+  (sans, serif) beside mono and ROG, and the background effect with new
+  **intensity** and **size** sliders that tune the animation live. The ⚙
+  modal keeps app behavior only: 3d view and the library folder.
+- **Animated backgrounds.** The theme window's background section offers
   twelve optional ambient effects that draw behind the app chrome — five
   house styles (gradient drift, aurora, particles, starfield, waves) and
   seven inspired by PewDiePie's Odysseus workspace (synapse, rain,
   constellations, flow field, petals, sparkles, embers; AGPL-3.0 source,
-  combined per GPLv3 §13 and credited in the picker). Every effect tints
+  combined per GPLv3 §13 and credited in the window). Every effect tints
   itself from the live theme's accent, so all 28 themes keep their
   character. Off by default and deliberately cheap: one canvas at capped
   DPR, spawn caps, paused whenever the window is hidden, and a single

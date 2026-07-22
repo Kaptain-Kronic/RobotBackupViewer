@@ -1,11 +1,13 @@
-"""Hidden-window probe for the background-effects picker (bgfx.js).
+"""Hidden-window probe for the background effects (bgfx.js) + the 🎨 theme
+window (theme_ui.js).
 
 Exercises the part the probe environment is uniquely good at: this window
 has NO requestAnimationFrame, which is exactly the environment bgfx must
 survive (build every effect, never throw, settle for a static frame). Also
 checks the layer lifecycle (canvas/css created and torn down per effect),
-the picker modal, the restore-on-cancel contract, and that a committed
-choice lands in settings.json.
+the theme window's tabs/sliders/effect menu, the themes tab's
+restore-on-close contract, that tuning and effect choices land in
+settings.json, and that ⚙ settings kept only behavior rows.
 
 Fully synthetic and identifier-clean: empty library in a temp folder,
 APPDATA redirected there BEFORE importing the app.
@@ -107,18 +109,54 @@ def probe(window):
         check("teardown.layers_gone",
               not js(window, "!!document.getElementById('bgfx-canvas') || !!document.getElementById('bgfx-css')"))
 
-        # ---- picker: rows, credits, esc restores the un-committed state ----
+        # ---- theme window: customize tab sliders, effect menu, credit ----
+        check("theme.btn_present", js(window, "!!document.getElementById('btn-theme')"))
         js(window, "BV.bgfx.set('rain', false)")
-        js(window, "BV.bgfx.picker()")
-        nrows = poll(window, "document.querySelectorAll('.opt-row[data-fx-id]').length")
-        check("picker.rows", nrows == 13, f"(got {nrows})")
-        check("picker.credit_line",
-              js(window, "[...document.querySelectorAll('.acc-credit')].some(function(c){return c.textContent.indexOf('odysseus') >= 0;})"))
-        js(window, "BV.bgfx.set('embers', false)")   # hover-preview equivalent
+        js(window, "BV.themeUI.open('customize')")
+        nsliders = poll(window, "document.querySelectorAll('.modal.theme-win input[type=range]').length")
+        check("theme.sliders", nsliders == 2, f"(got {nsliders})")
+        check("theme.fx_button_names_current",
+              (js(window, "document.querySelector('.modal .btn.fx-pick').textContent") or "").startswith("rain"))
+        check("theme.credit_line",
+              js(window, "[...document.querySelectorAll('.modal .acc-credit')].some(function(c){return c.textContent.indexOf('odysseus') >= 0;})"))
+
+        # the intensity slider drives the live value and persists (debounced)
+        js(window, """(function(){
+            var r = document.querySelector('.modal.theme-win input[type=range]');
+            r.value = '40';
+            r.dispatchEvent(new Event('input', {bubbles: true}));
+        })()""")
+        got_i = js(window, "BV.bgfx.intensity")
+        check("theme.intensity_live", abs((got_i or 0) - 0.4) < 1e-6, f"(got {got_i})")
+        deadline = time.time() + 4
+        saved_i = None
+        while time.time() < deadline:
+            saved_i = bv_settings.load().get("bgfx_intensity")
+            if saved_i == 0.4:
+                break
+            time.sleep(0.25)
+        check("theme.intensity_persists", saved_i == 0.4, f"(got {saved_i})")
+
+        # the effect dropdown lists every effect incl. off
+        js(window, "document.querySelector('.modal .btn.fx-pick').click()")
+        nitems = poll(window, "document.querySelectorAll('.ctx-menu .ctx-item').length")
+        check("theme.fx_menu_items", nitems == 13, f"(got {nitems})")
         js(window, """document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))""")
         time.sleep(0.3)
-        check("picker.esc_restores", js(window, "BV.bgfx.activeId") == "rain",
-              f"(got {js(window, 'BV.bgfx.activeId')})")
+
+        # ---- themes tab: rows render; a hover preview un-does itself on close ----
+        js(window, "BV.themeUI.open('themes')")
+        nrows = poll(window, "document.querySelectorAll('.opt-row[data-theme-id]').length")
+        check("theme.rows", (nrows or 0) >= 20, f"(got {nrows})")
+        committed = js(window, "BV.theme.activeId")
+        js(window, """(function(){
+            var other = BV.theme.themes.find(function(t){ return t.id !== BV.theme.activeId; });
+            BV.theme.applyById(other.id, false);   /* hover-preview equivalent */
+        })()""")
+        js(window, """document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))""")
+        time.sleep(0.3)
+        check("theme.esc_restores", js(window, "BV.theme.activeId") == committed,
+              f"(got {js(window, 'BV.theme.activeId')})")
 
         # ---- a committed choice persists through the settings round-trip ----
         js(window, "BV.bgfx.set('constellations', true)")
@@ -131,14 +169,18 @@ def probe(window):
             time.sleep(0.25)
         check("persist.settings_json", saved == "constellations", f"(got {saved})")
 
-        # ---- settings modal shows the row ----
+        # ---- ⚙ settings kept behavior-only; appearance moved to the window ----
         js(window, "BV.bgfx.set('none', false); BV.uiPrefs.modal()")
-        row = poll(window, """(function(){
-            var rows=[...document.querySelectorAll('.modal .set-row')];
-            var r=rows.find(function(x){return x.textContent.indexOf('background')>=0;});
-            return r ? 'y' : '';
+        got = poll(window, """(function(){
+            var rows = [...document.querySelectorAll('.modal .set-row')]
+                .map(function(x){ return x.querySelector('.name').textContent; });
+            return rows.length ? JSON.stringify(rows) : '';
         })()""")
-        check("settings.background_row", row == "y")
+        rows = json.loads(got or "[]")
+        check("settings.behavior_only",
+              "library folder" in rows and "invert rotate x" in rows
+              and not any(r in rows for r in ("theme", "background", "font", "text size", "chrome scale")),
+              f"({rows})")
         js(window, """document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))""")
 
         print()

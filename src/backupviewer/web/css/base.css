@@ -309,6 +309,7 @@ kbd {
     radial-gradient(36% 46% at 82% 64%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 70%),
     radial-gradient(52% 62% at 58% 12%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%);
   filter: blur(28px);
+  opacity: var(--bgfx-i, 1);   /* the theme window's intensity slider */
   animation: bgfx-drift 24s ease-in-out infinite alternate;
 }
 @keyframes bgfx-drift {
@@ -320,7 +321,7 @@ kbd {
    neighbors of the accent instead of hardcoding a palette */
 #bgfx-css.bgfx-aurora {
   inset: -10%;
-  opacity: 0.5;
+  opacity: calc(0.5 * var(--bgfx-i, 1));
   background: conic-gradient(from 0deg at 50% 130%,
     color-mix(in srgb, var(--accent) 30%, var(--bg)),
     color-mix(in srgb, var(--accent) 8%, var(--bg)),
@@ -333,8 +334,10 @@ kbd {
   to { filter: blur(60px) saturate(1.3) hue-rotate(360deg); }
 }
 
-/* the grid floor the synapse pulses ride on (canvas draws the pulses) */
+/* the grid floor the synapse pulses ride on (canvas draws the pulses).
+   The grid pitch stays fixed at 24px so pulses always ride its lines. */
 #bgfx-css.bgfx-synapse {
+  opacity: var(--bgfx-i, 1);
   background-image:
     linear-gradient(color-mix(in srgb, var(--accent) 4%, transparent) 1px, transparent 1px),
     linear-gradient(90deg, color-mix(in srgb, var(--accent) 4%, transparent) 1px, transparent 1px);

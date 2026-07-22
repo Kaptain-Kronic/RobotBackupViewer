@@ -1,5 +1,7 @@
 /* theme.js - MonkeyType-style theming: a theme is ~9 colors applied as CSS vars.
-   Bundled packs are read-only; user themes are editable files under the Custom category. */
+   Bundled packs are read-only; user themes are editable files under the Custom category.
+   The theme BROWSER (accordion, categories, credits) lives in theme_ui.js — this file
+   is the data + apply layer plus the color editor. */
 (function () {
   "use strict";
 
@@ -9,20 +11,6 @@
   };
 
   var CUSTOM_CAT = "Custom";
-  /* display order of category sections; anything unlisted slots in just before Custom,
-     and Custom is always last (it's where you make your own) */
-  var CAT_ORDER = ["MonkeyType", "Sports", "Cyberpunk 2077", "Vibes", CUSTOM_CAT];
-  /* attribution shown under each pack's section header */
-  var CREDITS = {
-    "MonkeyType": "themes adapted from monkeytype.com",
-    "Sports": "team & university colors © their respective owners",
-    "Cyberpunk 2077": "inspired by Cyberpunk 2077 — © CD Projekt Red",
-    "Vibes": "inspired by retro-futuristic gradient art",
-    "Custom": "your own — saved as shareable files",
-  };
-
-  /* a theme's pack; legacy themes with no category fall under MonkeyType */
-  function catOf(t) { return t.category || "MonkeyType"; }
 
   /* ---- color math (only the custom-theme editor uses these) ----
      No color lib ships with the app; these are tiny pure helpers, zero deps. */
@@ -111,176 +99,6 @@
       var next = BV.theme.themes[(i + 1) % BV.theme.themes.length];
       BV.theme.applyById(next.id, true);
       BV.toast(next.name);
-    },
-
-    /* The theme picker: a collapsible accordion, one section per category. The first view
-       is just the category headers; expand one to see its themes. The Custom section holds
-       your editable themes plus a "new" entry and a reveal-folder shortcut. */
-    picker: function () {
-      if (!BV.theme.themes.length) { BV.toast("no themes loaded"); return; }
-      var all = BV.theme.themes;
-      var startId = BV.theme.activeId;
-      var chosen = false;
-      var settings = BV.state.settings || {};
-      var built = false;   /* guards the initial programmatic open from persisting */
-
-      var body = BV.el("div", { class: "theme-acc" });
-
-      /* categories present, ordered by CAT_ORDER (unknowns just before Custom) */
-      var present = [];
-      all.forEach(function (t) { var c = catOf(t); if (present.indexOf(c) < 0) present.push(c); });
-      /* always offer Custom, even with no user themes yet - it holds the "+ new" entry,
-         so there's somewhere to make your first one */
-      if (present.indexOf(CUSTOM_CAT) < 0) present.push(CUSTOM_CAT);
-      present.sort(function (a, b) {
-        var ia = CAT_ORDER.indexOf(a), ib = CAT_ORDER.indexOf(b);
-        if (ia < 0) ia = CAT_ORDER.length - 1.5;
-        if (ib < 0) ib = CAT_ORDER.length - 1.5;
-        return ia - ib;
-      });
-
-      /* which sections open on launch: the active theme's category, plus the one you last
-         expanded (remembered) - so reopening lands "where you were". On first run (no custom
-         themes yet) open Custom too, so "+ new" is visible without hunting. */
-      var activeCat = catOf(all.find(function (t) { return t.id === startId; }) || {});
-      var openSet = {};
-      openSet[activeCat] = true;
-      if (settings.picker_cat) openSet[settings.picker_cat] = true;
-      if (!all.some(function (t) { return t.user; })) openSet[CUSTOM_CAT] = true;
-
-      var focusEl = null;
-      function visRows() {
-        return Array.prototype.slice.call(
-          body.querySelectorAll(".bv-collapsible.open > .bv-collapse-body .opt-row[data-theme-id]"));
-      }
-      function setFocus(el, preview) {
-        if (focusEl) focusEl.classList.remove("focused");
-        focusEl = el || null;
-        if (!focusEl) return;
-        focusEl.classList.add("focused");
-        focusEl.scrollIntoView({ block: "nearest" });
-        if (preview && focusEl.dataset.themeId) BV.theme.applyById(focusEl.dataset.themeId, false);
-      }
-      function moveFocus(delta) {
-        var rows = visRows();
-        if (!rows.length) return;
-        var i = rows.indexOf(focusEl);
-        if (i < 0) { setFocus(rows[0], true); return; }
-        setFocus(rows[(i + delta + rows.length) % rows.length], true);
-      }
-
-      function swatchHtml(t) {
-        return ["bg", "accent", "text", "sub"].map(function (k) {
-          return '<span class="swatch" style="background:' + BV.esc(t.colors[k] || "#000") + '"></span>';
-        }).join("");
-      }
-
-      function makeRow(t) {
-        var row = BV.el("div", { class: "opt-row" + (t.id === startId ? " sel" : "") },
-          '<span class="name">' + BV.esc(t.name || t.id) + "</span>" +
-          '<span class="swatches">' + swatchHtml(t) + "</span>");
-        row.dataset.themeId = t.id;
-        row.addEventListener("mouseenter", function () { setFocus(row, false); BV.theme.applyById(t.id, false); });
-        row.addEventListener("click", function () {
-          chosen = true; BV.theme.applyById(t.id, true); modal.close();
-        });
-        if (t.user) {
-          var edit = BV.el("button", { class: "opt-edit", title: "edit (e)" }, "✎");
-          edit.addEventListener("click", function (e) {
-            e.stopPropagation();
-            chosen = true; modal.close();
-            BV.theme.editTheme(t, startId);
-          });
-          row.appendChild(edit);
-          var del = BV.el("button", { class: "opt-del", title: "delete" }, "🗑");
-          del.addEventListener("click", function (e) {
-            e.stopPropagation();
-            BV.api.call("delete_user_theme", t.id).then(function () {
-              BV.theme.themes = BV.theme.themes.filter(function (x) { return x.id !== t.id; });
-              if (focusEl === row) focusEl = null;
-              row.remove();
-              if (BV.theme.activeId === t.id || startId === t.id) {
-                startId = "serika_dark";
-                BV.theme.applyById("serika_dark", true);
-              }
-              BV.toast("deleted " + (t.name || t.id));
-            }).catch(function () { BV.toast("delete failed"); });
-          });
-          row.appendChild(del);
-        }
-        return row;
-      }
-
-      present.forEach(function (cat) {
-        var list = all.filter(function (t) { return catOf(t) === cat; });
-        var node = BV.el("div", { class: "acc-sec" });
-        var head = BV.el("div", { class: "acc-head" },
-          '<span class="acc-name">' + BV.esc(cat) + "</span>" +
-          '<span class="acc-count">' + list.length + "</span>");
-        var bodyEl = BV.el("div", { class: "acc-body" });
-
-        if (cat === CUSTOM_CAT) {
-          var reveal = BV.el("button", { class: "acc-reveal", title: "open themes folder" }, "📁");
-          reveal.addEventListener("click", function (e) {
-            e.stopPropagation();
-            BV.api.call("reveal_themes_dir").catch(function () {});
-          });
-          head.appendChild(reveal);
-          var add = BV.el("div", { class: "opt-row opt-new" }, '<span class="name">＋ new custom theme</span>');
-          add.addEventListener("click", function () {
-            chosen = true; modal.close();
-            BV.theme.editTheme(null, startId);
-          });
-          bodyEl.appendChild(add);
-        }
-
-        list.forEach(function (t) { bodyEl.appendChild(makeRow(t)); });
-        if (cat === CUSTOM_CAT && !list.length) {
-          bodyEl.appendChild(BV.el("div", { class: "acc-empty" }, "no custom themes yet — make one ↑"));
-        }
-
-        var credit = CREDITS[cat];
-        if (credit) bodyEl.appendChild(BV.el("div", { class: "acc-credit" }, BV.esc(credit)));
-
-        node.appendChild(head);
-        node.appendChild(bodyEl);
-        BV.collapsible(node, head, bodyEl, {
-          open: !!openSet[cat],
-          onToggle: function (isOpen) {
-            if (!built) return;   /* ignore the open() that fires during construction */
-            if (isOpen) {
-              settings.picker_cat = cat;
-              BV.api.call("set_setting", "picker_cat", cat).catch(function () {});
-            }
-            setFocus(visRows()[0], false);
-          },
-        });
-        body.appendChild(node);
-      });
-      built = true;
-
-      var modal = BV.modal("select theme", body, {
-        onClose: function () { if (!chosen) BV.theme.applyById(startId, false); },
-        onKey: function (e, close) {
-          if (e.key === "ArrowDown" || e.key === "j") { moveFocus(1); return true; }
-          if (e.key === "ArrowUp" || e.key === "k") { moveFocus(-1); return true; }
-          if (e.key === "Enter") {
-            if (focusEl && focusEl.dataset.themeId) {
-              chosen = true; BV.theme.applyById(focusEl.dataset.themeId, true); close();
-            }
-            return true;
-          }
-          if (e.key === "e" && focusEl && focusEl.dataset.themeId) {
-            var t = all.find(function (x) { return x.id === focusEl.dataset.themeId; });
-            if (t && t.user) { chosen = true; close(); BV.theme.editTheme(t, startId); return true; }
-          }
-          return false;
-        },
-      });
-
-      /* anchor keyboard focus on the active theme's row if it's in an open section */
-      var sel = body.querySelector('.opt-row[data-theme-id="' + (startId || "") + '"]');
-      setFocus(sel && sel.offsetParent !== null ? sel : visRows()[0], false);
     },
 
     /* The live color editor. theme = an existing user theme to edit, or null to create a

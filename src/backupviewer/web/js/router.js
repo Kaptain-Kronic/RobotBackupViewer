@@ -268,6 +268,7 @@
     if (BV.state.compare) location.hash = "#compare";
     else BV.compareFlow();
   });
+  document.getElementById("btn-theme").addEventListener("click", function () { BV.themeUI.open(); });
   document.getElementById("btn-cog").addEventListener("click", function () { BV.uiPrefs.modal(); });
   document.getElementById("btn-help").addEventListener("click", function () { BV.helpOverlay(); });
 

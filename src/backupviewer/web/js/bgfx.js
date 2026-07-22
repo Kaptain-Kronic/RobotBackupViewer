@@ -10,7 +10,8 @@
    PewDiePie's Odysseus workspace (github.com/pewdiepie-archdaemon/odysseus,
    AGPL-3.0) - re-expressed here for accent-var theming and the probe
    environment. GPLv3 §13 permits combining AGPLv3-covered work with this
-   app; the picker credits the source like the theme packs do.
+   app; the theme window's background section credits the source like the
+   theme packs do.
 
    Probe environment note: the hidden-window probe has no
    requestAnimationFrame - effects must build without animating and never
@@ -33,15 +34,19 @@
     _varCache[varName] = { raw: raw, rgb: rgb };
     return rgb;
   }
+  /* the intensity slider scales every effect alpha through here; the size
+     slider scales geometry at each effect's natural dimension via SZ() */
+  function I() { return BV.bgfx.intensity; }
+  function SZ() { return BV.bgfx.size; }
   function accent(a) {
     var c = rgbOf("--accent", "e2b714");
-    return "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + a + ")";
+    return "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + (a * I()) + ")";
   }
   /* hot cores (embers, star heads): the accent pushed toward white */
   function accentHot(a) {
     var c = rgbOf("--accent", "e2b714");
     return "rgba(" + Math.min(255, c[0] + 90) + "," + Math.min(255, c[1] + 90) + ","
-      + Math.min(255, c[2] + 90) + "," + a + ")";
+      + Math.min(255, c[2] + 90) + "," + (a * I()) + ")";
   }
   /* translucent slice of the page bg - the fade wash trail effects paint with */
   function bgWash(a) {
@@ -62,6 +67,12 @@
     _css.id = "bgfx-css";
     _css.setAttribute("aria-hidden", "true");
     document.body.insertBefore(_css, document.body.firstChild);
+    syncTuning();
+  }
+  /* the CSS-driven looks read the sliders through a var (canvas effects read
+     I()/SZ() live per frame instead) */
+  function syncTuning() {
+    if (_css) _css.style.setProperty("--bgfx-i", String(BV.bgfx.intensity));
   }
   function ensureCanvas() {
     if (_canvas) return;
@@ -128,7 +139,7 @@
       }
       _ctx.fillStyle = accent(0.7);
       for (i = 0; i < N; i++) {
-        _ctx.beginPath(); _ctx.arc(pts[i].x, pts[i].y, 1.6, 0, 7); _ctx.fill();
+        _ctx.beginPath(); _ctx.arc(pts[i].x, pts[i].y, 1.6 * SZ(), 0, 7); _ctx.fill();
       }
       for (i = 0; i < N; i++) for (j = i + 1; j < N; j++) {
         var dx = pts[i].x - pts[j].x, dy = pts[i].y - pts[j].y, d2 = dx * dx + dy * dy;
@@ -156,7 +167,7 @@
         if (x < 0 || x >= W || y < 0 || y >= H) { seed(st); st.z = W; continue; }
         var a = 1 - st.z / W;
         _ctx.fillStyle = accentHot(a * 0.8);
-        _ctx.beginPath(); _ctx.arc(x, y, a * 2.2, 0, 7); _ctx.fill();
+        _ctx.beginPath(); _ctx.arc(x, y, a * 2.2 * SZ(), 0, 7); _ctx.fill();
       }
     };
   }
@@ -171,11 +182,11 @@
     return function () {
       _ctx.clearRect(0, 0, W, H); t++;
       for (var li = 0; li < layers.length; li++) {
-        var L = layers[li];
+        var L = layers[li], A = L.amp * SZ();
         _ctx.beginPath(); _ctx.moveTo(0, H);
         for (var x = 0; x <= W; x += 6) {
-          var y = H * L.off + Math.sin(x * L.freq + t * L.speed) * L.amp
-            + Math.sin(x * L.freq * 1.7 + t * L.speed * 1.4) * L.amp * 0.5;
+          var y = H * L.off + Math.sin(x * L.freq + t * L.speed) * A
+            + Math.sin(x * L.freq * 1.7 + t * L.speed * 1.4) * A * 0.5;
           _ctx.lineTo(x, y);
         }
         _ctx.lineTo(W, H); _ctx.closePath();
@@ -189,7 +200,7 @@
     var GRID = 24, MAX = 18, TRAIL = 12, pulses = [];
     return function () {
       _ctx.clearRect(0, 0, W, H);
-      if (pulses.length < MAX && Math.random() < 0.12) {
+      if (pulses.length < MAX && Math.random() < 0.12 * (0.35 + 0.65 * I())) {
         var v = 2 + Math.random() * 18, horiz = Math.random() < 0.5;
         pulses.push(horiz
           ? { x: -TRAIL, y: Math.round(Math.random() * H / GRID) * GRID, dx: v, dy: 0 }
@@ -206,7 +217,7 @@
         _ctx.strokeStyle = g; _ctx.lineWidth = 1;
         _ctx.beginPath(); _ctx.moveTo(tx, ty); _ctx.lineTo(p.x, p.y); _ctx.stroke();
         _ctx.fillStyle = accentHot(0.55);
-        _ctx.beginPath(); _ctx.arc(p.x, p.y, 1.2, 0, 7); _ctx.fill();
+        _ctx.beginPath(); _ctx.arc(p.x, p.y, 1.2 * SZ(), 0, 7); _ctx.fill();
       }
     };
   }
@@ -215,20 +226,20 @@
     var MAX = 70, drops = [];
     return function () {
       _ctx.clearRect(0, 0, W, H);
-      if (drops.length < MAX && Math.random() < 0.35) drops.push({
+      if (drops.length < MAX && Math.random() < 0.35 * (0.35 + 0.65 * I())) drops.push({
         x: Math.random() * W, y: -60,
         len: 18 + Math.random() * 36, v: 3 + Math.random() * 5,
         a: 0.10 + Math.random() * 0.22,
       });
       for (var i = drops.length - 1; i >= 0; i--) {
-        var d = drops[i];
+        var d = drops[i], len = d.len * SZ();
         d.y += d.v;
-        if (d.y - d.len > H) { drops.splice(i, 1); continue; }
-        var g = _ctx.createLinearGradient(d.x, d.y - d.len, d.x, d.y);
+        if (d.y - len > H) { drops.splice(i, 1); continue; }
+        var g = _ctx.createLinearGradient(d.x, d.y - len, d.x, d.y);
         g.addColorStop(0, "rgba(0,0,0,0)");
         g.addColorStop(1, accent(d.a));
         _ctx.strokeStyle = g; _ctx.lineWidth = 1.25;
-        _ctx.beginPath(); _ctx.moveTo(d.x, d.y - d.len); _ctx.lineTo(d.x, d.y); _ctx.stroke();
+        _ctx.beginPath(); _ctx.moveTo(d.x, d.y - len); _ctx.lineTo(d.x, d.y); _ctx.stroke();
       }
     };
   }
@@ -260,7 +271,7 @@
       }
       for (i = 0; i < N; i++) {
         _ctx.fillStyle = accent(0.12 + (0.5 + 0.5 * Math.sin(t * 2 + stars[i].ph)) * 0.22);
-        _ctx.beginPath(); _ctx.arc(stars[i].x, stars[i].y, stars[i].r, 0, 7); _ctx.fill();
+        _ctx.beginPath(); _ctx.arc(stars[i].x, stars[i].y, stars[i].r * SZ(), 0, 7); _ctx.fill();
       }
     };
   }
@@ -287,7 +298,7 @@
           m.x = Math.random() * W; m.y = Math.random() * H; m.life = 1;
         }
         _ctx.fillStyle = accent(m.life * 0.14);
-        _ctx.beginPath(); _ctx.arc(m.x, m.y, 1, 0, 7); _ctx.fill();
+        _ctx.beginPath(); _ctx.arc(m.x, m.y, SZ(), 0, 7); _ctx.fill();
       }
       t++;
     };
@@ -315,15 +326,16 @@
           var np = seed();
           for (var k in np) pt[k] = np[k];
         }
+        var ps = pt.size * SZ();
         _ctx.save();
         _ctx.translate(pt.x, pt.y); _ctx.rotate(pt.rot);
         _ctx.fillStyle = accent(0.18);
         _ctx.beginPath();
-        _ctx.ellipse(-pt.size * 0.18, 0, pt.size * 0.62, pt.size * 0.3, 0.35, 0, 7);
+        _ctx.ellipse(-ps * 0.18, 0, ps * 0.62, ps * 0.3, 0.35, 0, 7);
         _ctx.fill();
         _ctx.fillStyle = accent(0.12);
         _ctx.beginPath();
-        _ctx.ellipse(pt.size * 0.18, 0, pt.size * 0.62, pt.size * 0.3, -0.35, 0, 7);
+        _ctx.ellipse(ps * 0.18, 0, ps * 0.62, ps * 0.3, -0.35, 0, 7);
         _ctx.fill();
         _ctx.restore();
       }
@@ -359,7 +371,7 @@
         var s = sparks[i];
         s.ph += s.v;
         var tw = Math.sin(s.ph);
-        if (tw > 0.03) star(s.x, s.y, s.size * (0.5 + tw * 0.5), tw * 0.3 * s.vigor);
+        if (tw > 0.03) star(s.x, s.y, s.size * SZ() * (0.5 + tw * 0.5), tw * 0.3 * s.vigor);
         if (s.ph > 18.8) { var ns = seed(); for (var k in ns) s[k] = ns[k]; }
       }
     };
@@ -395,13 +407,14 @@
         }
         /* ramp in over 40 frames, out over the last 60 */
         var a = Math.min(e.age / 40, 1) * Math.min((e.span - e.age) / 60, 1);
-        var g = _ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, e.r * 4);
+        var er = e.r * SZ();
+        var g = _ctx.createRadialGradient(e.x, e.y, 0, e.x, e.y, er * 4);
         g.addColorStop(0, accent(a * 0.45));
         g.addColorStop(1, "rgba(0,0,0,0)");
         _ctx.fillStyle = g;
-        _ctx.beginPath(); _ctx.arc(e.x, e.y, e.r * 4, 0, 7); _ctx.fill();
+        _ctx.beginPath(); _ctx.arc(e.x, e.y, er * 4, 0, 7); _ctx.fill();
         _ctx.fillStyle = accentHot(a * 0.6);
-        _ctx.beginPath(); _ctx.arc(e.x, e.y, e.r, 0, 7); _ctx.fill();
+        _ctx.beginPath(); _ctx.arc(e.x, e.y, er, 0, 7); _ctx.fill();
       }
       _ctx.globalCompositeOperation = "source-over";
     };
@@ -430,9 +443,13 @@
 
   function byId(id) { return EFFECTS.find(function (e) { return e.id === id; }); }
 
+  var persistTune = null;   /* built lazily so BV.debounce is ready */
+
   BV.bgfx = {
     EFFECTS: EFFECTS,
     activeId: "none",
+    intensity: 1,   /* 0.1..1 - global alpha (+ spawn rate on the spawny effects) */
+    size: 1,        /* 0.5..2 - geometry at each effect's natural dimension */
 
     activeName: function () {
       var t = byId(BV.bgfx.activeId);
@@ -440,7 +457,28 @@
     },
 
     apply: function (settings) {
-      BV.bgfx.set((settings && settings.bgfx) || "none", false);
+      settings = settings || {};
+      BV.bgfx.tune({
+        intensity: settings.bgfx_intensity != null ? settings.bgfx_intensity : 1,
+        size: settings.bgfx_size != null ? settings.bgfx_size : 1,
+      }, false);
+      BV.bgfx.set(settings.bgfx || "none", false);
+    },
+
+    /* the theme window's sliders land here; canvas effects pick the new
+       values up on their next frame, the CSS looks through --bgfx-i */
+    tune: function (opts, persist) {
+      if (opts.intensity != null) BV.bgfx.intensity = Math.min(1, Math.max(0.1, opts.intensity));
+      if (opts.size != null) BV.bgfx.size = Math.min(2, Math.max(0.5, opts.size));
+      syncTuning();
+      if (!HAS_RAF || REDUCED) { if (_step) _step(); }   /* static frame keeps up too */
+      if (persist) {
+        if (!persistTune) persistTune = BV.debounce(function () {
+          BV.api.call("set_setting", "bgfx_intensity", BV.bgfx.intensity).catch(function () {});
+          BV.api.call("set_setting", "bgfx_size", BV.bgfx.size).catch(function () {});
+        }, 400);
+        persistTune();
+      }
     },
 
     set: function (id, persist) {
@@ -468,81 +506,6 @@
         BV.bgfx.activeId = t.id;
       }
       if (persist) BV.api.call("set_setting", "bgfx", t.id).catch(function () {});
-    },
-
-    /* the effect picker: same contract as the theme picker - hover previews
-       live, click commits, closing without choosing restores what you had */
-    picker: function () {
-      var startId = BV.bgfx.activeId;
-      var chosen = false;
-      var body = BV.el("div", { class: "theme-acc" });
-      var focusEl = null;
-
-      function visRows() {
-        return Array.prototype.slice.call(
-          body.querySelectorAll(".bv-collapsible.open > .bv-collapse-body .opt-row[data-fx-id], " +
-            ".theme-acc > .opt-row[data-fx-id]"));
-      }
-      function setFocus(el, preview) {
-        if (focusEl) focusEl.classList.remove("focused");
-        focusEl = el || null;
-        if (!focusEl) return;
-        focusEl.classList.add("focused");
-        focusEl.scrollIntoView({ block: "nearest" });
-        if (preview && focusEl.dataset.fxId) BV.bgfx.set(focusEl.dataset.fxId, false);
-      }
-      function moveFocus(delta) {
-        var rows = visRows();
-        if (!rows.length) return;
-        var i = rows.indexOf(focusEl);
-        if (i < 0) { setFocus(rows[0], true); return; }
-        setFocus(rows[(i + delta + rows.length) % rows.length], true);
-      }
-
-      function makeRow(t) {
-        var row = BV.el("div", { class: "opt-row" + (t.id === startId ? " sel" : "") },
-          '<span class="name">' + BV.esc(t.name) + "</span>");
-        row.dataset.fxId = t.id;
-        row.addEventListener("mouseenter", function () { setFocus(row, false); BV.bgfx.set(t.id, false); });
-        row.addEventListener("click", function () {
-          chosen = true; BV.bgfx.set(t.id, true); modal.close();
-        });
-        return row;
-      }
-
-      body.appendChild(makeRow(EFFECTS[0]));   /* "off" stays outside the sections */
-      [HOUSE, ODY].forEach(function (cat) {
-        var list = EFFECTS.filter(function (e) { return e.cat === cat; });
-        var node = BV.el("div", { class: "acc-sec" });
-        var head = BV.el("div", { class: "acc-head" },
-          '<span class="acc-name">' + BV.esc(cat) + "</span>" +
-          '<span class="acc-count">' + list.length + "</span>");
-        var bodyEl = BV.el("div", { class: "acc-body" });
-        list.forEach(function (t) { bodyEl.appendChild(makeRow(t)); });
-        bodyEl.appendChild(BV.el("div", { class: "acc-credit" }, BV.esc(CREDITS[cat])));
-        node.appendChild(head);
-        node.appendChild(bodyEl);
-        BV.collapsible(node, head, bodyEl, { open: true });
-        body.appendChild(node);
-      });
-
-      var modal = BV.modal("select background", body, {
-        onClose: function () { if (!chosen) BV.bgfx.set(startId, false); },
-        onKey: function (e, close) {
-          if (e.key === "ArrowDown" || e.key === "j") { moveFocus(1); return true; }
-          if (e.key === "ArrowUp" || e.key === "k") { moveFocus(-1); return true; }
-          if (e.key === "Enter") {
-            if (focusEl && focusEl.dataset.fxId) {
-              chosen = true; BV.bgfx.set(focusEl.dataset.fxId, true); close();
-            }
-            return true;
-          }
-          return false;
-        },
-      });
-
-      var sel = body.querySelector('.opt-row[data-fx-id="' + startId + '"]');
-      setFocus(sel || visRows()[0], false);
     },
   };
 })();
