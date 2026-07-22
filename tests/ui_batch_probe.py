@@ -1,11 +1,16 @@
 """Hidden-window probe for the 2026-07 UI batch: library favorites, the
 generalized edit modal + libTree link picker, the photos-tab rework
 (filtered/raw, report pane, moved filter row, zoom/pan fullscreen), the
-camera-backup backspace trap, and the -/= tab hotkeys.
+camera-backup backspace trap, the -/= tab hotkeys, and the multi-cam lens
+post-merge fix batch (manage reachable in cam mode, per-lens scroll memory,
+setCount blanking, linked-robot filter match, hidden-aware empty state,
+fold policy, keyboard tiles, home_view persistence across a remount).
 
 Fully synthetic and identifier-clean: builds its own library tree in a temp
 folder and redirects APPDATA there BEFORE importing the app, so the real
-settings/library are never touched. Run: python tests/ui_batch_probe.py
+settings/library are never touched — camera entries use unroutable TEST-NET
+(192.0.2.x) IPs only, so nothing real is ever probed.
+Run: python tests/ui_batch_probe.py
 """
 import json
 import os
@@ -66,7 +71,11 @@ PNG_1PX = base64.b64decode(
 
 def build_tree(lib: Path) -> None:
     line = lib / "FakePlant" / "LINE01"
-    for rb in ("RB010R01B01", "RB020R01B01"):
+    # 42 robots total: enough rows that the library view genuinely overflows,
+    # so the per-lens scroll assertions exercise real scrollTop clamping
+    names = ["RB010R01B01", "RB020R01B01"]
+    names += [f"RB{i}R01B01" for i in range(100, 140)]
+    for rb in names:
         snap = line / rb / "2026_01_01" / "12_00_00"
         snap.mkdir(parents=True)
         (snap / "SUMMARY.DG").write_text("x", encoding="utf-8")
@@ -121,7 +130,7 @@ def probe(window):
 
         # ---- home library renders the synthetic tree ----
         nrows = poll(window, "document.querySelectorAll('.lib-robot').length")
-        check("home.rows", nrows == 3, f"(got {nrows})")
+        check("home.rows", nrows == 43, f"(got {nrows})")
         check("home.no_fav_strip_initially",
               not js(window, "!!document.querySelector('.lib-favs')"))
 
@@ -342,7 +351,7 @@ def probe(window):
               f"(hash={js(window, 'location.hash')!r})")
         js(window, "BV.goHome()")
         check("home.returns_after_open", bool(poll(window,
-              "location.hash==='#home' && document.querySelectorAll('.lib-robot').length===3")))
+              "location.hash==='#home' && document.querySelectorAll('.lib-robot').length===43")))
         # the Escape above must have reached the EDITOR, not a leaked menu
         # listener — a same-tick open+close used to strand a document-capture
         # Escape handler that ate the key for everything underneath it
@@ -525,6 +534,323 @@ def probe(window):
         js(window, "document.querySelector('.lib-favs .lib-fav').click()")
         check("fav.unpin_removes_strip",
               bool(poll(window, "!document.querySelector('.lib-favs')")))
+
+        # ---- multi-cam lens: the post-merge fix batch ----
+
+        # The cam refresher's only idle gate is document.hidden — record what a
+        # HIDDEN pywebview window actually reports (the assumption was never
+        # verified in this codebase; the [info] line below is the ground truth).
+        # ANSWER (2026-07-22, WebView2 hidden window, measured by this probe):
+        # visibilityState reports "hidden" / document.hidden === true — so the
+        # refresher's idle gate IS active in a hidden probe window, and
+        # interval-driven tile refreshes can never be exercised from a probe
+        # like this one (only the initial img wiring at render time can).
+        vis = js(window, "document.visibilityState + ' / hidden=' + document.hidden")
+        print(f"[info] hidden-window visibility: {vis}")
+
+        # the setCount primitive: an undefined n blanks the counter even when a
+        # total rides along (used to render the literal "undefined/0")
+        sc = js(window, """(function(){
+            var sb=BV.searchBox({onChange:function(){}});
+            sb.setCount(undefined, 0);
+            return sb.el.querySelector('.match-count').textContent;
+        })()""")
+        check("cam.setcount_undefined_blanks", sc == "", f"(got {sc!r})")
+
+        # a CV-X camera in the library: it lists in the backup lens but is
+        # deliberately NOT tiled in the cam lens (matrox-only by design)
+        js(window, """window.__cvx=null;
+            BV.api.call('lib_add', {robot:'CELL-01CVX01', plant:'FakePlant',
+              line:'LINE01', device_type:'camera-keyence', ips:['192.0.2.162'],
+              model:'', notes:'', latest_path:'', ftp:{user:'', passive:true}})
+              .then(function(){ window.__cvx='ok'; })
+              .catch(function(e){ window.__cvx='err:'+e.message; });""")
+        check("cam.cvx_added", poll(window, "window.__cvx") == "ok",
+              f"(got {js(window, 'window.__cvx')!r})")
+        js(window, "BV.state.emit('library-dirty')")
+        check("cam.cvx_lists_in_backup_lens", bool(poll(window,
+              "document.querySelectorAll('.lib-robot').length===44 ? 'y' : ''")))
+
+        # seed the backup lens: select a robot and scroll well into the tree
+        js(window, """(function(){
+            var row=[...document.querySelectorAll('.lib-robot')].find(function(r){
+                return r.textContent.indexOf('RB010R01B01')>=0;});
+            row.querySelector('.lib-check').click();
+        })()""")
+        check("cam.selection_seeded", js(window,
+              "document.querySelector('.lib-sel-count').textContent") == "1 selected")
+        st0 = js(window, """(function(){
+            var view=document.getElementById('view');
+            view.scrollTop=600;
+            return view.scrollTop;
+        })()""")
+        check("cam.scroll_env_scrollable", st0 == 600, f"(got {st0})")
+        anchor0 = js(window, """(function(){
+            var view=document.getElementById('view');
+            var vt=view.getBoundingClientRect().top;
+            var top=[...document.querySelectorAll('.lib-robot')].find(function(r){
+                return r.getBoundingClientRect().bottom>vt+2;});
+            return top ? top.getAttribute('data-robot-id') : '';
+        })()""")
+        check("cam.scroll_anchor_found", bool(anchor0), f"(got {anchor0!r})")
+
+        # flip to multi-cam (first flip this session)
+        js(window, """(function(){
+            [...document.querySelectorAll('.home-view-seg button')].find(function(b){
+                return b.textContent.trim()==='multi-cam';}).click();
+        })()""")
+        check("cam.lens_flips", bool(poll(window,
+              "!!document.querySelector('.home-library.cam-mode')")))
+        check("cam.filter_placeholder", js(window,
+              "document.querySelector('.home-lib-head .search-box input').placeholder")
+              == "filter cameras…")
+
+        # fix 1: the selection row hides, but manage backups stays reachable
+        # (it moved in with the library actions — auto-link lives inside it)
+        head = js(window, """JSON.stringify((function(){
+            var sel=document.querySelector('.home-lib-selacts');
+            var mb=document.querySelector('.home-lib-actions .lib-act-manage');
+            return { selacts: getComputedStyle(sel).display,
+                     manage: mb ? getComputedStyle(mb).display : 'missing' };
+        })())""")
+        head = json.loads(head or "{}")
+        check("cam.selacts_hidden", head.get("selacts") == "none", f"({head})")
+        check("cam.manage_reachable", head.get("manage") not in ("none", "missing", None),
+              f"({head})")
+
+        # fix 7: deliberate fold policy — plants open, lines folded, so the
+        # first flip shows count badges instead of fetching every line at once
+        fold = js(window, """JSON.stringify((function(){
+            var body=document.querySelector('.home-lib-body');
+            var plants=[...body.querySelectorAll('.lib-plant')];
+            var lines=[...body.querySelectorAll('.lib-line')];
+            return { plantsOpen: plants.length>0 && plants.every(function(p){
+                       return p.classList.contains('open');}),
+                     linesFolded: lines.length>0 && lines.every(function(l){
+                       return !l.classList.contains('open');}),
+                     counts: !!body.querySelector('.lib-line-h .lib-count') };
+        })())""")
+        fold = json.loads(fold or "{}")
+        check("cam.plants_start_open", fold.get("plantsOpen") is True, f"({fold})")
+        check("cam.lines_start_folded", fold.get("linesFolded") is True, f"({fold})")
+        check("cam.folded_lines_show_counts", fold.get("counts") is True, f"({fold})")
+
+        # only camera-mtx entries tile (robots and the CV-X stay out by design)
+        tiles = js(window, """JSON.stringify((function(){
+            var t=[...document.querySelectorAll('.cam-tile')];
+            return { n: t.length,
+                     name: t[0] ? t[0].textContent.indexOf('CELL-01CAM01')>=0 : false,
+                     noip: t[0] ? t[0].classList.contains('no-ip') : false,
+                     cvxTiled: t.some(function(x){
+                       return x.textContent.indexOf('CVX')>=0;}) };
+        })())""")
+        tiles = json.loads(tiles or "{}")
+        check("cam.only_mtx_tiles", tiles.get("n") == 1 and tiles.get("name") is True,
+              f"({tiles})")
+        check("cam.cvx_not_tiled", tiles.get("cvxTiled") is False, f"({tiles})")
+        check("cam.tile_flags_no_ip", tiles.get("noip") is True, f"({tiles})")
+
+        # fix 8: tiles are keyboard-reachable — focusable button role, and
+        # Enter/Space take the click path (here: the honest no-IP refusal toast)
+        kbd = js(window, """JSON.stringify((function(){
+            var t=document.querySelector('.cam-tile');
+            var out={ tab: t.getAttribute('tabindex')==='0',
+                      role: t.getAttribute('role')==='button' };
+            t.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));
+            var tst=document.getElementById('toast');
+            out.enterToast = !!(tst && tst.classList.contains('show') &&
+                tst.textContent.indexOf('no IP on record')>=0);
+            tst.classList.remove('show');
+            t.dispatchEvent(new KeyboardEvent('keydown',{key:' ',bubbles:true}));
+            out.spaceToast = !!(tst.classList.contains('show') &&
+                tst.textContent.indexOf('no IP on record')>=0);
+            return out;
+        })())""")
+        kbd = json.loads(kbd or "{}")
+        check("cam.tile_focusable_button",
+              kbd.get("tab") is True and kbd.get("role") is True, f"({kbd})")
+        check("cam.enter_refuses_no_ip_with_toast", kbd.get("enterToast") is True,
+              f"({kbd})")
+        check("cam.space_acts_too", kbd.get("spaceToast") is True, f"({kbd})")
+
+        # fix 2: the cam lens starts at ITS OWN top instead of inheriting the
+        # tree's clamped offset…
+        check("cam.lens_has_own_scroll", js(window,
+              "document.getElementById('view').scrollTop") == 0)
+
+        # …and flipping back restores the tree exactly: same first-visible row
+        js(window, """(function(){
+            [...document.querySelectorAll('.home-view-seg button')].find(function(b){
+                return b.textContent.trim()==='backup';}).click();
+        })()""")
+        back = poll(window, """(function(){
+            if(document.querySelector('.home-library.cam-mode')) return null;
+            var view=document.getElementById('view');
+            if(!view.scrollTop) return null;   /* restore lands synchronously, but be kind */
+            var vt=view.getBoundingClientRect().top;
+            var top=[...document.querySelectorAll('.lib-robot')].find(function(r){
+                return r.getBoundingClientRect().bottom>vt+2;});
+            return JSON.stringify({ st: view.scrollTop,
+                id: top ? top.getAttribute('data-robot-id') : '' });
+        })()""")
+        back = json.loads(back or "{}")
+        check("cam.flip_back_restores_scroll",
+              back.get("id") == anchor0 and back.get("st", 0) > 300, f"({back})")
+        check("cam.flip_back_keeps_selection", js(window,
+              "document.querySelector('.lib-sel-count').textContent") == "1 selected")
+        js(window, """(function(){
+            var row=[...document.querySelectorAll('.lib-robot')].find(function(r){
+                return r.textContent.indexOf('RB010R01B01')>=0;});
+            row.querySelector('.lib-check').click();   /* clear the seed */
+            document.getElementById('view').scrollTop=0;
+        })()""")
+
+        # fix 4: the cam filter matches the "↳ robot" name printed on the tile
+        # (CELL-01CAM01 is linked to RB010R01B01 from the picker test above)
+        js(window, """(function(){
+            [...document.querySelectorAll('.home-view-seg button')].find(function(b){
+                return b.textContent.trim()==='multi-cam';}).click();
+            var inp=document.querySelector('.home-lib-head .search-box input');
+            inp.value='RB010R01B01';
+            inp.dispatchEvent(new Event('input',{bubbles:true}));
+        })()""")
+        # the filter is debounced (150 ms) and hidden windows throttle timers
+        # to ~1 s — poll for the applied state instead of sleeping
+        match = poll(window, """(function(){
+            var c=document.querySelector('.home-lib-head .match-count').textContent;
+            if(c!=='1') return null;   /* debounce hasn't fired yet */
+            return JSON.stringify({ tiles: document.querySelectorAll('.cam-tile').length,
+                                    count: c });
+        })()""")
+        match = json.loads(match or "{}")
+        check("cam.filter_matches_linked_robot_name",
+              match.get("tiles") == 1 and match.get("count") == "1", f"({match})")
+        js(window, """(function(){
+            var inp=document.querySelector('.home-lib-head .search-box input');
+            inp.value='zzz-no-such';
+            inp.dispatchEvent(new Event('input',{bubbles:true}));
+        })()""")
+        nomatch = poll(window, """(function(){
+            var e=document.querySelector('.home-lib-body .empty-lib');
+            if(!e) return null;        /* throttled debounce hasn't fired yet */
+            return JSON.stringify({ note: e.textContent,
+                count: document.querySelector('.home-lib-head .match-count').textContent });
+        })()""")
+        nomatch = json.loads(nomatch or "{}")
+        check("cam.no_match_says_cameras",
+              "no cameras match" in (nomatch.get("note") or ""), f"({nomatch})")
+        check("cam.no_match_counter", nomatch.get("count") == "0/1", f"({nomatch})")
+        js(window, """(function(){
+            var inp=document.querySelector('.home-lib-head .search-box input');
+            inp.value='';
+            inp.dispatchEvent(new Event('input',{bubbles:true}));
+        })()""")
+        check("cam.filter_clears", bool(poll(window,
+              "document.querySelectorAll('.cam-tile').length===1 ? 'y' : ''")))
+
+        # fix 5: hiding the only matrox cam (plus a robot, to prove the count
+        # is lens-scoped) — the empty grid says HIDDEN, never "none yet"
+        js(window, """window.__hid=null;
+            BV.api.call('lib_list').then(function(d){
+              var cam=d.robots.find(function(r){return r.robot==='CELL-01CAM01';});
+              var rb=d.robots.find(function(r){return r.robot==='RB139R01B01';});
+              return Promise.all([
+                BV.api.call('lib_set_hidden', cam.id, true),
+                BV.api.call('lib_set_hidden', rb.id, true),
+              ]);
+            }).then(function(){ window.__hid='ok'; })
+              .catch(function(e){ window.__hid='err:'+e.message; });""")
+        check("cam.hide_setup", poll(window, "window.__hid") == "ok",
+              f"(got {js(window, 'window.__hid')!r})")
+        js(window, "BV.state.emit('library-dirty')")
+        empty = poll(window, """(function(){
+            var e=document.querySelector('.home-lib-body .empty-lib');
+            if(!e || e.textContent.indexOf('hidden')<0) return null;
+            return JSON.stringify({ note: e.textContent,
+                count: document.querySelector('.home-lib-head .match-count').textContent,
+                toggle: document.querySelector('.lib-show-hidden').textContent });
+        })()""")
+        empty = json.loads(empty or "{}")
+        check("cam.empty_state_says_hidden",
+              "1 matrox camera is hidden" in (empty.get("note") or ""), f"({empty})")
+        check("cam.empty_state_never_undefined", empty.get("count") == "", f"({empty})")
+        check("cam.hidden_count_is_lens_scoped",
+              empty.get("toggle") == "show hidden (1)", f"({empty})")
+
+        # the backup lens counts BOTH hidden entries (1 robot + 1 camera)
+        js(window, """(function(){
+            [...document.querySelectorAll('.home-view-seg button')].find(function(b){
+                return b.textContent.trim()==='backup';}).click();
+        })()""")
+        tog = poll(window, """(function(){
+            var t=document.querySelector('.lib-show-hidden');
+            return t && t.textContent==='show hidden (2)' ? t.textContent : null;
+        })()""")
+        check("cam.backup_lens_counts_both", tog == "show hidden (2)", f"(got {tog!r})")
+
+        # show hidden in the cam lens reveals the tile again
+        js(window, """(function(){
+            [...document.querySelectorAll('.home-view-seg button')].find(function(b){
+                return b.textContent.trim()==='multi-cam';}).click();
+        })()""")
+        poll(window, "!!document.querySelector('.home-library.cam-mode')")
+        js(window, "document.querySelector('.lib-show-hidden').click()")
+        check("cam.show_hidden_reveals_tile", bool(poll(window,
+              "document.querySelectorAll('.cam-tile').length===1 ? 'y' : ''")))
+        js(window, "document.querySelector('.lib-show-hidden').click()")   # back off
+        js(window, """window.__unhid=null;
+            BV.api.call('lib_list').then(function(d){
+              return Promise.all(d.robots.filter(function(r){return r.hidden;})
+                .map(function(r){return BV.api.call('lib_set_hidden', r.id, false);}));
+            }).then(function(){ window.__unhid='ok'; })
+              .catch(function(e){ window.__unhid='err:'+e.message; });""")
+        check("cam.unhide_cleanup", poll(window, "window.__unhid") == "ok")
+        js(window, "BV.state.emit('library-dirty')")
+        check("cam.tile_back_after_unhide", bool(poll(window,
+              "document.querySelectorAll('.cam-tile').length===1 ? 'y' : ''")))
+
+        # a TEST-NET IP on the tile: the live img wires up and a dead camera
+        # is tolerated (nothing real is ever probed — 192.0.2.x is unroutable)
+        js(window, """window.__ip=null;
+            BV.api.call('lib_list').then(function(d){
+              var cam=d.robots.find(function(r){return r.robot==='CELL-01CAM01';});
+              return BV.api.call('lib_update', cam.id, {ips:['192.0.2.161']});
+            }).then(function(){ window.__ip='ok'; })
+              .catch(function(e){ window.__ip='err:'+e.message; });""")
+        check("cam.ip_set", poll(window, "window.__ip") == "ok")
+        js(window, "BV.state.emit('library-dirty')")
+        check("cam.live_img_wired", bool(poll(window, """(function(){
+            var img=document.querySelector('.cam-tile img.cam-live');
+            return img && img.dataset.ip==='192.0.2.161' ? 'y' : '';
+        })()""")))
+
+        # the lens choice persisted, and a REMOUNT lands straight in it
+        # (home_view via set_setting; selacts hidden from the first paint)
+        js(window, """window.__hv=null;
+            BV.api.call('get_settings').then(function(s){
+              window.__hv = s ? s.home_view : 'none'; });""")
+        check("cam.home_view_persisted", poll(window, "window.__hv") == "multicam",
+              f"(got {js(window, 'window.__hv')!r})")
+        js(window, "BV.route()")
+        remount = poll(window, """(function(){
+            var lib=document.querySelector('.home-library.cam-mode');
+            if(!lib || !document.querySelector('.cam-tile')) return null;
+            return JSON.stringify({
+              selacts: getComputedStyle(document.querySelector('.home-lib-selacts')).display,
+              manage: getComputedStyle(document.querySelector('.lib-act-manage')).display });
+        })()""")
+        remount = json.loads(remount or "{}")
+        check("cam.remount_lands_in_lens", remount.get("selacts") == "none", f"({remount})")
+        check("cam.remount_manage_reachable",
+              remount.get("manage") not in ("none", "missing", None), f"({remount})")
+
+        # leave the library in the backup lens for the sections below
+        js(window, """(function(){
+            [...document.querySelectorAll('.home-view-seg button')].find(function(b){
+                return b.textContent.trim()==='backup';}).click();
+        })()""")
+        check("cam.back_to_backup_lens", bool(poll(window,
+              "document.querySelectorAll('.lib-robot').length===44 ? 'y' : ''")))
 
         # ---- link cameras: moved off the library head into manage backups ----
         check("manage.link_cams_not_in_head",
