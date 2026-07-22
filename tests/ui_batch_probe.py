@@ -852,6 +852,65 @@ def probe(window):
         check("cam.back_to_backup_lens", bool(poll(window,
               "document.querySelectorAll('.lib-robot').length===44 ? 'y' : ''")))
 
+        # ---- health-scan picker: new checks listed, the clock tolerance input ----
+        js(window, """(function(){
+            window.__hs=null; window.__realCall2=BV.api.call;
+            BV.api.call=function(){
+              if(arguments[0]==='health_scan_start'){
+                window.__hs=JSON.stringify([].slice.call(arguments,1));
+                return Promise.reject(new Error('probe-intercept'));
+              }
+              return window.__realCall2.apply(this, arguments);
+            };
+            BV.scanUI.open([{id:'probe-r1', robot:'RB010R01B01'}]);
+        })()""")
+        picker = poll(window, """(function(){
+            var cats=[...document.querySelectorAll('.hs-cat-title')]
+                .map(function(t){return t.textContent;});
+            if(cats.length<5) return null;
+            var pin=document.querySelector('.hs-param');
+            return JSON.stringify({ cats: cats,
+              labels: [...document.querySelectorAll('.hs-lbl')].map(function(l){
+                  return l.textContent;}),
+              pin: !!pin, pinVal: pin ? pin.value : '' });
+        })()""")
+        picker = json.loads(picker or "{}")
+        check("scan.categories_include_positions",
+              picker.get("cats", [])[:5] == ["safety", "mastering", "programs",
+                                             "positions", "config"],
+              f"({picker.get('cats')})")
+        for lbl in ("remarked positions", "remarked logic", "untaught positions",
+                    "uninitialized PRs in use", "general override < 100%",
+                    "controller clock drift"):
+            check("scan.lists_" + lbl.split()[0] + "_" + lbl.split()[1][:5],
+                  lbl in picker.get("labels", []), f"({lbl})")
+        check("scan.tolerance_input_default",
+              picker.get("pin") is True and picker.get("pinVal") == "2m", f"({picker})")
+
+        # pick the clock check, type a tolerance, scan: the param rides along
+        sent = js(window, """(function(){
+            var rows=[...document.querySelectorAll('.hs-check')];
+            var clock=rows.find(function(r){
+                return r.querySelector('.hs-lbl').textContent==='controller clock drift';});
+            clock.querySelector('input[type=checkbox]').click();
+            var pin=clock.querySelector('.hs-param');
+            pin.value='45s';
+            var go=[...document.querySelectorAll('.hs-host .lf-actions .btn.primary')]
+                .find(function(b){return b.textContent==='scan';});
+            go.click();
+            return window.__hs;
+        })()""")
+        sent = json.loads(sent or "[]")
+        # args after the method name: robot_ids, picked checks, queries, params
+        check("scan.param_rides_along",
+              len(sent) == 4 and sent[0] == ["probe-r1"] and
+              sent[1] == ["clock_drift"] and sent[3].get("clock_drift") == "45s",
+              f"({sent})")
+        js(window, """BV.api.call=window.__realCall2;
+            document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));""")
+        check("scan.modal_closes", bool(poll(window,
+              "document.getElementById('modal-root').classList.contains('hidden')")))
+
         # ---- link cameras: moved off the library head into manage backups ----
         check("manage.link_cams_not_in_head",
               not js(window, "!!document.querySelector('.lib-link-cams')"))
