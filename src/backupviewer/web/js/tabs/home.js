@@ -27,7 +27,7 @@
   var _lastData = null;         /* last lib_list payload — filter re-renders without a refetch */
   var _liveTargets = null;      /* BV.jobs.activeTargets() snapshot, taken once per tree paint */
   var _camCounts = {};          /* robot id -> linked-camera count, built once per tree paint */
-  var _viewMode = "";           /* backup | multicam; lazily read from settings (home_view) */
+  var _viewMode = "";           /* backup | multicam; set by a user flip, else home_view is read live */
   var _camTimer = null;         /* multi-cam live-image refresher (self-stops off-screen) */
   var _camRobotNames = {};      /* robot id -> name, for the tiles' "↳ robot" note */
 
@@ -58,11 +58,13 @@
   /* ---- backup <-> multi-cam: two lenses on the same library ---- */
 
   function viewMode() {
-    if (!_viewMode) {
-      _viewMode = ((BV.state.settings || {}).home_view) || "backup";
-      if (_viewMode !== "multicam") _viewMode = "backup";
-    }
-    return _viewMode;
+    /* only a user flip (setViewMode) writes _viewMode; until then read the
+       persisted value live — caching the "backup" fallback here made a render
+       that beat get_settings (the router's boot catch-path) stick for the
+       whole session, ignoring a persisted multicam */
+    if (_viewMode) return _viewMode;
+    var v = (BV.state.settings || {}).home_view;
+    return v === "multicam" ? "multicam" : "backup";
   }
 
   function setViewMode(mode) {
@@ -132,11 +134,23 @@
     },
   });
 
-  /* the multi-cam lens reuses the same shared tree (same folders, fold state,
-     filter semantics) with tiles for rows and a grid for line bodies */
+  /* the multi-cam lens shares the tree STRUCTURE (grouping, filter semantics)
+     but folds independently — fold state is per-instance. Its lines start
+     FOLDED (plants open): the count badges say where the cameras are, and a
+     line's tiles only start fetching frames once it's deliberately opened,
+     so the first flip doesn't blast every camera on the plant at once. */
   var _camTree = BV.libTree({
     counts: true,
+    noun: "cameras",
     lineBodyClass: "cam-grid",
+    startOpen: function (key, kind) { return kind === "plant"; },
+    /* the tiles print "↳ <linked robot>" — the name a tech actually knows
+       must match it, on top of the camera's own fields */
+    matches: function (r, q) {
+      if (BV.libTree.defaultMatches(r, q)) return true;
+      var linked = _camRobotNames[r.linked_robot_id] || "";
+      return linked.toLowerCase().indexOf(q) >= 0;
+    },
     row: function (c) { return camTile(c); },
   });
 
@@ -188,9 +202,9 @@
       /* repaint IN PLACE: the old tree stays on screen until the new one is
          built, and the scroll position survives — refreshes (post-action or
          watcher-triggered) stop flashing and jumping back to the top */
-      var anchor = scrollAnchor();
+      saveLensScroll();
       renderTree(body, data);
-      restoreAnchor(anchor);
+      restoreLensScroll();
       reattachProgress();   /* repaint any backups already running */
       if (data && data.scan_truncated && !_warnedTruncated) {
         _warnedTruncated = true;
@@ -260,21 +274,22 @@
       if (!sel.length) { BV.toast("select robots first"); return; }
       BV.scanUI.open(sel);
     });
-    /* fix names / merge / move live INSIDE manage backups now (with the backup
-       health panels) - the selection row stays backup / hide / scan / manage */
+    selActs.appendChild(bk);
+    selActs.appendChild(hd);
+    selActs.appendChild(sc);
+    head.appendChild(selActs);
+
+    var headActs = BV.el("div", { class: "home-lib-actions" });
+    /* manage backups is NOT a selection action (its health panels + fix names /
+       merge / move / auto-link need no robots picked) — it lives with the
+       library actions so the multi-cam lens keeps it reachable (cam-mode hides
+       the selection row, and manage is also where auto-link cameras lives) */
     var mb = BV.el("button", { class: "btn lib-act-manage",
       title: "backup health (last run, retries, partial + stale backups) and robot tidy-up (fix names, merge, move)" },
       "manage backups");
     mb.addEventListener("click", function () {
       if (BV.manageUI) BV.manageUI.open();
     });
-    selActs.appendChild(bk);
-    selActs.appendChild(hd);
-    selActs.appendChild(sc);
-    selActs.appendChild(mb);
-    head.appendChild(selActs);
-
-    var headActs = BV.el("div", { class: "home-lib-actions" });
     var sortBtn = BV.el("button", { class: "btn lib-sort", title: "library sort order" },
       "sort: " + SORT_LABELS[sortMode()]);
     sortBtn.addEventListener("click", function () {
@@ -326,6 +341,7 @@
         { label: "manually", onClick: function () { editRobotModal(null, true); } },
       ]);
     });
+    headActs.appendChild(mb);
     headActs.appendChild(sortBtn);
     headActs.appendChild(cancelAll);
     headActs.appendChild(_showHiddenBtn);
@@ -392,24 +408,27 @@
   function rerenderFromCache() {
     var body = _libWrap && _libWrap.querySelector(".home-lib-body");
     if (!body || !_lastData) { refresh(); return; }
-    var anchor = scrollAnchor();
+    saveLensScroll();
     renderTree(body, _lastData);
-    restoreAnchor(anchor);
+    restoreLensScroll();
     reattachProgress();
   }
 
   /* Keeping your place across a rebuild. Rows are only laid out when they're
      on screen (content-visibility, see components.css), so the rebuilt tree's
      off-screen heights are ESTIMATES and the same scrollTop lands somewhere
-     else — measured drift of ~40 robots. Remember which robot was at the top
-     of the viewport and how far into it we were, then put that robot back
-     exactly there; the raw offset stays as the fallback. */
+     else — measured drift of ~40 robots. Remember which row was at the top
+     of the viewport and how far into it we were, then put that row back
+     exactly there; the raw offset stays as the fallback. Anchors on library
+     rows AND cam tiles, so each lens can anchor on its own kind. */
+  var ANCHOR_SEL = ".lib-robot, .cam-tile";
+
   function scrollAnchor() {
     var view = document.getElementById("view");
     if (!view || !_libWrap) return null;
-    var a = { view: view, top: view.scrollTop, id: null, inFav: false, into: 0 };
+    var a = { top: view.scrollTop, id: null, inFav: false, into: 0 };
     var vt = view.getBoundingClientRect().top;
-    var rows = _libWrap.querySelectorAll(".lib-robot");
+    var rows = _libWrap.querySelectorAll(ANCHOR_SEL);
     for (var i = 0; i < rows.length; i++) {
       var r = rows[i].getBoundingClientRect();
       if (r.bottom > vt + 2) {                  /* first row still in view */
@@ -423,12 +442,15 @@
   }
 
   function restoreAnchor(a) {
-    if (!a) return;
-    a.view.scrollTop = a.top;
+    /* anchors outlive a render now (per-lens memory) — resolve #view fresh */
+    var view = document.getElementById("view");
+    if (!a || !view) return;
+    view.scrollTop = a.top;
     if (!a.id || !_libWrap) return;
     /* the same robot can be rendered twice (pinned copy + tree copy) — match
        the side the anchor came from, or the strip would grab every restore */
-    var rows = _libWrap.querySelectorAll('.lib-robot[data-robot-id="' + a.id + '"]');
+    var rows = _libWrap.querySelectorAll(
+      '.lib-robot[data-robot-id="' + a.id + '"], .cam-tile[data-robot-id="' + a.id + '"]');
     var row = null;
     for (var i = 0; i < rows.length; i++) {
       if (!!rows[i].closest(".lib-favs") === a.inFav) { row = rows[i]; break; }
@@ -436,8 +458,34 @@
     row = row || rows[0];
     if (!row) return;
     var delta = row.getBoundingClientRect().top -
-                a.view.getBoundingClientRect().top + a.into;
-    if (delta) a.view.scrollTop += delta;
+                view.getBoundingClientRect().top + a.into;
+    if (delta) view.scrollTop += delta;
+  }
+
+  /* ---- per-lens scroll memory ----
+     A backup -> multicam flip renders a much shorter grid: the browser clamps
+     scrollTop against it, and restoring that clamped number on the way back
+     landed thousands of rows off at plant scale. Each lens keeps its OWN
+     anchor: saved for the lens the DOM is showing as a render starts,
+     restored for whichever lens the render just painted. */
+  var _lensScroll = {};     /* "backup" | "multicam" -> last scroll anchor */
+  var _renderedLens = "";   /* the lens the current body was rendered for */
+
+  function saveLensScroll() {
+    if (!_renderedLens || !_libWrap) return;
+    /* a loading/empty body has nothing to anchor — keep the last good memory
+       (e.g. a remount's first paint must not wipe the remembered place) */
+    if (!_libWrap.querySelector(ANCHOR_SEL)) return;
+    var a = scrollAnchor();
+    if (a) _lensScroll[_renderedLens] = a;
+  }
+
+  function restoreLensScroll() {
+    _renderedLens = viewMode();
+    var a = _lensScroll[_renderedLens];
+    if (a) { restoreAnchor(a); return; }
+    var view = document.getElementById("view");
+    if (view) view.scrollTop = 0;   /* first look at this lens starts at the top */
   }
 
   function updateHiddenToggle(hiddenCount) {
@@ -526,13 +574,19 @@
       _cl.sync();
       return;
     }
+    var camMode = viewMode() === "multicam";
     var hiddenCount = 0;
     var shownList = robots.filter(function (r) {
-      if (r.hidden) { hiddenCount++; return _showHidden; }
+      if (r.hidden) {
+        /* the toggle's count says what IT would reveal: the cam lens tiles
+           matrox cameras only, so hidden robots don't inflate its number */
+        if (!camMode || r.device_type === "camera-mtx") hiddenCount++;
+        return _showHidden;
+      }
       return true;
     });
     updateHiddenToggle(hiddenCount);
-    if (viewMode() === "multicam") {
+    if (camMode) {
       _visibleRobots = [];        /* the selection toolbar acts on backup rows only */
       _cl.sync();
       renderCamGrid(body, shownList);
@@ -873,8 +927,16 @@
       return r.device_type === "camera-mtx";
     });
     if (!cams.length) {
-      body.innerHTML = '<div class="empty-lib">no matrox cameras in the library yet — ' +
-        "add them with “+ add robot → discover on network”.</div>";
+      /* an empty grid must not deny cameras that are merely hidden — hidden
+         things are listed behind the toggle, never silently absent */
+      var hiddenMtx = (_robots || []).filter(function (r) {
+        return r.device_type === "camera-mtx" && r.hidden;
+      }).length;
+      body.innerHTML = hiddenMtx
+        ? '<div class="empty-lib">' + hiddenMtx + " matrox camera" +
+          (hiddenMtx === 1 ? " is" : "s are") + " hidden — use “show hidden” above.</div>"
+        : '<div class="empty-lib">no matrox cameras in the library yet — ' +
+          "add them with “+ add robot → discover on network”.</div>";
       if (_filterBox) _filterBox.setCount(undefined, 0);
       return;
     }
@@ -895,7 +957,11 @@
      no-IP entry. Clicking goes straight to remote operation. */
   function camTile(c) {
     var ip = (c.ips && c.ips[0]) || "";
-    var tile = BV.el("div", { class: "cam-tile" + (ip ? "" : " no-ip") });
+    /* a focusable button, like every clickable thing in the app (keyboard
+       map below); data-robot-id feeds the shared scroll anchor */
+    var tile = BV.el("div", { class: "cam-tile" + (ip ? "" : " no-ip"),
+      tabindex: "0", role: "button" });
+    tile.setAttribute("data-robot-id", c.id);
     var box = BV.el("div", { class: "cam-tile-box" });
     if (ip) {
       var img = BV.el("img", { class: "cam-live", alt: "" });
@@ -927,6 +993,11 @@
     tile.addEventListener("click", function () {
       if (!ip) { BV.toast("this camera has no IP on record"); return; }
       BV.openMtxRemote(ip, c.robot || ip);
+    });
+    /* Enter/Space = the click (no-IP toast included); Esc drops the focus */
+    tile.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); tile.click(); }
+      else if (e.key === "Escape") tile.blur();
     });
     return tile;
   }
@@ -968,8 +1039,7 @@
       var b = _libWrap.querySelector(".lib-act-" + k);
       if (b) b.disabled = selN === 0;
     });
-    /* manage backups stays enabled with NO selection - its backup-health side
-       (last run / partial / stale) needs no robots picked */
+    /* (manage backups sits with the library actions, never selection-gated) */
     var hd = _libWrap.querySelector(".lib-act-hide");
     if (hd) {
       /* the button says what it will DO: all-hidden selection -> unhide */

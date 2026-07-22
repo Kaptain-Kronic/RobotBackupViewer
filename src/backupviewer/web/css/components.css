@@ -976,6 +976,7 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
   overflow: hidden; cursor: pointer; transition: background var(--trans);
 }
 .cam-tile:hover { background: color-mix(in srgb, var(--sub-alt) 22%, var(--bg2)); }
+.cam-tile:focus-visible { outline: none; border-color: var(--accent); }
 .cam-tile.no-ip { opacity: 0.6; cursor: default; }
 .cam-tile-box {
   height: 150px; display: flex; align-items: center; justify-content: center;

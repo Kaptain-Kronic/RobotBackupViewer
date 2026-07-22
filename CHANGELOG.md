@@ -16,7 +16,19 @@
   in the multi-cam lens a starred robot's cameras lead their line. The star
   is a per-machine overlay flag (like hide): it survives rescans and never
   touches robot.json, so a star click can't trigger a rescan.
-- **The library screen got a field-ask batch.** Notes are a real multi-line
+- **Multi-cam lens fix batch.** "Manage backups" moved in with the library
+  actions, so it stays reachable from the multi-cam lens (it was hidden with
+  the selection row — auto-link cameras lives inside it). Each lens now keeps
+  its own scroll position, so flipping backup → multi-cam → backup lands
+  exactly where you left the tree instead of thousands of rows off. The cam
+  filter matches the "↳ robot" name printed on the tiles (the name a tech
+  actually knows) and its no-match note says cameras, not robots. An empty
+  grid distinguishes "no matrox cameras yet" from "N are hidden — show
+  hidden", and the show-hidden count in cam mode counts hidden cameras, not
+  hidden robots. Cam lines start folded (plants open, counts on the heads):
+  the first flip shows where the cameras are without fetching every line's
+  frames at once. Tiles are keyboard-reachable (Tab / Enter / Space, Esc
+  drops focus), and a stray "undefined/0" in the filter counter is fixed.
   editor, inline on the row (double-click to type where you are); edit moved
   into the row's ⋯ menu, which also opens on right-click at the mouse;
   auto-link cameras lives in manage backups now; the linked-robot picker is
