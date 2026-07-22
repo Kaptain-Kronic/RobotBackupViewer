@@ -283,3 +283,61 @@ kbd {
   border: 1px solid var(--sub-alt);
   border-bottom-width: 2px;
 }
+
+/* ---- animated background effects (bgfx.js) ----
+   Two fixed layers UNDER the app: z-index -1 paints above the root
+   background but below all in-flow content, so panels and tables mask the
+   motion for free. Colors only through the theme vars - every theme keeps
+   its own character (same color-mix trick as --edge). */
+#bgfx-canvas, #bgfx-css {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* soft accent blobs drifting; oversized so the drift never shows an edge */
+#bgfx-css.bgfx-gradient {
+  inset: -10%;
+  background:
+    radial-gradient(42% 52% at 18% 28%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 70%),
+    radial-gradient(36% 46% at 82% 64%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 70%),
+    radial-gradient(52% 62% at 58% 12%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 70%);
+  filter: blur(28px);
+  animation: bgfx-drift 24s ease-in-out infinite alternate;
+}
+@keyframes bgfx-drift {
+  from { transform: translate(-3%, -2%) scale(1.06); }
+  to   { transform: translate(3%, 2%) scale(1.18); }
+}
+
+/* a slow color wash rising from below; hue-rotate keeps it moving through
+   neighbors of the accent instead of hardcoding a palette */
+#bgfx-css.bgfx-aurora {
+  inset: -10%;
+  opacity: 0.5;
+  background: conic-gradient(from 0deg at 50% 130%,
+    color-mix(in srgb, var(--accent) 30%, var(--bg)),
+    color-mix(in srgb, var(--accent) 8%, var(--bg)),
+    color-mix(in srgb, var(--accent) 45%, var(--bg)),
+    color-mix(in srgb, var(--accent) 30%, var(--bg)));
+  filter: blur(60px) saturate(1.3);
+  animation: bgfx-hue 18s linear infinite;
+}
+@keyframes bgfx-hue {
+  to { filter: blur(60px) saturate(1.3) hue-rotate(360deg); }
+}
+
+/* the grid floor the synapse pulses ride on (canvas draws the pulses) */
+#bgfx-css.bgfx-synapse {
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--accent) 4%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 4%, transparent) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* bgfx.js renders canvas effects as a single static frame under reduced
+   motion; the CSS layers get the same treatment here */
+@media (prefers-reduced-motion: reduce) {
+  #bgfx-css { animation: none !important; }
+}

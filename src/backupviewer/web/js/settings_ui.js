@@ -48,6 +48,7 @@
       document.documentElement.style.removeProperty("--app-zoom");
       /* accent panel borders on by default; "off" flattens the UI (see base.css .no-edges) */
       document.documentElement.classList.toggle("no-edges", settings.edges === false);
+      if (BV.bgfx) BV.bgfx.apply(settings);   /* idempotent - only reacts to a changed id */
       BV.state.emit("uiprefs", settings);
     },
 
@@ -88,6 +89,16 @@
       themeWrap.appendChild(themeBtn);
       themeRow.appendChild(themeWrap);
       body.appendChild(themeRow);
+
+      var fxRow = BV.el("div", { class: "set-row" });
+      fxRow.appendChild(BV.el("span", { class: "name" }, "background"));
+      var fxWrap = BV.el("div", { class: "set-path" });
+      fxWrap.appendChild(BV.el("span", { class: "set-path-val dim" },
+        BV.esc(BV.bgfx ? BV.bgfx.activeName() : "off")));
+      var fxBtn = BV.el("button", { class: "btn" }, "choose…");
+      fxWrap.appendChild(fxBtn);
+      fxRow.appendChild(fxWrap);
+      body.appendChild(fxRow);
 
       segRow("font", FONT_OPTIONS.map(function (o) { return o.id; }),
         s.font_family || DEFAULT_FONT_FAMILY,
@@ -174,6 +185,10 @@
       themeBtn.addEventListener("click", function () {
         m.close();               /* the picker owns #modal-root next */
         BV.theme.picker();
+      });
+      fxBtn.addEventListener("click", function () {
+        m.close();
+        BV.bgfx.picker();
       });
     },
   };
