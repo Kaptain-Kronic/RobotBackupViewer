@@ -1,12 +1,17 @@
 """Fleet health scan tests - fully synthetic (no SampleBackup needed): a
 FakeSession feeds the checks parser-validated file texts, and the job runs
 over fake robots with an injected session factory + search fn."""
+import os
+from datetime import datetime
+
 from backupviewer import healthscan
 from backupviewer.healthscan import (
     HealthScanJob, _RobotData, _check_adv_dcs, _check_battery,
-    _check_broken_calls, _check_cip, _check_mastering, _check_payload,
-    _check_sigs, _check_style_broken, _check_style_orphans, _check_sw_version,
-    norm_queries,
+    _check_broken_calls, _check_cip, _check_clock, _check_mastering,
+    _check_override, _check_payload, _check_remarked_logic,
+    _check_remarked_positions, _check_sigs, _check_style_broken,
+    _check_style_orphans, _check_sw_version, _check_uninit_points,
+    _check_uninit_prs, _parse_tolerance, norm_queries,
 )
 
 # -- fixture texts (formats validated against the real parsers) -------------------
@@ -149,20 +154,131 @@ SYMOTN_SET = """[*SYSTEM*]$PLST_GRP1  Storage: CMOS  Access: RW  : ARRAY[10] OF 
 SYMOTN_MASS_ONLY = SYMOTN_SET.replace("'EOAT'", "''").replace("REAL = 1.2", "REAL = 0") \
                              .replace("REAL = 8.4", "REAL = 0")
 
+# -- positions / remarks / config fixtures (shapes mirror the real listings) -------
+
+# a taught P[1], an untaught P[2], a REMARKED ref (never counts), a comment
+# mention (never counts), an indirect P[R[..]] (counted, not resolved), and a
+# circular whose SECOND point rides an unnumbered continuation line
+LS_POINTS = """/PROG TESTPTS
+/ATTR
+COMMENT\t\t= "POINTS";
+/MN
+   1:J P[1] 100% FINE ;
+   2:L P[2] 500mm/sec CNT50 ;
+   3:  //J P[3] 50% FINE ;
+   4:  !move P[9] later ;
+   5:L P[R[4]] 200mm/sec FINE ;
+   6:C P[1]
+    :  P[4] 300mm/sec FINE ;
+/POS
+P[1]{
+   GP1:
+    UF : 0, UT : 1,  CONFIG : 'N U T, 0, 0, 0',
+    X = 100.0 mm, Y = 200.0 mm, Z = 300.0 mm,
+    W = 0.0 deg, P = 10.0 deg, R = 0.0 deg
+};
+/END
+"""
+
+LS_POINTS_OK = """/PROG CLEANPTS
+/MN
+   1:J P[1] 100% FINE ;
+/POS
+P[1]{
+   GP1:
+    UF : 0, UT : 1,  CONFIG : 'N U T, 0, 0, 0',
+    X = 1.0 mm, Y = 2.0 mm, Z = 3.0 mm,
+    W = 0.0 deg, P = 0.0 deg, R = 0.0 deg
+};
+/END
+"""
+
+# remarked LOGIC only (CALL / assignment) - the motion check must stay quiet
+LS_LOGIC = """/PROG LOGICP
+/MN
+   1:  //CALL GET_HOME ;
+   2:  //UTOOL_NUM=1 ;
+   3:J P[1] 100% FINE ;
+/POS
+P[1]{
+   GP1:
+    UF : 0, UT : 1,  CONFIG : 'N U T, 0, 0, 0',
+    X = 1.0 mm, Y = 2.0 mm, Z = 3.0 mm,
+    W = 0.0 deg, P = 0.0 deg, R = 0.0 deg
+};
+/END
+"""
+
+# PR reads: PR[1] initialized, PR[7] read as an offset, PR[2,1] element read;
+# a comment + a remarked line that must NOT count, and an indirect PR[R[..]]
+LS_PR = """/PROG PRMOVE
+/MN
+   1:J PR[1:Home] 100% FINE ;
+   2:L P[1] 100mm/sec FINE Offset,PR[7] ;
+   3:  !uses PR[2] someday ;
+   4:  //J PR[2] 100% FINE ;
+   5:R[3]=PR[2,1] ;
+   6:J PR[R[10]] 100% FINE ;
+/POS
+P[1]{
+   GP1:
+    UF : 0, UT : 1,  CONFIG : 'N U T, 0, 0, 0',
+    X = 1.0 mm, Y = 2.0 mm, Z = 3.0 mm,
+    W = 0.0 deg, P = 0.0 deg, R = 0.0 deg
+};
+/END
+"""
+
+# writes both uninitialized PRs the reader touches (write targets never count
+# as reads; their presence demotes the reader's flag to info)
+LS_PR_INIT = """/PROG INITPR
+/MN
+   1:PR[2]=LPOS ;
+   2:PR[7]=JPOS ;
+/END
+"""
+
+# format mirrored from a real POSREG.VA: one taught entry, uninitialized rest
+POSREG_MIX = """[*POSREG*]$POSREG  Storage: SHADOW  Access: RW  : ARRAY[1,200] OF Position Reg
+    [1,1] =   'Home'   Group: 1
+  J1 =     9.998 deg   J2 =   -45.000 deg   J3 =    30.000 deg
+  J4 =    24.998 deg   J5 =   -90.000 deg   J6 =   -90.000 deg
+
+    [1,2] =   'Home2' Uninitialized
+    [1,7] =   'Spare' Uninitialized
+"""
+
+# the VA "Field:" line SYCLDINT.VA prints (plus a string-reference trap that
+# must never match - $CONDET stores the NAME of the variable, not its value)
+SYCLDINT_100 = """   Field: $MCR.$OT_RELEASE Access: RW: BOOLEAN = FALSE
+   Field: $MCR.$GENOVERRIDE Access: RW: INTEGER = 100
+   Field: $MCR.$FLTR_DEBUG Access: RW: INTEGER = 0
+"""
+SYCLDINT_55 = SYCLDINT_100.replace("INTEGER = 100", "INTEGER = 55")
+SYCLDINT_TRAP = ("       Field: $CONDET_CFG.$EXT_DATA[5].$VAR_NAME Access: RW:"
+                 " STRING[41] = '$MCR.$GENOVERRIDE'\n")
+
+BACKDATE = "26/06/11 08:55:56\n\nVersion:  V8.33P/16/None\n"
+SUMMARY_CLOCK = "F Number: F999999\nDATE:     11-JUN-26 08:56 \n\nSUMMARY::\n"
+
 
 class FakeSession:
-    def __init__(self, files: dict, program_files=(), alarm_files=(), karel=()):
+    def __init__(self, files: dict, program_files=(), alarm_files=(), karel=(),
+                 paths=None):
         self._files = {k.upper(): v for k, v in files.items()}
         self.program_files = list(program_files)
         self._alarm_files = list(alarm_files)
         self.karel_programs = {k.upper(): {} for k in karel}
+        self._paths = {k.upper(): v for k, v in (paths or {}).items()}
         self._cache: dict = {}
 
     def text(self, name):
         return self._files.get(name.upper())
 
     def find(self, name):
-        return name.upper() in self._files
+        # the real session returns a Path; tests that need one (clock mtime)
+        # pass it via `paths` — everyone else keeps the truthy-presence shape
+        return self._paths.get(name.upper()) or (name.upper() in self._files)
 
     def alarm_files(self):
         return self._alarm_files
@@ -188,7 +304,9 @@ def test_registry_and_valid_ids():
     assert ids == ["adv_dcs", "sig_mismatch", "cip_safety",
                    "mastering", "cloned_mastering", "battery_alarm",
                    "style_broken", "style_orphans", "broken_calls",
-                   "software_version", "payload_unset"]
+                   "remarked_positions", "remarked_logic",
+                   "uninit_points", "uninit_prs",
+                   "software_version", "payload_unset", "override_low", "clock_drift"]
     assert all(c["label"] and c["desc"] and c["category"] for c in healthscan.check_list())
     # categories group contiguously in registry order (the picker renders them as-is)
     cats = [c["category"] for c in healthscan.check_list()]
@@ -196,8 +314,12 @@ def test_registry_and_valid_ids():
     for c in cats:
         if c not in seen:
             seen.append(c)
-    assert seen == ["safety", "mastering", "programs", "config"]
+    assert seen == ["safety", "mastering", "programs", "positions", "config"]
     assert cats == sorted(cats, key=seen.index)
+    # the parameterized check declares its input for the picker (and only it)
+    by_id = {c["id"]: c for c in healthscan.check_list()}
+    assert by_id["clock_drift"]["input"]["default"] == "2m"
+    assert [c["id"] for c in healthscan.check_list() if c.get("input")] == ["clock_drift"]
     # de-dupes, drops unknowns, returns registry order regardless of input order
     assert healthscan.valid_ids(["mastering", "adv_dcs", "nope", "adv_dcs"]) == \
         ["adv_dcs", "mastering"]
@@ -531,3 +653,167 @@ def test_multi_query_find(tmp_path):
     rows_dead = by_robot["RB103R01B01"]["checks"]
     assert {c["id"] for c in rows_dead} == {"find:0", "find:1"}
     assert all(c["status"] == "na" for c in rows_dead)
+
+
+# -- positions / remarks / config checks --------------------------------------------
+
+def _lsfile(tmp_path, name, text):
+    p = tmp_path / (name + ".LS")
+    p.write_text(text, encoding="utf-8")
+    return p
+
+
+def test_remarked_positions_and_logic(tmp_path):
+    progs = [_lsfile(tmp_path, "TESTPTS", LS_POINTS),
+             _lsfile(tmp_path, "LOGICP", LS_LOGIC)]
+    ctx = _RobotData(FakeSession({}, program_files=progs))
+
+    pos = _check_remarked_positions(ctx)
+    assert pos["status"] == "flag"
+    assert "1 remarked motion line" in pos["summary"]
+    assert "TESTPTS line 3: //J P[3] 50% FINE" in pos["detail"]
+    assert "LOGICP" not in pos["detail"]          # logic remarks are the other check's
+
+    logic = _check_remarked_logic(ctx)
+    assert logic["status"] == "info"               # often a deliberate standard - never red
+    assert "2 remarked logic lines" in logic["summary"]
+    assert "//CALL GET_HOME" in logic["detail"]
+    assert "//UTOOL_NUM=1" in logic["detail"]
+    assert "TESTPTS" not in logic["detail"]        # the motion remark stays out
+
+    clean = _RobotData(FakeSession({}, program_files=[
+        _lsfile(tmp_path, "CLEANPTS", LS_POINTS_OK)]))
+    assert _check_remarked_positions(clean)["status"] == "ok"
+    assert _check_remarked_logic(clean)["status"] == "ok"
+    assert _check_remarked_positions(_RobotData(FakeSession({})))["status"] == "na"
+
+
+def test_uninit_points(tmp_path):
+    ctx = _RobotData(FakeSession({}, program_files=[
+        _lsfile(tmp_path, "TESTPTS", LS_POINTS)]))
+    row = _check_uninit_points(ctx)
+    assert row["status"] == "flag"
+    assert "2 referenced positions with no recorded data" in row["summary"]
+    assert "P[2] (line 2)" in row["detail"]
+    assert "P[4] (line 6)" in row["detail"]        # the circular's CONTINUATION point
+    assert "P[3]" not in row["detail"]             # remarked ref never counts
+    assert "P[9]" not in row["detail"]             # comment mention never counts
+    assert "1 indirect P[R[..]] ref not checkable" in row["detail"]
+
+    ok = _check_uninit_points(_RobotData(FakeSession({}, program_files=[
+        _lsfile(tmp_path, "CLEANPTS", LS_POINTS_OK)])))
+    assert ok["status"] == "ok"
+    assert _check_uninit_points(_RobotData(FakeSession({})))["status"] == "na"
+
+
+def test_uninit_prs(tmp_path):
+    reader = [_lsfile(tmp_path, "PRMOVE", LS_PR)]
+    ctx = _RobotData(FakeSession({"POSREG.VA": POSREG_MIX}, program_files=reader))
+    row = _check_uninit_prs(ctx)
+    assert row["status"] == "flag"                 # nothing writes PR[2]/PR[7]
+    assert "read 2 uninitialized PRs" in row["summary"]
+    assert "PR[2] 'Home2'" in row["detail"] and "PR[7] 'Spare'" in row["detail"]
+    assert "PRMOVE" in row["detail"]
+    assert "1 indirect/group-prefixed PR ref not checkable" in row["detail"]
+
+    # a writer somewhere demotes the read to info - it may be set at runtime
+    both = _RobotData(FakeSession({"POSREG.VA": POSREG_MIX}, program_files=[
+        _lsfile(tmp_path, "PRMOVE2", LS_PR.replace("PRMOVE", "PRMOVE2")),
+        _lsfile(tmp_path, "INITPR", LS_PR_INIT)]))
+    demoted = _check_uninit_prs(both)
+    assert demoted["status"] == "info"
+    assert "written by some program" in demoted["summary"]
+    assert "written by INITPR" in demoted["detail"]
+
+    # writes alone are not reads
+    writer_only = _RobotData(FakeSession({"POSREG.VA": POSREG_MIX}, program_files=[
+        _lsfile(tmp_path, "INITPR2", LS_PR_INIT.replace("INITPR", "INITPR2"))]))
+    quiet = _check_uninit_prs(writer_only)
+    assert quiet["status"] == "ok"
+    assert "none read" in quiet["summary"]
+
+    assert _check_uninit_prs(_RobotData(FakeSession({})))["status"] == "na"
+    noprogs = _check_uninit_prs(_RobotData(FakeSession({"POSREG.VA": POSREG_MIX})))
+    assert noprogs["status"] == "na"
+
+
+def test_override():
+    ok = _check_override(_RobotData(FakeSession({"SYCLDINT.VA": SYCLDINT_100})))
+    assert ok["status"] == "ok" and ok["summary"] == "100%"
+    low = _check_override(_RobotData(FakeSession({"SYCLDINT.VA": SYCLDINT_55})))
+    assert low["status"] == "flag"
+    assert "general override at 55%" in low["summary"]
+    # the $CONDET string that merely NAMES the variable must never match
+    trap = _check_override(_RobotData(FakeSession({"SYCLDINT.VA": SYCLDINT_TRAP})))
+    assert trap["status"] == "na"
+    assert _check_override(_RobotData(FakeSession({})))["status"] == "na"
+
+
+def test_parse_tolerance():
+    assert _parse_tolerance("30s") == (30, True)
+    assert _parse_tolerance("2m") == (120, True)
+    assert _parse_tolerance("1m30s") == (90, True)
+    assert _parse_tolerance("1h") == (3600, True)
+    assert _parse_tolerance("5") == (300, True)        # bare number reads as minutes
+    assert _parse_tolerance("") == (120, False)        # blank -> default, says so
+    assert _parse_tolerance("junk") == (120, False)
+    assert _parse_tolerance(None) == (120, False)
+
+
+def _clock_session(tmp_path, name, content, controller_dt, offset_s):
+    """A session whose file mtime sits offset_s seconds BEFORE the controller
+    stamp inside it - i.e. the controller runs offset_s ahead of the PC."""
+    p = tmp_path / name
+    p.write_text(content, encoding="utf-8")
+    t = controller_dt.timestamp() - offset_s
+    os.utime(p, (t, t))
+    return FakeSession({name: content}, paths={name: p})
+
+
+def test_clock_drift(tmp_path):
+    ctrl = datetime(2026, 6, 11, 8, 55, 56)        # the stamp inside BACKDATE
+
+    within = _check_clock(_RobotData(
+        _clock_session(tmp_path, "BACKDATE.DT", BACKDATE, ctrl, 52)))
+    assert within["status"] == "ok"                # +52s inside the 2m default
+    assert "drift +52s" in within["summary"] and "2m (default)" in within["summary"]
+    assert "BACKDATE.DT" in within["detail"]
+
+    over = _check_clock(_RobotData(
+        _clock_session(tmp_path, "BACKDATE.DT", BACKDATE, ctrl, 52)), "30s")
+    assert over["status"] == "flag"                # same drift, tighter tolerance
+    assert "off by +52s" in over["summary"] and "allowed 30s" in over["summary"]
+
+    behind = _check_clock(_RobotData(
+        _clock_session(tmp_path, "BACKDATE.DT", BACKDATE, ctrl, -400)), "5m")
+    assert behind["status"] == "flag"
+    assert "off by -6m40s" in behind["summary"]
+
+    # no BACKDATE.DT: the DG head carries the stamp at minute resolution
+    dg = _check_clock(_RobotData(_clock_session(
+        tmp_path, "SUMMARY.DG", SUMMARY_CLOCK, datetime(2026, 6, 11, 8, 56, 0), 30)))
+    assert dg["status"] == "ok"
+    assert "minute-resolution" in dg["detail"]
+
+    # a session that can't hand back a real path (no mtime) stays honest
+    assert _check_clock(_RobotData(FakeSession({"BACKDATE.DT": BACKDATE})))["status"] == "na"
+    assert _check_clock(_RobotData(FakeSession({})))["status"] == "na"
+
+
+def test_job_param_passthrough(tmp_path):
+    r1 = _entry(tmp_path, "RB101R01B01")
+    ctrl = datetime(2026, 6, 11, 8, 55, 56)
+    sess = _clock_session(tmp_path, "BACKDATE.DT", BACKDATE, ctrl, 52)
+
+    tight = HealthScanJob([r1], ["clock_drift"], params={"clock_drift": "30s"},
+                          session_factory=lambda p: sess)
+    tight.run()
+    row = next(c for c in tight.snapshot()["results"][0]["checks"]
+               if c["id"] == "clock_drift")
+    assert row["status"] == "flag" and "allowed 30s" in row["summary"]
+
+    default = HealthScanJob([r1], ["clock_drift"], session_factory=lambda p: sess)
+    default.run()
+    row = next(c for c in default.snapshot()["results"][0]["checks"]
+               if c["id"] == "clock_drift")
+    assert row["status"] == "ok" and "2m (default)" in row["summary"]

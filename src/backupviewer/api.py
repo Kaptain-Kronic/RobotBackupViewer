@@ -2380,10 +2380,11 @@ class Api:
         return healthscan.check_list()
 
     @_endpoint
-    def health_scan_start(self, robot_ids: list, checks: list, queries=None):
+    def health_scan_start(self, robot_ids: list, checks: list, queries=None, params=None):
         """Run selected checks (and/or free-text finds - a list of queries, each
         its own report section) across the given library robots on a worker
-        thread; poll via scan_progress, stop via cancel_scan."""
+        thread; poll via scan_progress, stop via cancel_scan. params carries
+        per-check inputs ({check_id: string}, e.g. the clock-drift tolerance)."""
         by_id = {e.get("id"): e for e in library.load()["robots"]}
         entries = [by_id[r] for r in (robot_ids or []) if r in by_id]
         if not entries:
@@ -2392,7 +2393,9 @@ class Api:
         qs = healthscan.norm_queries(queries)
         if not ids and not qs:
             raise ApiError("BAD_SPEC", "pick at least one check or a find query")
-        job = healthscan.HealthScanJob(entries, ids, qs, search_fn=self._search_session)
+        job = healthscan.HealthScanJob(entries, ids, qs,
+                                       params if isinstance(params, dict) else None,
+                                       search_fn=self._search_session)
         self._scans[job.id] = job
         threading.Thread(target=job.run, name="healthscan-" + job.id, daemon=True).start()
         return {"job_id": job.id, "total": len(entries)}
