@@ -1,15 +1,26 @@
 # Changelog
 
 ## Unreleased
+- **CV-X remote view: the patchy image glitching is fixed.** The live
+  mirror was appending every video message body into the frame whole, so
+  each chunk's 40-byte protocol sub-header landed inside the JPEG's
+  entropy-coded scan data — where every stray byte decodes as garbage until
+  the next restart marker. Frames are now assembled from exactly the
+  video-data bytes (sub-headers stripped, control messages excluded) and
+  come out byte-identical to what the controller sent.
 - **Multi-cam: watch the line's cameras live from the home screen.** A
   backup ↔ multi-cam toggle in the library head re-renders the same
   plant/line folders as a grid of live Matrox tiles — each shows the
-  camera's current HMI frame (refreshed every 2 s; folded-away tiles and a
-  hidden window don't fetch), and clicking one goes straight into remote
-  operation (the MTX web-UI overlay). CV-X cameras aren't tiled — they have
-  no live frame to show; their screen mirror stays on the robot's photos
-  tab. A camera that stops answering says so on its tile and comes back on
-  its own; the lens choice persists across launches.
+  camera's current HMI frame, refreshed only while actually on screen:
+  folded lines, tiles scrolled away, a hidden window, and any open modal or
+  remote session don't fetch, new loads are capped per beat, and a tile
+  waits for its last load to finish before asking again (a slow camera gets
+  to answer instead of being aborted mid-frame). Clicking one goes straight
+  into remote operation (the MTX web-UI overlay). CV-X cameras aren't
+  tiled — they have no live frame to show; their screen mirror stays on the
+  robot's photos tab. A camera that stops answering — or never answers —
+  says so on its tile, decays to a slow retry instead of hammering a dead
+  IP, and comes back on its own; the lens choice persists across launches.
 - **Favorite stars.** Star a robot and it pins — nested cameras in tow — into
   a ★ favorites strip above the plant tree, as full rows (checkbox included,
   so star-select-backup works straight from the strip). Toggling is instant;
