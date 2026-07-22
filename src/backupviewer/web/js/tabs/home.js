@@ -143,10 +143,9 @@
       /* repaint IN PLACE: the old tree stays on screen until the new one is
          built, and the scroll position survives — refreshes (post-action or
          watcher-triggered) stop flashing and jumping back to the top */
-      var scroller = document.getElementById("view");
-      var keep = scroller ? scroller.scrollTop : 0;
+      var anchor = scrollAnchor();
       renderTree(body, data);
-      if (scroller) scroller.scrollTop = keep;
+      restoreAnchor(anchor);
       reattachProgress();   /* repaint any backups already running */
       if (data && data.scan_truncated && !_warnedTruncated) {
         _warnedTruncated = true;
@@ -338,11 +337,52 @@
   function rerenderFromCache() {
     var body = _libWrap && _libWrap.querySelector(".home-lib-body");
     if (!body || !_lastData) { refresh(); return; }
-    var scroller = document.getElementById("view");
-    var keep = scroller ? scroller.scrollTop : 0;
+    var anchor = scrollAnchor();
     renderTree(body, _lastData);
-    if (scroller) scroller.scrollTop = keep;
+    restoreAnchor(anchor);
     reattachProgress();
+  }
+
+  /* Keeping your place across a rebuild. Rows are only laid out when they're
+     on screen (content-visibility, see components.css), so the rebuilt tree's
+     off-screen heights are ESTIMATES and the same scrollTop lands somewhere
+     else — measured drift of ~40 robots. Remember which robot was at the top
+     of the viewport and how far into it we were, then put that robot back
+     exactly there; the raw offset stays as the fallback. */
+  function scrollAnchor() {
+    var view = document.getElementById("view");
+    if (!view || !_libWrap) return null;
+    var a = { view: view, top: view.scrollTop, id: null, inFav: false, into: 0 };
+    var vt = view.getBoundingClientRect().top;
+    var rows = _libWrap.querySelectorAll(".lib-robot");
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i].getBoundingClientRect();
+      if (r.bottom > vt + 2) {                  /* first row still in view */
+        a.id = rows[i].getAttribute("data-robot-id");
+        a.inFav = !!rows[i].closest(".lib-favs");
+        a.into = vt - r.top;                    /* how far we were into it */
+        break;
+      }
+    }
+    return a;
+  }
+
+  function restoreAnchor(a) {
+    if (!a) return;
+    a.view.scrollTop = a.top;
+    if (!a.id || !_libWrap) return;
+    /* the same robot can be rendered twice (pinned copy + tree copy) — match
+       the side the anchor came from, or the strip would grab every restore */
+    var rows = _libWrap.querySelectorAll('.lib-robot[data-robot-id="' + a.id + '"]');
+    var row = null;
+    for (var i = 0; i < rows.length; i++) {
+      if (!!rows[i].closest(".lib-favs") === a.inFav) { row = rows[i]; break; }
+    }
+    row = row || rows[0];
+    if (!row) return;
+    var delta = row.getBoundingClientRect().top -
+                a.view.getBoundingClientRect().top + a.into;
+    if (delta) a.view.scrollTop += delta;
   }
 
   function updateHiddenToggle(hiddenCount) {

@@ -29,15 +29,29 @@
 
     function setOne(key, on) { if (on) sel[key] = true; else delete sel[key]; }
 
-    /* the rows as the user SEES them: render order, skipping anything hidden
-       (collapsed group, filtered out, or detached by a re-render). A key with
-       several visible copies ranges from its FIRST bound copy's position, so
-       shift+click stays coherent within the list actually being clicked. */
+    /* Is this row on the screen the user is ranging over? "Hidden" means a
+       collapsed group, a filtered-out row, or a node detached by a re-render —
+       NOT merely scrolled out of view.
+
+       checkVisibility() answers exactly that, and it is the only affordable
+       way to ask: reading offsetParent inside a `content-visibility: auto`
+       subtree (the library rows) forces the browser to lay that row out, so
+       asking 2400 rows cost 42 SECONDS of frozen UI on a plant-scale tree.
+       checkVisibility() needs no layout, and by default does not count
+       content-visibility-skipped content as invisible — which is what we
+       want. offsetParent stays as the fallback for older runtimes. */
+    function shown(cb) {
+      return cb.checkVisibility ? cb.checkVisibility() : cb.offsetParent !== null;
+    }
+
+    /* the rows as the user SEES them: render order, skipping anything hidden.
+       A key with several visible copies ranges from its FIRST bound copy's
+       position, so shift+click stays coherent within the list being clicked. */
     function visibleKeys() {
       var vis = [], seen = {};
       Object.keys(items).forEach(function (k) {
         items[k].forEach(function (c) {
-          if (c.cb.offsetParent !== null) vis.push({ k: k, seq: c.seq });
+          if (shown(c.cb)) vis.push({ k: k, seq: c.seq });
         });
       });
       vis.sort(function (a, b) { return a.seq - b.seq; });

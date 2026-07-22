@@ -998,6 +998,18 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
   background: var(--bg2); border: 1px solid var(--edge); border-radius: var(--radius);
   padding: 0.5rem 0.6rem 0.5rem 0.7rem; margin: 0 0 0.35rem 0.6rem; cursor: pointer;
   transition: background var(--trans);
+  /* Only rows on screen get laid out. A plant library is thousands of rows,
+     and without this EVERY layout anywhere in the tree re-flows all of them:
+     measured on a 2400-row tree, one keystroke in a note cost 174ms, opening
+     the note editor 120ms, a star toggle 814ms. Skipping off-screen rows puts
+     those at 0 / 0.2 / 199. (Restoring scroll by pixel drifts once heights are
+     estimated - the rebuild paths anchor on the top robot instead.)
+     The plain intrinsic size comes FIRST as the fallback: on a runtime without
+     the `auto` keyword the second declaration is dropped, and an unparsed one
+     would collapse every off-screen row to zero height. */
+  content-visibility: auto;
+  contain-intrinsic-size: 46px;
+  contain-intrinsic-size: auto 46px;
 }
 .lib-robot:hover { background: color-mix(in srgb, var(--sub-alt) 22%, var(--bg2)); }
 .lib-robot.stale { opacity: 0.6; }
