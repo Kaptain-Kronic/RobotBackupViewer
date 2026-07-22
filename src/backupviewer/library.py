@@ -98,6 +98,7 @@ def _normalize(entry: dict) -> dict:
     e.setdefault("history_root", "")
     e.setdefault("last_backup", "")
     e["hidden"] = bool(e.get("hidden", False))
+    e["favorite"] = bool(e.get("favorite", False))
     backups = e.get("backups")
     e["backups"] = backups if isinstance(backups, list) else []
     aliases = e.get("aliases")
@@ -203,7 +204,11 @@ def bulk_add(entries: list, plant: str = "", line: str = "") -> dict:
     return {"added": added, "skipped": skipped}
 
 
-def update_robot(robot_id: str, patch: dict) -> dict | None:
+def update_robot(robot_id: str, patch: dict, *, sidecar: bool = True) -> dict | None:
+    """sidecar=False skips the robot.json rewrite — for overlay-only flags
+    (hidden/favorite) that the sidecar doesn't carry anyway. Touching the
+    sidecar bumps the folder tree, which trips the library watcher and makes
+    the NEXT lib_list a full rescan — seconds of churn for a per-machine bit."""
     with _LOCK:
         data = load()
         for e in data["robots"]:
@@ -223,7 +228,8 @@ def update_robot(robot_id: str, patch: dict) -> dict | None:
                 _normalize(e)  # re-shape in place in case ips/ftp changed type
                 _reconcile(data)
                 _write(data)
-                _persist_sidecar(e)
+                if sidecar:
+                    _persist_sidecar(e)
                 return e
         return None
 
@@ -248,8 +254,16 @@ def get_robot(robot_id: str) -> dict | None:
 
 def set_hidden(robot_id: str, hidden: bool) -> dict | None:
     """Toggle a robot's hidden flag (an overlay-only, per-machine preference the
-    folder scan preserves - the everyday alternative to deleting)."""
-    return update_robot(robot_id, {"hidden": bool(hidden)})
+    folder scan preserves - the everyday alternative to deleting). sidecar=False:
+    the flag isn't in robot.json, and rewriting it would dirty the tree."""
+    return update_robot(robot_id, {"hidden": bool(hidden)}, sidecar=False)
+
+
+def set_favorite(robot_id: str, favorite: bool) -> dict | None:
+    """Toggle a robot's favorite flag (overlay-only, like hidden): favorites are
+    pinned in a section at the top of the library view. sidecar=False so a star
+    click can't dirty the tree and trigger a full rescan."""
+    return update_robot(robot_id, {"favorite": bool(favorite)}, sidecar=False)
 
 
 # -- camera <-> robot linking ----------------------------------------------------

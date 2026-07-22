@@ -9,9 +9,11 @@
      - a group box (select-all) is an honest tri-state: from empty it selects
        all, but ANY existing selection makes a click CLEAR — the "minus" state
        reads as "click to reset", never "click to select the rest"
-   The controller owns selection STATE; callers own the DOM. Binding a key
-   that is already bound replaces the old checkbox, so re-renders just re-bind
-   and selection survives refreshes for free. */
+   The controller owns selection STATE; callers own the DOM. A key can be
+   bound to SEVERAL checkboxes at once (the library renders a favorited robot
+   in the pinned strip AND in its plant tree) — every attached copy repaints
+   together, and detached copies are pruned on re-bind, so re-renders just
+   re-bind and selection survives refreshes for free. */
 (function () {
   "use strict";
 
@@ -21,22 +23,35 @@
     opts = opts || {};
     var sel = {};        /* selected keys (object used as a Set) */
     var anchor = null;   /* shift+click range anchor: the last-clicked KEY */
-    var items = {};      /* key -> {cb, seq}; seq preserves render order across re-binds */
+    var items = {};      /* key -> [{cb, seq}, …] bound copies, in bind order */
     var groups = {};     /* gkey -> {cb, keys()} select-all boxes */
     var seq = 0;
 
     function setOne(key, on) { if (on) sel[key] = true; else delete sel[key]; }
 
     /* the rows as the user SEES them: render order, skipping anything hidden
-       (collapsed group, filtered out, or detached by a re-render) */
+       (collapsed group, filtered out, or detached by a re-render). A key with
+       several visible copies ranges from its FIRST bound copy's position, so
+       shift+click stays coherent within the list actually being clicked. */
     function visibleKeys() {
-      return Object.keys(items)
-        .filter(function (k) { return items[k].cb.offsetParent !== null; })
-        .sort(function (a, b) { return items[a].seq - items[b].seq; });
+      var vis = [], seen = {};
+      Object.keys(items).forEach(function (k) {
+        items[k].forEach(function (c) {
+          if (c.cb.offsetParent !== null) vis.push({ k: k, seq: c.seq });
+        });
+      });
+      vis.sort(function (a, b) { return a.seq - b.seq; });
+      return vis.filter(function (e) {
+        if (seen[e.k]) return false;
+        seen[e.k] = true;
+        return true;
+      }).map(function (e) { return e.k; });
     }
 
     function sync() {
-      Object.keys(items).forEach(function (k) { items[k].cb.checked = !!sel[k]; });
+      Object.keys(items).forEach(function (k) {
+        items[k].forEach(function (c) { c.cb.checked = !!sel[k]; });
+      });
       Object.keys(groups).forEach(function (gk) {
         var g = groups[gk];
         var keys = g.keys() || [];
@@ -50,7 +65,13 @@
     var api = {
       /* wire a row checkbox to a key. Returns the checkbox for chaining. */
       bind: function (cb, key) {
-        items[key] = { cb: cb, seq: seq++ };
+        /* drop copies a re-render detached; keep every live one — the same
+           key may legitimately render in two places at once */
+        var copies = (items[key] || []).filter(function (c) {
+          return document.contains(c.cb);
+        });
+        copies.push({ cb: cb, seq: seq++ });
+        items[key] = copies;
         if (!cb.title) cb.title = "select (shift+click selects a range)";
         cb.checked = !!sel[key];
         cb.addEventListener("click", function (e) {

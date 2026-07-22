@@ -409,6 +409,29 @@ def test_set_hidden_survives_rescan(monkeypatch, tmp_path):
     assert data["robots"][0]["hidden"] is True
 
 
+def test_set_favorite_survives_rescan(monkeypatch, tmp_path):
+    """favorite mirrors hidden: overlay-only, preserved across a rescan, and
+    NEVER written into the tree — a star click must not touch robot.json
+    (that write dirties the tree and turns the next lib_list into a rescan)."""
+    _iso(monkeypatch, tmp_path)
+    root = tmp_path / "lib"
+    _make_robot(root, "P", "L", "R1", [("2026_01_01", "12_00_00", 1_600_000_000)], rid="rid-1")
+    library.scan_library_root(root)
+    e = library.list_robots()["robots"][0]
+    assert e["favorite"] is False                   # normalized default
+
+    sidecar = root / "P" / "L" / "R1" / "robot.json"
+    before = sidecar.read_text(encoding="utf-8")
+    library.set_favorite(e["id"], True)
+    assert sidecar.read_text(encoding="utf-8") == before   # tree untouched
+    assert library.get_robot(e["id"])["favorite"] is True
+    data = library.scan_library_root(root)          # rescan keeps the overlay flag
+    assert data["robots"][0]["favorite"] is True
+
+    library.set_favorite(e["id"], False)
+    assert library.get_robot(e["id"])["favorite"] is False
+
+
 def test_lib_open_augments_with_history(monkeypatch, tmp_path):
     from backupviewer.api import Api
     _iso(monkeypatch, tmp_path)

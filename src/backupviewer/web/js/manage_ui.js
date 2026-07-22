@@ -81,6 +81,17 @@
           sel.length !== 2, function () { BV.libActions.merge(); });
         tidyBtn("move to…", "move the selected robots (and their backups) to another plant/line",
           !sel.length, function () { BV.libActions.moveTo(); });
+        /* library-wide (no selection): pair cameras with their robot by name */
+        var lk = BV.el("button", { class: "btn mb-link-cams",
+          title: "auto-link cameras to the robot they inspect (by name) — whole library, no selection needed" },
+          "link cameras");
+        lk.addEventListener("click", function () {
+          lk.disabled = true;
+          BV.libActions.autoLink()
+            .catch(function (e) { BV.toast(e.message); })
+            .finally(function () { lk.disabled = false; });
+        });
+        bar.appendChild(lk);
         host.appendChild(bar);
 
         /* ---- partial backups: a slim full-width strip - one quiet line when

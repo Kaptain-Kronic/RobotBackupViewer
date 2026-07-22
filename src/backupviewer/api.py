@@ -1833,6 +1833,15 @@ class Api:
             raise ApiError("NOT_FOUND", "robot not in library")
         return e
 
+    @_endpoint
+    def lib_set_favorite(self, robot_id: str, favorite: bool = True):
+        """Star/unstar a robot (overlay-only, survives a rescan like hidden).
+        Favorites render pinned in a section at the top of the library."""
+        e = library.set_favorite(robot_id, favorite)
+        if e is None:
+            raise ApiError("NOT_FOUND", "robot not in library")
+        return e
+
     # (lib_delete_files, lib_scan_folder, and lib_add_from_session were removed
     # with the v0.98 files-are-law pivot: the app never deletes backup data, and
     # backups join the library by being COPIED into the library folder - the

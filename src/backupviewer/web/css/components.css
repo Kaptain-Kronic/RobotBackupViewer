@@ -1033,6 +1033,29 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .lib-robot-more { font-weight: 700; line-height: 1; }
 .lib-robot.hidden-robot { opacity: 0.5; }
 
+/* favorite star: sits by the checkbox (both are "act on this row" controls) —
+   quiet outline until pinned, then accent */
+.lib-robot .lib-fav {
+  flex: none; appearance: none; background: none; border: none; cursor: pointer;
+  font: inherit; font-size: 0.95rem; line-height: 1; padding: 0 0.1rem;
+  color: var(--sub); opacity: 0.55; transition: opacity var(--trans);
+}
+.lib-robot .lib-fav:hover { opacity: 1; }
+.lib-robot .lib-fav.on { color: var(--accent); opacity: 1; }
+/* the pinned favorites strip reads as "not a plant": accent head, lowercase */
+.lib-favs .lib-plant-h { color: var(--accent); text-transform: lowercase; }
+
+/* notes: the modal's multi-line box + the inline on-row editor */
+textarea.lf-notes { resize: vertical; min-height: 4.6em; line-height: 1.4; tab-size: 4; }
+.lib-note-edit {
+  display: block; width: 100%; margin-top: 0.25rem; resize: none; overflow-y: auto;
+  background: var(--bg); color: var(--text); border: 1px solid var(--edge);
+  border-radius: 6px; font: inherit; font-size: 0.78rem; line-height: 1.45;
+  padding: 0.3rem 0.45rem; tab-size: 4;
+}
+.lib-note-edit:focus { outline: none; border-color: var(--accent); }
+.lib-robot-note-body { tab-size: 4; }
+
 /* danger button + destructive-confirm copy */
 button.btn.danger { color: var(--error); border-color: color-mix(in srgb, var(--error) 45%, var(--edge)); }
 button.btn.danger:hover { background: var(--error); color: var(--bg); filter: none; }
@@ -1227,6 +1250,8 @@ button.btn.danger:disabled { opacity: 0.5; cursor: default; }
 /* library add/edit form (modal) */
 .lib-form { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.3rem 0.6rem 0.2rem; }
 .lf-row { display: grid; grid-template-columns: 7em 1fr; align-items: center; gap: 0.8rem; }
+.lf-row:has(textarea) { align-items: start; }
+.lf-row:has(textarea) label { padding-top: 0.35rem; }
 .lf-row label { color: var(--sub); font-size: 0.82rem; }
 .lf-input {
   appearance: none; background: var(--bg); border: 1px solid var(--sub-alt);

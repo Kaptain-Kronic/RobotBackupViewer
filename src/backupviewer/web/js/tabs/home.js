@@ -260,20 +260,8 @@
         .then(function () { settle(); BV.toast("library rescanned"); refresh(); })
         .catch(function (e) { settle(); BV.toast(e.message); });
     });
-    var linkBtn = BV.el("button", { class: "btn lib-link-cams",
-      title: "auto-link cameras to the robot they inspect (by name)" }, "link cameras");
-    linkBtn.addEventListener("click", function () {
-      linkBtn.disabled = true;
-      BV.api.call("lib_auto_link").then(function (r) {
-        var n = (r.linked || []).length, un = (r.unmatched || []).length,
-            amb = (r.ambiguous || []).length;
-        BV.toast("linked " + n + " camera" + (n === 1 ? "" : "s") +
-          (amb ? " · " + amb + " ambiguous — same robot name in several lines; " +
-                 "pick the right one in the camera's edit" : "") +
-          (un ? " · " + un + " need manual linking (edit the camera)" : ""), 8000);
-        linkBtn.disabled = false; refresh();
-      }).catch(function (e) { BV.toast(e.message); linkBtn.disabled = false; });
-    });
+    /* (auto-link cameras lives in the manage-backups modal now, with the
+       other library-tidy flows — BV.libActions.autoLink) */
     var addBtn = BV.el("button", { class: "btn lib-add-robot", id: "lib-add-robot",
       title: "add a robot to the library" }, "+ add robot");
     addBtn.addEventListener("click", function () {
@@ -289,7 +277,6 @@
     headActs.appendChild(cancelAll);
     headActs.appendChild(_showHiddenBtn);
     headActs.appendChild(rescanBtn);
-    headActs.appendChild(linkBtn);
     headActs.appendChild(addBtn);
     head.appendChild(headActs);
     return head;
@@ -365,6 +352,59 @@
       (hiddenCount ? " (" + hiddenCount + ")" : "");
   }
 
+  /* the pinned favorites strip above the plant tree: every starred entry as a
+     FULL library row (checkbox included — select here, hit backup, done) with
+     plant/line context, and a favorited robot brings its linked cameras along
+     nested under it, so pinning one pins the whole station. Fold state
+     survives refreshes like the tree's. */
+  var _favOpen = true;
+
+  function favSection(shownList) {
+    var q = _filter;
+    var favs = shownList.filter(function (r) {
+      if (!r.favorite) return false;
+      if (!q) return true;
+      return [r.robot || "", r.model || "", r.notes || "", (r.ips || []).join(" "),
+              r.plant || "", r.line || ""].join(" ").toLowerCase().indexOf(q) >= 0;
+    });
+    if (!favs.length) return null;
+    favs = favs.slice().sort(robotComparator());
+    /* unstarred cameras ride along under their favorited robot; a camera
+       starred in its own right renders standalone via `favs` (never twice) */
+    var favIds = {};
+    favs.forEach(function (r) { favIds[r.id] = 1; });
+    var camsByRobot = {};
+    shownList.forEach(function (c) {
+      if ((c.device_type || "").indexOf("camera") === 0 && !c.favorite &&
+          c.linked_robot_id && favIds[c.linked_robot_id]) {
+        (camsByRobot[c.linked_robot_id] = camsByRobot[c.linked_robot_id] || []).push(c);
+      }
+    });
+    var node = BV.el("div", { class: "lib-plant lib-favs" });
+    var head = BV.el("div", { class: "lib-plant-h" });
+    head.appendChild(BV.el("span", null, "★ favorites"));
+    var count = BV.el("span", { class: "lib-count" });
+    head.appendChild(count);
+    var bodyEl = BV.el("div", { class: "lib-plant-body" });
+    var total = 0;
+    favs.forEach(function (r) {
+      bodyEl.appendChild(robotRow(r, false, { where: true }));
+      total++;
+      (camsByRobot[r.id] || []).sort(robotComparator()).forEach(function (c) {
+        bodyEl.appendChild(robotRow(c, true, { where: true }));
+        total++;
+      });
+    });
+    count.textContent = String(total);
+    node.appendChild(head);
+    node.appendChild(bodyEl);
+    BV.collapsible(node, head, bodyEl, {
+      open: !!q || _favOpen,            /* filter matches never hide in a fold */
+      onToggle: function (o) { _favOpen = o; },
+    });
+    return node;
+  }
+
   function renderTree(body, data) {
     var robots = (data && data.robots) || [];
     /* one snapshot of who is mid-backup for this whole paint (not per row) */
@@ -406,6 +446,9 @@
     var res = _tree.render(body,
       { robots: shownList, emptyPlants: emptyPlants, emptyLines: emptyLines },
       { q: _filter, cmp: robotComparator() });
+    /* favorites pin ABOVE the tree (the tree render just wiped `body`) */
+    var favNode = favSection(shownList);
+    if (favNode) body.insertBefore(favNode, body.firstChild);
     /* the tree returns the robots IN RENDER ORDER (sorted groups + sorted
        robots), not cache order — anything order-sensitive (shift+click
        ranges) must see the list exactly as the user does */
@@ -414,7 +457,12 @@
     _cl.sync();
   }
 
-  function robotRow(r, nested) {
+  /* opts (favorites-strip copies): where = show plant/line in the meta (a
+     pinned row is far from its folders). Strip rows are FULL rows — checkbox
+     included, so backup-the-selection works straight from favorites (the
+     checklist repaints every bound copy of a key). */
+  function robotRow(r, nested, opts) {
+    opts = opts || {};
     var row = BV.el("div", { class: "lib-robot" + (r.stale ? " stale" : "") +
       (r.hidden ? " hidden-robot" : "") + (nested ? " lib-robot-nested" : "") });
     if (nested) row.style.cssText =
@@ -425,6 +473,26 @@
       title: "select (shift+click selects a range)" });
     _cl.bind(cb, r.id);
     row.appendChild(cb);
+
+    /* the star lives by the checkbox (both are "act on this row" controls).
+       Toggling is INSTANT: flip the cached entry and repaint from cache — a
+       lib_list here re-walks the whole tree, seconds at plant scale — then
+       persist in the background and revert if the save fails. */
+    var favBtn = BV.el("button", { class: "lib-fav" + (r.favorite ? " on" : ""),
+      title: r.favorite ? "unpin from favorites" : "pin to favorites (top of the library)" },
+      r.favorite ? "★" : "☆");
+    favBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var want = !r.favorite;
+      r.favorite = want;
+      rerenderFromCache();
+      BV.api.call("lib_set_favorite", r.id, want).catch(function (err) {
+        r.favorite = !want;
+        rerenderFromCache();
+        BV.toast(err.message);
+      });
+    });
+    row.appendChild(favBtn);
 
     var main = BV.el("div", { class: "lib-robot-main" });
     var nameHtml = '<span class="lib-robot-name">' + BV.esc(r.robot || "(unnamed)") + "</span>";
@@ -439,6 +507,10 @@
     }
     main.appendChild(BV.el("div", null, nameHtml));
     var meta = [];
+    if (opts.where) {
+      var where = [r.plant, r.line].filter(Boolean).join(" / ");
+      if (where) meta.push(BV.esc(where));
+    }
     if (r.ips && r.ips.length) meta.push(BV.esc(r.ips[0]));
     if (r.last_backup) meta.push("last " + BV.esc(r.last_backup));
     if (r.backups && r.backups.length) meta.push(r.backups.length + " saved");
@@ -465,35 +537,78 @@
     row.appendChild(prog);
 
     var acts = BV.el("div", { class: "lib-robot-acts" });
-    var editBtn = BV.el("button", { class: "btn", title: "edit" }, "edit");
-    editBtn.addEventListener("click", function (e) { e.stopPropagation(); editRobotModal(r, false); });
-    var moreBtn = BV.el("button", { class: "btn lib-robot-more", title: "more actions" }, "⋯");
+    var moreBtn = BV.el("button", { class: "btn lib-robot-more",
+      title: "actions (or right-click the row)" }, "⋯");
     moreBtn.addEventListener("click", function (e) {
       e.stopPropagation();
-      /* no delete here: files are law — hide covers the everyday case, and a
-         true delete is done in Explorer ("open folder"); the library follows. */
-      var items = [
-        { label: r.hidden ? "unhide" : "hide", onClick: function () { setHidden(r, !r.hidden); } },
-      ];
-      if (r.history_root) {
-        items.push({ label: "open folder", onClick: function () { openLocation(r.history_root); } });
-      }
-      BV.menu(moreBtn, items);
+      BV.menu(moreBtn, rowMenuItems(r, main));
     });
-    acts.appendChild(editBtn);
     acts.appendChild(moreBtn);
     row.appendChild(acts);
 
-    /* whole row opens the robot, except the checkbox + the action buttons */
+    /* right-click anywhere on the row = the same menu, at the mouse */
+    row.addEventListener("contextmenu", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      BV.menu({ x: e.clientX, y: e.clientY }, rowMenuItems(r, main));
+    });
+
+    /* whole row opens the robot, except the checkbox/star + action buttons
+       (the star stops its own propagation).
+
+       A click is dispatched on the COMMON ANCESTOR of its mousedown and its
+       mouseup — so highlighting text in the note editor and releasing over
+       the row lands a click on the ROW itself, sailing past the editor's own
+       stopPropagation, and opened the backup mid-highlight. Judge the press,
+       not just the release: where the drag STARTED (recorded in the capture
+       phase, so a child's stopPropagation can't hide it), whether it ended a
+       text selection, and whether a note was being edited at all. */
+    var pressedIn = null, pressedEditing = false;
+    row.addEventListener("mousedown", function (e) {
+      pressedIn = e.target;
+      /* read before the browser's focus change (a mousedown default action,
+         which runs after dispatch) blurs the editor away */
+      pressedEditing = !!row.querySelector(".lib-note-edit");
+    }, true);
     row.addEventListener("click", function (e) {
+      var from = pressedIn;
+      pressedIn = null;
       if (cb.contains(e.target) || acts.contains(e.target)) return;
+      /* a press while the note editor was open only commits the edit */
+      if (pressedEditing) { pressedEditing = false; return; }
+      if (from && from.closest && from.closest(NO_OPEN_SEL)) return;
+      var sel = window.getSelection && window.getSelection();
+      if (sel && !sel.isCollapsed && sel.anchorNode && row.contains(sel.anchorNode)) {
+        return;                      /* text was being highlighted, not clicked */
+      }
       openRobot(r);
     });
     return row;
   }
 
+  /* press here and the row never opens, wherever the mouse comes up */
+  var NO_OPEN_SEL = ".lib-note-edit, .lib-robot-note, .lib-robot-note-head, " +
+    ".lib-check, .lib-fav, .lib-robot-acts";
+
+  /* one menu for the ⋯ button AND right-click on the row. No delete here:
+     files are law — hide covers the everyday case, and a true delete is done
+     in Explorer ("open folder"); the library follows. */
+  function rowMenuItems(r, main) {
+    var items = [
+      { label: "edit", onClick: function () { editRobotModal(r, false); } },
+      { label: r.notes ? "edit note" : "add note",
+        onClick: function () { editNoteInline(main, r); } },
+      { label: r.hidden ? "unhide" : "hide", onClick: function () { setHidden(r, !r.hidden); } },
+    ];
+    if (r.history_root) {
+      items.push({ label: "open folder", onClick: function () { openLocation(r.history_root); } });
+    }
+    return items;
+  }
+
   /* a robot's note in the listing: first line in grey, the rest behind an
-     expand caret (reusing BV.collapsible). A single-line note shows plain. */
+     expand caret (reusing BV.collapsible — the row grows in place). A
+     single-line note shows plain. Double-click any of it to edit right here. */
   function appendNote(main, r) {
     var text = (r.notes || "").replace(/\r\n?/g, "\n");
     if (!text.trim()) return;
@@ -501,23 +616,120 @@
     var first = (lines[0] || "").trim() || "(note)";
     var rest = lines.slice(1).join("\n").replace(/\s+$/, "");
     if (!rest.trim()) {
-      var solo = BV.el("div", { class: "lib-robot-note-head solo" },
+      var solo = BV.el("div", { class: "lib-robot-note-head solo",
+        title: "double-click to edit the note" },
         '<span class="note-line">' + BV.esc(first) + "</span>");
       solo.addEventListener("click", function (e) { e.stopPropagation(); });
+      solo.addEventListener("dblclick", function (e) {
+        e.stopPropagation();
+        editNoteInline(main, r);
+      });
       main.appendChild(solo);
       return;
     }
-    var node = BV.el("div", { class: "lib-robot-note" });
+    var node = BV.el("div", { class: "lib-robot-note",
+      title: "click to expand · double-click to edit" });
     var head = BV.el("div", { class: "lib-robot-note-head" },
       '<span class="note-line">' + BV.esc(first) + "</span>");
     var body = BV.el("div", { class: "lib-robot-note-body" }, BV.esc(rest));
     node.appendChild(head);
     node.appendChild(body);
     BV.collapsible(node, head, body, { open: false });
-    /* don't let toggling (or right-click expand-all) open the robot */
-    head.addEventListener("click", function (e) { e.stopPropagation(); });
-    head.addEventListener("contextmenu", function (e) { e.stopPropagation(); });
+    /* clicks anywhere on the note (toggling, selecting text in the open body,
+       right-click expand-all) must never open the robot */
+    node.addEventListener("click", function (e) { e.stopPropagation(); });
+    node.addEventListener("contextmenu", function (e) { e.stopPropagation(); });
+    node.addEventListener("dblclick", function (e) {
+      e.stopPropagation();
+      editNoteInline(main, r);
+    });
     main.appendChild(node);
+  }
+
+  /* Tab inserts a real tab instead of leaving the field — notes are lists */
+  function wireNotesKeys(ta) {
+    ta.addEventListener("keydown", function (e) {
+      if (e.key === "Tab") {
+        e.preventDefault();
+        var s = ta.selectionStart, en = ta.selectionEnd;
+        ta.value = ta.value.slice(0, s) + "\t" + ta.value.slice(en);
+        ta.selectionStart = ta.selectionEnd = s + 1;
+      }
+    });
+  }
+
+  /* swap a robot's note DISPLAY back in on every rendered copy of its row
+     (tree + favorites strip) — surgical on purpose: a note edit must never
+     rebuild the whole tree, which is a visible stall at plant scale */
+  function repaintNotes(r) {
+    if (!_libWrap) return;
+    _libWrap.querySelectorAll('.lib-robot[data-robot-id="' + r.id + '"]')
+      .forEach(function (row) {
+        var main = row.querySelector(".lib-robot-main");
+        if (!main) return;
+        main.querySelectorAll(".lib-robot-note, .lib-robot-note-head.solo, .lib-note-edit")
+          .forEach(function (n) { n.remove(); });
+        appendNote(main, r);
+      });
+  }
+
+  /* inline note editor right on the library row (double-click the note, or
+     ⋯ → add/edit note): real multi-line — Enter adds a line, Tab indents,
+     Esc cancels, clicking away saves. No modal, no leaving the library. */
+  function editNoteInline(main, r) {
+    var existing = main.querySelector(".lib-note-edit");
+    if (existing) { existing.focus(); return; }
+    /* hide the display while editing; the close paths repaint it */
+    main.querySelectorAll(".lib-robot-note, .lib-robot-note-head.solo")
+      .forEach(function (n) { n.style.display = "none"; });
+    var ta = BV.el("textarea", { class: "lib-note-edit", spellcheck: "false",
+      placeholder: "notes — Enter for a new line, Tab indents · Esc cancels, click away saves" });
+    ta.value = r.notes || "";
+    wireNotesKeys(ta);
+    main.appendChild(ta);
+    /* sizing does STRING math, not layout: reading scrollHeight per keystroke
+       forces a reflow of the whole 2000-row page — that was the typing lag.
+       The metrics are read once per open; growth happens only when the line
+       COUNT changes, and overlong content scrolls inside the box instead. */
+    var cs = getComputedStyle(ta);
+    var lh = parseFloat(cs.lineHeight) || 16;
+    var pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0) + 2;
+    var lastLines = -1;
+    function autosize() {
+      var lines = 1 + (ta.value.match(/\n/g) || []).length;
+      if (lines === lastLines) return;      /* typing within a line: zero layout work */
+      lastLines = lines;
+      ta.style.height = Math.min(Math.max(lines, 2) * lh + pad, 220) + "px";
+    }
+    ta.addEventListener("input", autosize);
+    /* the editor lives inside a clickable row — keep every mouse event local */
+    ["mousedown", "click", "dblclick"].forEach(function (ev) {
+      ta.addEventListener(ev, function (e) { e.stopPropagation(); });
+    });
+    var cancelled = false;
+    ta.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        cancelled = true;              /* set BEFORE the repaint detaches us */
+        repaintNotes(r);
+      }
+    });
+    ta.addEventListener("blur", function () {
+      if (cancelled) return;
+      var text = ta.value.replace(/\s+$/, "");
+      if (text === (r.notes || "")) { repaintNotes(r); return; }
+      var prev = r.notes;
+      r.notes = text;
+      repaintNotes(r);                 /* instant, and only THIS robot's rows */
+      BV.api.call("lib_update", r.id, { notes: text }).catch(function (err) {
+        r.notes = prev;
+        repaintNotes(r);
+        BV.toast(err.message);
+      });
+    });
+    ta.focus({ preventScroll: true });
+    autosize();
+    ta.selectionStart = ta.selectionEnd = ta.value.length;   /* ready to append */
   }
 
   function openRobot(r) {
@@ -575,6 +787,19 @@
     fixNames: function () { fixNamesInLine(_visibleRobots); },
     merge: function () { mergeSelectedInLine(_visibleRobots); },
     moveTo: function () { moveSelectedFlow(_visibleRobots); },
+    /* auto-link cameras to the robot they inspect (by name); no selection
+       needed. Returns the promise so the caller can gate its button. */
+    autoLink: function () {
+      return BV.api.call("lib_auto_link").then(function (r) {
+        var n = (r.linked || []).length, un = (r.unmatched || []).length,
+            amb = (r.ambiguous || []).length;
+        BV.toast("linked " + n + " camera" + (n === 1 ? "" : "s") +
+          (amb ? " · " + amb + " ambiguous — same robot name in several lines; " +
+                 "pick the right one in the camera's edit" : "") +
+          (un ? " · " + un + " need manual linking (edit the camera)" : ""), 8000);
+        refresh();
+      });
+    },
   };
 
   /* ---- per-line actions ---- */
@@ -981,21 +1206,35 @@
   }
   BV.promptSharedPassword = promptSharedPassword;   /* manage-backups retry reuses it */
 
-  function rowProgressSlot(robotId) {
-    if (!_libWrap) return null;
-    var row = _libWrap.querySelector('.lib-robot[data-robot-id="' + robotId + '"]');
-    return row ? row.querySelector(".lib-robot-progress") : null;
+  /* every rendered copy of the robot's row — the favorites strip duplicates a
+     pinned robot above its tree row, and progress must paint on both */
+  function rowProgressSlots(robotId) {
+    if (!_libWrap) return [];
+    var rows = _libWrap.querySelectorAll('.lib-robot[data-robot-id="' + robotId + '"]');
+    return Array.prototype.map.call(rows, function (row) {
+      return row.querySelector(".lib-robot-progress");
+    }).filter(Boolean);
   }
 
   function renderRowProgress(robotId, p) {
-    var slot = rowProgressSlot(robotId);
-    if (!slot) return;
+    var slots = rowProgressSlots(robotId);
+    if (!slots.length) return;
+    var html;
     if (BV.jobs.isTerminal(p)) {
       var cls, txt;
       if (p.status === "done") { cls = "ok"; txt = "✓ " + p.done + " files"; }
       else if (p.status === "cancelled") { cls = ""; txt = "cancelled"; }
       else { cls = "err"; txt = "✗ " + (p.error || "failed"); }
-      slot.innerHTML = '<div class="lib-robot-result ' + cls + '">' + BV.esc(txt) + "</div>";
+      html = '<div class="lib-robot-result ' + cls + '">' + BV.esc(txt) + "</div>";
+    } else {
+      var pct = p.total ? Math.round(100 * p.done / p.total) : 8;
+      html = '<div class="membar"><div class="mb-label"><span>' + BV.esc(BV.jobs.statusText(p)) +
+        "</span><span>" + (p.total ? p.done + " / " + p.total : "") + "</span></div>" +
+        '<div class="mb-track"><div class="mb-fill" style="width:' + pct + '%"></div></div></div>';
+      if (p.current) html += '<div class="bf-current dim">' + BV.esc(p.current) + "</div>";
+    }
+    slots.forEach(function (slot) {
+      slot.innerHTML = html;
       /* a long FTP error must not stretch the row sideways: CSS clamps it to
          one ellipsized line; click (or hover) for the whole thing */
       if (p.status === "error" && p.error) {
@@ -1006,14 +1245,7 @@
           BV.toast(p.error, 7000);
         });
       }
-      return;
-    }
-    var pct = p.total ? Math.round(100 * p.done / p.total) : 8;
-    var html = '<div class="membar"><div class="mb-label"><span>' + BV.esc(BV.jobs.statusText(p)) +
-      "</span><span>" + (p.total ? p.done + " / " + p.total : "") + "</span></div>" +
-      '<div class="mb-track"><div class="mb-fill" style="width:' + pct + '%"></div></div></div>';
-    if (p.current) html += '<div class="bf-current dim">' + BV.esc(p.current) + "</div>";
-    slot.innerHTML = html;
+    });
   }
 
   function setCancelAllVisible(v) {
@@ -1118,36 +1350,43 @@
       fType.appendChild(opt);
     });
     /* a camera can be linked to the robot it inspects (shows in the robot's
-       Cameras tab); the picker lists robot entries, hidden for robot entries */
-    var fLinked = BV.el("select", { class: "lf-input" });
-    fLinked.appendChild(BV.el("option", { value: "" }, "(none)"));
-    _robots.filter(function (r) { return (r.device_type || "robot") === "robot"; })
-      .forEach(function (r) {
-        /* duplicate robot names exist across lines/plants (test-cell copies!) -
-           show the full plant/line so the RIGHT twin gets linked */
-        var where = [r.plant, r.line].filter(Boolean).join("/");
-        /* robot/plant/line are folder names straight off disk - escape them
-           (BV.el's 3rd arg is innerHTML) so an odd name can't inject markup */
-        var o = BV.el("option", { value: r.id }, BV.esc(r.robot + (where ? " · " + where : "")));
-        if (entry.linked_robot_id === r.id) o.selected = true;
-        fLinked.appendChild(o);
-      });
+       Cameras tab). The picker is the library tree in a modal (the same
+       composable as compare-from-library): plant/line folders, count badges
+       and a filter — duplicate robot names exist across lines (test-cell
+       copies!), and the folders say which twin is which. */
+    var linkedId = entry.linked_robot_id || "";
+    var linkBtn = BV.el("button", { class: "btn", type: "button",
+      title: "pick the robot this camera inspects" });
+    function linkedLabel() {
+      if (!linkedId) return "(none)";
+      var lr = _robots.find(function (x) { return x.id === linkedId; });
+      if (!lr) return "(missing robot)";
+      var where = [lr.plant, lr.line].filter(Boolean).join("/");
+      return lr.robot + (where ? " · " + where : "");
+    }
+    function syncLinkBtn() { linkBtn.textContent = linkedLabel(); }
+    syncLinkBtn();
+    linkBtn.addEventListener("click", function () { pickLinkedRobot(); });
     var fIps = inp((entry.ips || []).join(", "));
     var fPath = inp(entry.latest_path, entry.latest_path ? { readonly: "readonly" } : null);
     var fUser = inp((entry.ftp || {}).user);
     var fPassive = BV.el("input", { type: "checkbox", class: "lf-check" });
     if (!entry.ftp || entry.ftp.passive !== false) fPassive.checked = true;
-    var fNotes = inp(entry.notes);
+    /* notes are a real multi-line box: Enter for lines, Tab for indent */
+    var fNotes = BV.el("textarea", { class: "lf-input lf-notes", rows: "4",
+      spellcheck: "false" });
+    fNotes.value = entry.notes || "";
+    wireNotesKeys(fNotes);
     var hasFolders = !isNew && !!entry.history_root;
     var fMove = BV.el("input", { type: "checkbox", class: "lf-check" });
     fMove.checked = true;   /* default ON: folders rename WITH the entry */
 
     form.appendChild(comboField("plant", fPlant, knownPlants));
     form.appendChild(comboField("line", fLine, function () { return knownLines(fPlant.value); }));
-    form.appendChild(field("robot", fRobot));
+    form.appendChild(field("device name", fRobot));
     form.appendChild(field("model", fModel));
     form.appendChild(field("device", fType));
-    var linkedRow = field("linked robot", fLinked);
+    var linkedRow = field("linked robot", linkBtn);
     form.appendChild(linkedRow);
     function syncLinkedVis() {
       linkedRow.classList.toggle("hidden", fType.value.indexOf("camera") !== 0);
@@ -1199,28 +1438,105 @@
     /* unsaved-work guard: a stray click outside the form can't eat typed edits */
     function fieldsSnapshot() {
       return [fPlant.value, fLine.value, fRobot.value, fModel.value, fType.value,
-              fLinked.value, fIps.value, fPath.value, fUser.value, fPassive.checked,
+              linkedId, fIps.value, fPath.value, fUser.value, fPassive.checked,
               fNotes.value].join("\n");
     }
     var initialSnapshot = fieldsSnapshot();
-    var m = BV.modal(isNew ? "add robot" : "edit robot", form, {
+    var isCam = (entry.device_type || "robot").indexOf("camera") === 0;
+    var modalOpts = {
       beforeClose: BV.dirtyGuard(function () { return fieldsSnapshot() !== initialSnapshot; },
-                                 "robot edits"),
-    });
-    cancel.addEventListener("click", m.close);
+                                 "device edits"),
+    };
+    var m;
+    function openEditModal() {
+      m = BV.modal((isNew ? "add " : "edit ") + (isCam ? "camera" : "robot"), form, modalOpts);
+    }
+    openEditModal();
+    cancel.addEventListener("click", function () { m.close(); });
     fRobot.focus();
+
+    /* the linked-robot picker replaces the edit modal (modals don't stack) and
+       brings it back on ANY close — the form element survives detached, so
+       typed edits and listeners carry through (discover's back-button move) */
+    function pickLinkedRobot() {
+      var robots = _robots.filter(function (r) { return (r.device_type || "robot") === "robot"; });
+      if (!robots.length) { BV.toast("no robots in the library to link"); return; }
+      m.close(true);
+      var pmodal;
+      var tree = BV.libTree({
+        counts: true,
+        /* land on the camera's own plant — the robot a camera inspects is
+           almost always nearby; the rest starts folded with count badges */
+        startOpen: function (key, kind) {
+          if (kind !== "plant") return true;
+          var pl = (fPlant.value.trim() || entry.plant || "").toUpperCase();
+          return !pl || key.toUpperCase() === pl;
+        },
+        row: function (r) {
+          var row = BV.el("div", { class: "opt-row cmp-pick-row" + (r.id === linkedId ? " sel" : "") },
+            '<span class="name">' + BV.esc(r.robot || "(unnamed)") +
+            (r.model ? '<span class="lib-robot-model">' + BV.esc(r.model) + "</span>" : "") +
+            "</span>" +
+            ((r.ips && r.ips[0])
+              ? '<span class="lib-robot-meta">' + BV.esc(r.ips[0]) + "</span>" : ""));
+          row.addEventListener("click", function () {
+            linkedId = r.id;
+            syncLinkBtn();
+            pmodal.close(true);
+          });
+          return row;
+        },
+      });
+      var pbody = BV.el("div", { class: "cmp-pick" });
+      var sb = BV.searchBox({
+        placeholder: "filter robots…",
+        onChange: function (q) { paint(q); },
+      });
+      var search = BV.el("div", { class: "cmp-pick-search" });
+      search.appendChild(sb.el);
+      pbody.appendChild(search);
+      if (linkedId) {
+        var clearRow = BV.el("div", { class: "opt-row cmp-pick-row" },
+          '<span class="name" style="color:var(--sub)">✕ clear link (none)</span>');
+        clearRow.addEventListener("click", function () {
+          linkedId = "";
+          syncLinkBtn();
+          pmodal.close(true);
+        });
+        pbody.appendChild(clearRow);
+      }
+      var treeBody = BV.el("div");
+      pbody.appendChild(treeBody);
+      function paint(q) {
+        var res = tree.render(treeBody, { robots: robots }, { q: q });
+        sb.setCount(q ? res.shown : undefined, res.total);
+      }
+      paint("");
+      pmodal = BV.modal("link to robot", pbody, {
+        /* Esc clears a live filter first (the search-box convention); the
+           edit modal comes back on ANY close — pick or cancel alike */
+        beforeClose: function () {
+          if (sb.value()) { sb.input.value = ""; paint(""); return false; }
+          return true;
+        },
+        onClose: openEditModal,
+      });
+      sb.focus();
+    }
 
     save.addEventListener("click", function () {
       var robot = fRobot.value.trim();
-      if (!robot) { BV.toast("robot name required"); return; }
+      if (!robot) { BV.toast("a device name is required"); return; }
       save.disabled = true;   /* double-click can't double-submit; re-enabled on failure */
       var fields = {
         plant: fPlant.value.trim(), line: fLine.value.trim(),
         robot: robot, model: fModel.value.trim(),
         device_type: fType.value,
-        linked_robot_id: fType.value.indexOf("camera") === 0 ? fLinked.value : "",
+        linked_robot_id: fType.value.indexOf("camera") === 0 ? linkedId : "",
         ips: fIps.value.split(",").map(function (s) { return s.trim(); }).filter(Boolean),
-        latest_path: fPath.value.trim(), notes: fNotes.value.trim(),
+        /* notes keep their leading indent (a list may start with a tab) —
+           only trailing blank space is shed */
+        latest_path: fPath.value.trim(), notes: fNotes.value.replace(/\s+$/, ""),
         ftp: { user: fUser.value.trim(), passive: fPassive.checked },
       };
       if (isNew) {
