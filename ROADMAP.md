@@ -32,12 +32,16 @@ Each of these is deliberately scoped to land on its own. Good places to start.
   referenced by programs.
 - 📋 **Golden-robot compare** — pick a reference robot; the scan flags every
   deviation from it across a line.
-- 📋 **First-run tips + in-app help** — bundled docs (plant PCs are offline),
-  empty-state guidance.
+- 🔨 **First-run tips + in-app help** — the ? help window shipped (bundled
+  guide + shortcuts, probe-enforced docs↔tabs coverage). Still open, in
+  order: the tips engine (curated tips with "show me" actions, surfaced as
+  a dismissable card on the home library — surface decided 2026-07-22),
+  first-run auto-open of getting-started, empty-state guidance audit.
 - 📋 **UI scaling audit + XXL preset** — raise the current 24px/160% caps
   without layouts collapsing; probe-gated at the extremes.
-- 📋 **Auto-update check** — quiet "newer release exists" toast (GitHub
-  releases ping, fully offline-tolerant).
+- ✅ **Auto-update check** — shipped: the packaged exe pings GitHub releases
+  once on boot (toast + statusbar pill, fully offline-tolerant), the about
+  box checks manually anywhere; see CHANGELOG.
 - 📋 **Library-wide content search** — "which robots call PROG_X / use R[57] /
   reference DI[279]" across the whole library, not just the open backup.
 - 📋 **Absorb `tools/restyle.py`** — the style-clone kit builder gets UI inside

@@ -90,7 +90,8 @@
 
   function rightStatusHtml() {
     var v = BV.state.version ? "ver. " + BV.state.version.split(".").slice(0, 2).join(".") : "";
-    return v + ' <span class="pill ghost credit-pill" title="about + contact">' +
+    var upd = BV.update ? BV.update.pillHtml() : "";
+    return upd + v + ' <span class="pill ghost credit-pill" title="about + contact">' +
       "cody beach+claude code</span>";
   }
 
@@ -100,6 +101,7 @@
       "backupviewer <span class=\"accent\">" +
       BV.esc(BV.state.version || "") + "</span>"));
     body.appendChild(BV.el("div", { class: "about-line dim" }, "cody beach + claude code"));
+    if (BV.update) body.appendChild(BV.update.aboutSection());
     body.appendChild(BV.el("div", { class: "about-lbl" }, "questions, bugs, suggestions"));
     var mail = BV.el("div", { class: "about-mail" }, BV.esc(CONTACT));
     body.appendChild(mail);
@@ -124,6 +126,7 @@
   /* ONE delegated listener for the life of the app */
   document.getElementById("statusbar").addEventListener("click", function (e) {
     if (e.target.closest(".credit-pill")) aboutModal();
+    if (e.target.closest(".update-pill")) aboutModal();
   });
 
   function updateStatus() {
@@ -270,7 +273,7 @@
   });
   document.getElementById("btn-theme").addEventListener("click", function () { BV.themeUI.open(); });
   document.getElementById("btn-cog").addEventListener("click", function () { BV.uiPrefs.modal(); });
-  document.getElementById("btn-help").addEventListener("click", function () { BV.helpOverlay(); });
+  document.getElementById("btn-help").addEventListener("click", function () { BV.helpUI.open(); });
 
   /* global backup-wide search */
   var gsInput = document.querySelector("#global-search input");
@@ -301,6 +304,9 @@
   BV.state.on("uiprefs", function () {
     if (BV.state.manifest) route();
   });
+
+  /* a found update re-renders the statusbar (the pill lives in rightStatusHtml) */
+  BV.state.on("update", updateStatus);
 
   /* ---- boot ---- */
   BV.api.ready.then(function (bridged) {

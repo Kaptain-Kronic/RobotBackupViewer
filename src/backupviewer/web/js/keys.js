@@ -18,28 +18,6 @@
     return s && document.contains(s.el) ? s : null;
   }
 
-  function helpOverlay() {
-    var body = BV.el("div");
-    var rows = [
-      ["1 – 9 · 0 · - · =", "switch tab (the number row; 0 = 3d view)"],
-      ["ctrl+k", "search whole backup"],
-      ["backspace", "back (previous program / view)"],
-      ["/", "focus tab filter"],
-      ["esc", "clear filter · back to list · close"],
-      ["j / k or ↓ / ↑", "move selection"],
-      ["h / l or ← / →", "switch pane (split views)"],
-      ["enter", "open selection · search signal"],
-      ["t / shift+t", "theme window / cycle theme"],
-      ["?", "this help"],
-    ];
-    body.innerHTML = rows.map(function (r) {
-      return '<div class="static-row"><span class="name">' + BV.esc(r[1]) +
-        "</span><span><kbd>" + BV.esc(r[0]) + "</kbd></span></div>";
-    }).join("");
-    BV.modal("keyboard shortcuts", body);
-  }
-  BV.helpOverlay = helpOverlay;
-
   document.addEventListener("keydown", function (e) {
     if (BV.modalOpen()) return;        /* modal traps its own keys */
 
@@ -116,7 +94,7 @@
         BV.theme.cycle();
         break;
       case "?":
-        helpOverlay();
+        BV.helpUI.open();
         break;
     }
   });

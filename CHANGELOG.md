@@ -8,6 +8,16 @@
   ground-truthed against Keyence's own Vapi.Net.dll, events resequenced so
   they reach the controller in gesture order, and hand jitter during a
   click no longer reads as a drag.
+- **The ? help window.** ? grew from a bare shortcuts list into the app's
+  manual: a **guide** tab with a topic for every feature — getting started,
+  the library, taking backups, compare (and compare-over-time), the fleet
+  scan, each viewer tab, cameras, themes — filterable, keyboard-driven
+  (j/k, `/`), and cross-linked so "see compare" is one click. The
+  **shortcuts** tab keeps the keyboard map (its rows moved out of keys.js
+  to live with the rest of the words). Everything ships inside the exe —
+  plant PCs are offline. The docs are drift-proof by construction: the
+  probe fails if any registered tab lacks a guide topic or any topic names
+  a tab that doesn't exist, so the manual can never quietly rot.
 - **The 🎨 theme window.** A new topbar button (and `t`) opens a two-tab
   window that owns everything about how the app looks: **themes** is the
   familiar category accordion (hover previews, j/k/enter, custom-theme
@@ -28,6 +38,17 @@
   static frame under prefers-reduced-motion or when requestAnimationFrame
   is missing (the probe environment). The choice persists like every other
   pref.
+
+- **Release check.** The app can now notice a newer release on GitHub: the
+  packaged exe pings the public releases feed once on boot (source runs and
+  probes never phone home) and shows a quiet toast plus a statusbar pill;
+  the about box grows a **check for updates** button that works anywhere
+  and answers honestly — up to date / newer on github (with an
+  open-the-release-page button) / this build is ahead of the newest
+  release / no releases yet / couldn't reach github. One 4-second attempt,
+  no retries: offline is a first-class outcome, not an error. A found
+  version can be skipped (silences the boot reminder for that one) and ⚙
+  settings gains a check-on-startup switch.
 
 ## v1.3 — the camera wall + six sharper scans
 - **Six new fleet-scan checks.** Two catch hand-edits left in programs:

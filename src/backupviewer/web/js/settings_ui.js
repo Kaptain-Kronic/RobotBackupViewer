@@ -136,6 +136,18 @@
         }).catch(function (e) { BV.toast(e.message); });
       });
 
+      /* ---- updates ---- */
+      section("updates");
+      /* the boot-time github ping runs only in the packaged exe (source runs
+         stay offline); this switch turns even that off. The about box's
+         manual check works regardless. */
+      segRow("check on startup", [true, false], s.update_check !== false,
+        function (v) { return v ? "auto" : "off"; },
+        function (v) {
+          s.update_check = v;
+          BV.api.call("set_setting", "update_check", v).catch(function () {});
+        });
+
       BV.state.settings = s;
       BV.modal("settings", body);
     },
