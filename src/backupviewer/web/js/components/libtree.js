@@ -54,6 +54,28 @@
     opts = opts || {};
     var state = {};   /* fold state: key -> bool(open); unset = startOpen/default */
 
+    /* persistKey: settings key to remember folds across app restarts (the
+       ov_collapsed pattern - the whole key->bool object rides settings.json).
+       Trees are constructed at script load, BEFORE the boot chain has fetched
+       settings - so hydration is lazy, on the first render (renders only
+       happen post-boot). User toggles debounce-write the object back.
+       Pickers and other transient trees just omit the opt. */
+    var _hydrated = !opts.persistKey;
+    function hydrate() {
+      if (_hydrated) return;
+      _hydrated = true;
+      var saved = (BV.state.settings || {})[opts.persistKey];
+      if (saved && typeof saved === "object") {
+        Object.keys(saved).forEach(function (k) {
+          if (!(k in state)) state[k] = !!saved[k];   /* live toggles win */
+        });
+      }
+    }
+    var saveState = opts.persistKey ? BV.debounce(function () {
+      if (BV.state.settings) BV.state.settings[opts.persistKey] = state;
+      BV.api.call("set_setting", opts.persistKey, state).catch(function () {});
+    }, 500) : null;
+
     function isOpen(key, kind) {
       if (key in state) return state[key];
       return opts.startOpen ? !!opts.startOpen(key, kind) : true;
@@ -66,7 +88,10 @@
         /* a filtered render forces groups open so matches are never folded
            away; only USER toggles write, so the fold state returns on clear */
         open: forceOpen || isOpen(key, kind),
-        onToggle: function (open) { state[key] = open; },
+        onToggle: function (open) {
+          state[key] = open;
+          if (saveState) saveState();
+        },
       });
       return node;
     }
@@ -80,6 +105,7 @@
 
     return {
       render: function (body, data, ropts) {
+        hydrate();   /* pull persisted folds now that settings are loaded */
         ropts = ropts || {};
         var q = (ropts.q || "").toLowerCase();
         var cmp = ropts.cmp || nameCmp;

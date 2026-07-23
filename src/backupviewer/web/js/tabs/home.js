@@ -118,6 +118,7 @@
      module-level instance keeps fold state across refreshes and remounts. */
   var _tree = BV.libTree({
     skeleton: true,
+    persistKey: "lib_folds",
     row: function (r, nested) { return robotRow(r, nested); },
     /* line header extras = the select-all box only; action buttons live ONCE
        in the sticky library header (with 50+ lines, per-line rows ate the screen) */
@@ -143,6 +144,7 @@
     counts: true,
     noun: "cameras",
     lineBodyClass: "cam-grid",
+    persistKey: "lib_folds_cam",
     startOpen: function (key, kind) { return kind === "plant"; },
     /* the tiles print "↳ <linked robot>" — the name a tech actually knows
        must match it, on top of the camera's own fields */
@@ -499,8 +501,15 @@
      FULL library row (checkbox included — select here, hit backup, done) with
      plant/line context, and a favorited robot brings its linked cameras along
      nested under it, so pinning one pins the whole station. Fold state
-     survives refreshes like the tree's. */
-  var _favOpen = true;
+     survives refreshes like the tree's, and restarts via the settings key. */
+  var _favOpen = null;   /* null = not yet read from settings */
+  function favOpen() {
+    if (_favOpen === null) {
+      var s = (BV.state.settings || {}).lib_favs_open;
+      _favOpen = s === undefined ? true : !!s;
+    }
+    return _favOpen;
+  }
 
   function favSection(shownList) {
     var q = _filter;
@@ -542,8 +551,12 @@
     node.appendChild(head);
     node.appendChild(bodyEl);
     BV.collapsible(node, head, bodyEl, {
-      open: !!q || _favOpen,            /* filter matches never hide in a fold */
-      onToggle: function (o) { _favOpen = o; },
+      open: !!q || favOpen(),           /* filter matches never hide in a fold */
+      onToggle: function (o) {
+        _favOpen = o;
+        if (BV.state.settings) BV.state.settings.lib_favs_open = o;
+        BV.api.call("set_setting", "lib_favs_open", o).catch(function () {});
+      },
     });
     return node;
   }

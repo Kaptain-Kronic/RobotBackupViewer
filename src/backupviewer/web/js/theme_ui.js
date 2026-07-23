@@ -1,13 +1,11 @@
 /* theme_ui.js - the 🎨 theme window: everything about how the app LOOKS in
    one place, split into two tabs like a tiny settings app of its own.
 
-   - themes:    the category accordion that used to live in BV.theme.picker()
-                (hover previews, click commits, j/k/enter, edit/delete on
-                custom themes). Moved here wholesale; the old standalone
-                picker modal is gone.
-   - customize: the appearance + text & scale rows that used to crowd the ⚙
-                settings modal, plus the background effect with its
-                intensity/size sliders.
+   - themes:    the background block (effect + intensity/size/frost sliders)
+                on top, then the color accordion (hover previews, click
+                commits, j/k/enter, edit/delete on custom themes) below —
+                the whole "look" of the app on one tab.
+   - customize: fonts, borders, and the text & scale sliders.
 
    The ⚙ modal keeps only app behavior (3d view, library folder); this
    window owns presentation. Opens from the topbar 🎨 button or `t`. */
@@ -49,6 +47,58 @@
       body.appendChild(seg);
       body.appendChild(slot);
 
+      /* ---- shared row builders (both tabs use these) ---- */
+      function section(into, title) {
+        into.appendChild(BV.el("div", { class: "set-head" }, BV.esc(title)));
+      }
+      function segRow(into, label, values, current, fmt, onPick) {
+        var rowEl = BV.el("div", { class: "set-row" });
+        rowEl.appendChild(BV.el("span", { class: "name" }, BV.esc(label)));
+        var segEl = BV.el("div", { class: "seg" });
+        values.forEach(function (v) {
+          var b = BV.el("button", { class: v === current ? "active" : "" }, fmt(v));
+          b.addEventListener("click", function () {
+            segEl.querySelectorAll("button").forEach(function (x) { x.classList.remove("active"); });
+            b.classList.add("active");
+            onPick(v);
+          });
+          segEl.appendChild(b);
+        });
+        rowEl.appendChild(segEl);
+        into.appendChild(rowEl);
+      }
+      /* a slider row over RAW values; fmt renders the readout. onInput fires
+         on every tick — callers apply live and debounce their own persist. */
+      function sliderRow(into, label, min, max, step, value, fmt, onInput) {
+        var rowEl = BV.el("div", { class: "set-row" });
+        rowEl.appendChild(BV.el("span", { class: "name" }, BV.esc(label)));
+        var holder = BV.el("div", { class: "range-wrap" });
+        var val = BV.el("span", { class: "range-val" }, fmt(value));
+        var input = BV.el("input", {
+          type: "range", min: String(min), max: String(max), step: String(step),
+          value: String(value),
+          oninput: function (e) {
+            var v = Number(e.target.value);
+            val.textContent = fmt(v);
+            onInput(v);
+          },
+        });
+        holder.appendChild(input);
+        holder.appendChild(val);
+        rowEl.appendChild(holder);
+        into.appendChild(rowEl);
+      }
+      function pct(v) { return v + "%"; }
+      /* persist a settings key debounced (sliders fire per tick) */
+      var _writers = {};
+      function persist(key, v) {
+        settings[key] = v;
+        if (!_writers[key]) _writers[key] = BV.debounce(function () {
+          BV.api.call("set_setting", key, settings[key]).catch(function () {});
+        }, 400);
+        _writers[key]();
+      }
+
       function switchTab(next) {
         if (activeTab === "themes" && next !== "themes") {
           BV.theme.applyById(committedId, false);   /* drop any hover preview */
@@ -68,10 +118,46 @@
         seg.appendChild(b);
       });
 
-      /* ---- themes tab: the category accordion ---- */
+      /* ---- the background block (tops the themes tab) ---- */
+      function buildBackground(into) {
+        section(into, "background");
+        var fxRow = BV.el("div", { class: "set-row" });
+        fxRow.appendChild(BV.el("span", { class: "name" }, "effect"));
+        var fxBtn = BV.el("button", { class: "btn fx-pick" }, BV.esc(BV.bgfx.activeName()) + " ▾");
+        fxRow.appendChild(fxBtn);
+        into.appendChild(fxRow);
+        fxBtn.addEventListener("click", function () {
+          BV.menu(fxBtn, BV.bgfx.EFFECTS.map(function (t) {
+            return {
+              label: t.name + (t.id === BV.bgfx.activeId ? "  ✓" : ""),
+              onClick: function () {
+                BV.bgfx.set(t.id, true);
+                fxBtn.textContent = t.name + " ▾";
+              },
+            };
+          }));
+        });
+        sliderRow(into, "intensity", 10, 100, 5, Math.round(BV.bgfx.intensity * 100), pct,
+          function (v) { BV.bgfx.tune({ intensity: v / 100 }, true); });
+        sliderRow(into, "size", 50, 200, 10, Math.round(BV.bgfx.size * 100), pct,
+          function (v) { BV.bgfx.tune({ size: v / 100 }, true); });
+        /* frost: 0 = the solid original; drives --frost -> --panel/--glass */
+        sliderRow(into, "frost", 0, 85, 5, Math.round((Number(settings.frost) || 0) * 100), pct,
+          function (v) {
+            persist("frost", v / 100);
+            BV.uiPrefs.apply(settings);
+          });
+        into.appendChild(BV.el("div", { class: "acc-credit" }, BV.esc(FX_CREDIT)));
+      }
+
+      /* ---- themes tab: background block + the category accordion ---- */
       function buildThemes() {
         var all = BV.theme.themes;
+        var wrap = BV.el("div");
+        buildBackground(wrap);
+        section(wrap, "colors");
         var acc = BV.el("div", { class: "theme-acc" });
+        wrap.appendChild(acc);
         var built = false;   /* guards the initial programmatic open from persisting */
         var focusEl = null;
 
@@ -230,101 +316,44 @@
           var sel = acc.querySelector('.opt-row[data-theme-id="' + committedId + '"]');
           setFocus(sel && sel.offsetParent !== null ? sel : visRows()[0], false);
         }, 0);
-        return acc;
+        return wrap;
       }
 
-      /* ---- customize tab: appearance / text & scale / background ---- */
+      /* ---- customize tab: appearance + text & scale ---- */
       function buildCustomize() {
         var wrap = BV.el("div");
         var P = BV.uiPrefs;
 
-        function section(title) {
-          wrap.appendChild(BV.el("div", { class: "set-head" }, BV.esc(title)));
-        }
-        function segRow(label, values, current, fmt, onPick) {
-          var rowEl = BV.el("div", { class: "set-row" });
-          rowEl.appendChild(BV.el("span", { class: "name" }, BV.esc(label)));
-          var segEl = BV.el("div", { class: "seg" });
-          values.forEach(function (v) {
-            var b = BV.el("button", { class: v === current ? "active" : "" }, fmt(v));
-            b.addEventListener("click", function () {
-              segEl.querySelectorAll("button").forEach(function (x) { x.classList.remove("active"); });
-              b.classList.add("active");
-              onPick(v);
-            });
-            segEl.appendChild(b);
-          });
-          rowEl.appendChild(segEl);
-          wrap.appendChild(rowEl);
-        }
-        function pref(key, v) {
-          settings[key] = v;
-          P.apply(settings);
-          BV.api.call("set_setting", key, v).catch(function () {});
-        }
-
-        section("appearance");
-        segRow("font", P.FONT_OPTIONS.map(function (o) { return o.id; }),
+        section(wrap, "appearance");
+        segRow(wrap, "font", P.FONT_OPTIONS.map(function (o) { return o.id; }),
           settings.font_family || P.DEFAULT_FONT_FAMILY,
           function (id) {
             var o = P.FONT_OPTIONS.find(function (x) { return x.id === id; });
             return o ? o.label : id;
           },
-          function (id) { pref("font_family", id); });
-        segRow("borders", [true, false], settings.edges !== false,
-          function (v) { return v ? "on" : "off"; },
-          function (v) { pref("edges", v); });
-
-        section("text & scale");
-        segRow("text size", P.FONT_SIZES, settings.font_size || P.DEFAULT_FONT,
-          function (v) { return v + "px"; },
-          function (v) { pref("font_size", v); });
-        segRow("chrome scale", P.CHROME_SCALES, P.chromeScale(settings),
-          function (v) { return Math.round(v * 100) + "%"; },
-          function (v) { pref("chrome_scale", v); });
-
-        section("background");
-        var fxRow = BV.el("div", { class: "set-row" });
-        fxRow.appendChild(BV.el("span", { class: "name" }, "effect"));
-        var fxBtn = BV.el("button", { class: "btn fx-pick" }, BV.esc(BV.bgfx.activeName()) + " ▾");
-        fxRow.appendChild(fxBtn);
-        wrap.appendChild(fxRow);
-        fxBtn.addEventListener("click", function () {
-          BV.menu(fxBtn, BV.bgfx.EFFECTS.map(function (t) {
-            return {
-              label: t.name + (t.id === BV.bgfx.activeId ? "  ✓" : ""),
-              onClick: function () {
-                BV.bgfx.set(t.id, true);
-                fxBtn.textContent = t.name + " ▾";
-              },
-            };
-          }));
-        });
-
-        function sliderRow(label, min, max, step, value, onInput) {
-          var rowEl = BV.el("div", { class: "set-row" });
-          rowEl.appendChild(BV.el("span", { class: "name" }, BV.esc(label)));
-          var holder = BV.el("div", { class: "range-wrap" });
-          var val = BV.el("span", { class: "range-val" }, Math.round(value * 100) + "%");
-          var input = BV.el("input", {
-            type: "range", min: String(min), max: String(max), step: String(step),
-            value: String(Math.round(value * 100)),
-            oninput: function (e) {
-              var v = Number(e.target.value) / 100;
-              val.textContent = e.target.value + "%";
-              onInput(v);
-            },
+          function (id) {
+            persist("font_family", id);
+            P.apply(settings);
           });
-          holder.appendChild(input);
-          holder.appendChild(val);
-          rowEl.appendChild(holder);
-          wrap.appendChild(rowEl);
-        }
-        sliderRow("intensity", 10, 100, 5, BV.bgfx.intensity,
-          function (v) { BV.bgfx.tune({ intensity: v }, true); });
-        sliderRow("size", 50, 200, 10, BV.bgfx.size,
-          function (v) { BV.bgfx.tune({ size: v }, true); });
-        wrap.appendChild(BV.el("div", { class: "acc-credit" }, BV.esc(FX_CREDIT)));
+        segRow(wrap, "borders", [true, false], settings.edges !== false,
+          function (v) { return v ? "on" : "off"; },
+          function (v) {
+            persist("edges", v);
+            P.apply(settings);
+          });
+
+        section(wrap, "text & scale");
+        sliderRow(wrap, "text size", 12, 24, 1, settings.font_size || P.DEFAULT_FONT,
+          function (v) { return v + "px"; },
+          function (v) {
+            persist("font_size", v);
+            P.apply(settings);
+          });
+        sliderRow(wrap, "chrome scale", 85, 160, 5, Math.round(P.chromeScale(settings) * 100), pct,
+          function (v) {
+            persist("chrome_scale", v / 100);
+            P.apply(settings);
+          });
 
         return wrap;
       }

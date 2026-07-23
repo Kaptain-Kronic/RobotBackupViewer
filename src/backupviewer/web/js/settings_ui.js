@@ -42,6 +42,36 @@
     return DEFAULT_CHROME;
   }
 
+  /* frosted surfaces: compute the --panel/--glass rgba fills in JS and set
+     them inline on <html>. The CSS-only route (color-mix over a calc of the
+     frost var) is NOT reliably re-resolved by Chromium on existing elements
+     when the var changes - the slider looked dead. Runs on every
+     uiPrefs.apply AND on theme switches (colors move under the fills). */
+  var _lastFrost = 0;
+  function applyFrost(frost) {
+    _lastFrost = frost;
+    var root = document.documentElement;
+    root.style.setProperty("--frost", String(frost));   /* drives --glass-blur */
+    if (!frost) {
+      /* exactly the solid original: fall back to the stylesheet defaults */
+      root.style.removeProperty("--panel");
+      root.style.removeProperty("--glass");
+      return;
+    }
+    var cs = getComputedStyle(root);
+    function rgba(varName, alpha) {
+      var m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(cs.getPropertyValue(varName).trim());
+      var h = m ? m[1] : "323437";
+      if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+      return "rgba(" + parseInt(h.slice(0, 2), 16) + "," + parseInt(h.slice(2, 4), 16) + ","
+        + parseInt(h.slice(4, 6), 16) + "," + alpha.toFixed(3) + ")";
+    }
+    root.style.setProperty("--panel", rgba("--bg2", 1 - frost * 0.6));
+    root.style.setProperty("--glass", rgba("--bg", 1 - frost * 0.55));
+  }
+  /* theme switches (including the editor's live preview) move --bg/--bg2 */
+  BV.state.on("theme", function () { applyFrost(_lastFrost); });
+
   BV.uiPrefs = {
     /* the theme window (theme_ui.js) builds its rows from these */
     FONT_SIZES: FONT_SIZES,
@@ -65,6 +95,8 @@
       document.documentElement.style.removeProperty("--app-zoom");
       /* accent panel borders on by default; "off" flattens the UI (see base.css .no-edges) */
       document.documentElement.classList.toggle("no-edges", settings.edges === false);
+      /* frosted surfaces: 0 = the solid original; --panel/--glass derive from it */
+      applyFrost(Math.min(0.85, Math.max(0, Number(settings.frost) || 0)));
       if (BV.bgfx) BV.bgfx.apply(settings);   /* idempotent - only reacts to changes */
       BV.state.emit("uiprefs", settings);
     },

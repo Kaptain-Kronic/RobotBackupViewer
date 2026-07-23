@@ -45,7 +45,8 @@
   position: sticky;
   top: -0.8rem;            /* cancel #view's top padding */
   z-index: 5;
-  background: var(--bg);
+  background: var(--glass);           /* frost-aware; solid --bg at frost 0 */
+  backdrop-filter: var(--glass-blur);
   border-left: 3px solid var(--accent);
   margin: -0.75rem -1.25rem 0.35rem;
   padding: 1.05rem 1.45rem 0.7rem;
@@ -55,7 +56,9 @@
 .hero .hero-sub { color: var(--sub); font-size: 0.85rem; }
 
 /* ---- tables ---- */
-.tbl-wrap { overflow: auto; border-radius: var(--radius); background: var(--bg2); border: 1px solid var(--edge); }
+/* content surfaces take --panel (frost-aware --bg2; sticky THs inside stay
+   solid --bg2 — rows scrolling under a translucent header would ghost) */
+.tbl-wrap { overflow: auto; border-radius: var(--radius); background: var(--panel); border: 1px solid var(--edge); }
 table.tbl { border-collapse: collapse; width: 100%; font-size: 0.85rem; font-family: var(--font-mono); }
 .tbl th, .tbl td { text-align: left; padding: 0.28rem 0.8rem; white-space: nowrap; }
 .tbl th {
@@ -79,7 +82,7 @@ table.tbl { border-collapse: collapse; width: 100%; font-size: 0.85rem; font-fam
 .tbl td.accent { color: var(--accent); }
 
 /* virtual table */
-.vtable { position: relative; overflow: auto; background: var(--bg2); border-radius: var(--radius); font-family: var(--font-mono); border: 1px solid var(--edge); }
+.vtable { position: relative; overflow: auto; background: var(--panel); border-radius: var(--radius); font-family: var(--font-mono); border: 1px solid var(--edge); }
 .vtable .vt-head {
   display: flex; position: sticky; top: 0; z-index: 3;
   background: var(--bg2);
@@ -215,7 +218,8 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
   padding-top: 10vh;
 }
 .modal {
-  background: var(--bg2);
+  background: var(--panel);
+  backdrop-filter: var(--glass-blur);
   border: 1px solid var(--edge);
   border-radius: var(--radius);
   min-width: 420px; max-width: 640px; max-height: 70vh;
@@ -721,7 +725,7 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
   margin-bottom: 0.7rem; font-size: 0.84rem; color: var(--sub);
 }
 
-.dcs-entry { background: var(--bg2); border: 1px solid var(--edge); border-radius: var(--radius); margin-bottom: 0.3rem; overflow: hidden; }
+.dcs-entry { background: var(--panel); border: 1px solid var(--edge); border-radius: var(--radius); margin-bottom: 0.3rem; overflow: hidden; }
 .dcs-entry.dim { opacity: 0.6; }
 .dcs-entry-head {
   display: flex; align-items: center; gap: 0.7rem;
@@ -792,7 +796,7 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
   margin: -0.75rem -1.25rem 0.5rem; padding: 0.85rem 1.45rem 0.7rem;
   border-bottom: 1px solid var(--edge);
 }
-.dcs-dash-cell { background: var(--bg2); border: 1px solid var(--edge-soft); border-radius: var(--radius); padding: 0.55rem 0.8rem; min-width: 0; }
+.dcs-dash-cell { background: var(--panel); border: 1px solid var(--edge-soft); border-radius: var(--radius); padding: 0.55rem 0.8rem; min-width: 0; }
 .dcs-dash-cell.clickable { cursor: pointer; transition: background var(--trans); }
 .dcs-dash-cell.clickable:hover { background: color-mix(in srgb, var(--sub-alt) 20%, var(--bg2)); }
 .dcs-dash-h { font-size: 0.74rem; color: var(--sub); text-transform: lowercase; font-weight: 600; margin-bottom: 0.4rem; display: flex; align-items: center; gap: 0.4rem; }
@@ -824,7 +828,7 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 
 /* ---- system vars tree ---- */
 .sysvar-list { font-size: 0.85rem; }
-.sysvar-node { background: var(--bg2); border: 1px solid var(--edge); border-radius: var(--radius); margin-bottom: 0.25rem; overflow: hidden; }
+.sysvar-node { background: var(--panel); border: 1px solid var(--edge); border-radius: var(--radius); margin-bottom: 0.25rem; overflow: hidden; }
 .sysvar-node > .bv-collapse-body { padding: 0.15rem 0.5rem 0.45rem; }
 .sysvar-head { display: flex; align-items: baseline; gap: 0.6rem; padding: 0.35rem 0.8rem; }
 .sysvar-leaf { display: flex; align-items: baseline; gap: 0.6rem; padding: 0.35rem 0.8rem; }
@@ -938,7 +942,9 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .home-lib-loading { margin: 0.4rem 0 0.7rem; max-width: 30rem; }
 
 .home-lib-head {
-  position: sticky; top: -0.8rem; z-index: 5; background: var(--bg);
+  position: sticky; top: -0.8rem; z-index: 5;
+  background: var(--glass);           /* frost-aware; solid --bg at frost 0 */
+  backdrop-filter: var(--glass-blur);
   margin: -0.75rem -1.25rem 1.1rem; padding: 0.95rem 1.45rem 0.6rem;
   display: flex; align-items: center; justify-content: space-between;
   gap: 0.5rem 1.2rem; flex-wrap: wrap;
@@ -972,7 +978,7 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 }
 .bv-collapsible.open > .lib-line-body.cam-grid { display: grid; }
 .cam-tile {
-  border: 1px solid var(--edge); border-radius: var(--radius); background: var(--bg2);
+  border: 1px solid var(--edge); border-radius: var(--radius); background: var(--panel);
   overflow: hidden; cursor: pointer; transition: background var(--trans);
 }
 .cam-tile:hover { background: color-mix(in srgb, var(--sub-alt) 22%, var(--bg2)); }
@@ -1032,7 +1038,7 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 
 .lib-robot {
   display: flex; align-items: center; gap: 0.7rem;
-  background: var(--bg2); border: 1px solid var(--edge); border-radius: var(--radius);
+  background: var(--panel); border: 1px solid var(--edge); border-radius: var(--radius);
   padding: 0.5rem 0.6rem 0.5rem 0.7rem; margin: 0 0 0.35rem 0.6rem; cursor: pointer;
   transition: background var(--trans);
   /* Only rows on screen get laid out. A plant library is thousands of rows,
@@ -1453,7 +1459,7 @@ text.v3-ax-z { fill: var(--accent); }
 .v3-pose-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.3rem 0.5rem; padding: 0.2rem 0 0.4rem; }
 .v3-pose-cell { display: flex; align-items: center; gap: 0.3rem; font-size: 0.72rem; color: var(--sub); }
 .v3-pose-cell input { width: 100%; min-width: 0; padding: 0.15rem 0.3rem; font-size: 0.78rem; }
-.v3-row { background: var(--bg2); border: 1px solid var(--edge); border-radius: var(--radius); margin-bottom: 0.3rem; overflow: hidden; }
+.v3-row { background: var(--panel); border: 1px solid var(--edge); border-radius: var(--radius); margin-bottom: 0.3rem; overflow: hidden; }
 .v3-row-head { display: flex; align-items: center; gap: 0.45rem; padding: 0.4rem 0.6rem; }
 .v3-row-head:hover { background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .v3-row-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.82rem; }

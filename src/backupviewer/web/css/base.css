@@ -29,6 +29,24 @@
   --edge: color-mix(in srgb, var(--accent) 45%, transparent);
   --edge-soft: color-mix(in srgb, var(--accent) 26%, transparent);
 
+  /* frosted surfaces: the theme window's frost slider drives these. The
+     rgba fills are computed in JS (BV.uiPrefs.apply) and set inline on
+     <html> whenever frost or the theme changes — NOT via
+     color-mix(calc(var())) here, because Chromium does not reliably
+     re-resolve that chain on existing elements when the var changes (fresh
+     elements got the new value, live ones kept the old — a real
+     invalidation quirk we hit). These defaults are the solid original, so
+     at frost 0 / with no JS override every theme renders exactly as before.
+     --panel skins content surfaces (rows, tables, cards) — translucency
+     only, no blur: dozens of blurred rows would crawl under software
+     rendering. --glass + --glass-blur are for the FEW sticky overlays
+     (library head, hero, modal) that need real backdrop blur to keep
+     content legible scrolling beneath. */
+  --frost: 0;
+  --panel: var(--bg2);
+  --glass: var(--bg);
+  --glass-blur: blur(calc(var(--frost) * 14px));
+
   --font-mono: "Cascadia Code", "Consolas", "JetBrains Mono", ui-monospace, monospace;
   /* UI font - the font picker (settings_ui.js) overrides this at runtime. Defaults to
      mono so the app is visually unchanged until a user opts in, and so chrome falls
@@ -210,7 +228,7 @@ body { overflow: hidden; }
   display: flex; align-items: center; gap: 0.9em;
   flex: none; padding: 0.5em 1.6em;
   border-top: 1px solid var(--edge-soft, transparent);
-  background: var(--bg2); font-size: calc(var(--chrome-fs, 15px) * 0.78);
+  background: var(--panel); font-size: calc(var(--chrome-fs, 15px) * 0.78);
   color: var(--sub);
 }
 #jobstrip .jobstrip-run {
@@ -226,7 +244,8 @@ body { overflow: hidden; }
   position: absolute; right: 1.6em; bottom: 100%; margin-bottom: 0.4em;
   width: min(34em, calc(100vw - 3.2em));
   max-height: 46vh; overflow-y: auto;
-  background: var(--bg2); border: 1px solid var(--edge);
+  background: var(--panel); backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--edge);
   border-radius: var(--radius); padding: 0.3em;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
   z-index: 40;

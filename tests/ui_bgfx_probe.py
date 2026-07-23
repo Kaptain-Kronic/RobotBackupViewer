@@ -109,20 +109,20 @@ def probe(window):
         check("teardown.layers_gone",
               not js(window, "!!document.getElementById('bgfx-canvas') || !!document.getElementById('bgfx-css')"))
 
-        # ---- theme window: customize tab sliders, effect menu, credit ----
+        # ---- theme window: themes tab = background block on top + colors ----
         check("theme.btn_present", js(window, "!!document.getElementById('btn-theme')"))
         js(window, "BV.bgfx.set('rain', false)")
-        js(window, "BV.themeUI.open('customize')")
+        js(window, "BV.themeUI.open('themes')")
         nsliders = poll(window, "document.querySelectorAll('.modal.theme-win input[type=range]').length")
-        check("theme.sliders", nsliders == 2, f"(got {nsliders})")
+        check("theme.bg_sliders_on_themes_tab", nsliders == 3, f"(got {nsliders})")
         check("theme.fx_button_names_current",
               (js(window, "document.querySelector('.modal .btn.fx-pick').textContent") or "").startswith("rain"))
         check("theme.credit_line",
               js(window, "[...document.querySelectorAll('.modal .acc-credit')].some(function(c){return c.textContent.indexOf('odysseus') >= 0;})"))
 
-        # the intensity slider drives the live value and persists (debounced)
+        # the intensity slider (first) drives the live value and persists (debounced)
         js(window, """(function(){
-            var r = document.querySelector('.modal.theme-win input[type=range]');
+            var r = document.querySelectorAll('.modal.theme-win input[type=range]')[0];
             r.value = '40';
             r.dispatchEvent(new Event('input', {bubbles: true}));
         })()""")
@@ -137,10 +137,41 @@ def probe(window):
             time.sleep(0.25)
         check("theme.intensity_persists", saved_i == 0.4, f"(got {saved_i})")
 
+        # the frost slider (third) drives --frost and persists
+        js(window, """(function(){
+            var r = document.querySelectorAll('.modal.theme-win input[type=range]')[2];
+            r.value = '40';
+            r.dispatchEvent(new Event('input', {bubbles: true}));
+        })()""")
+        check("theme.frost_live",
+              js(window, "document.documentElement.style.getPropertyValue('--frost')") == "0.4")
+        deadline = time.time() + 4
+        saved_f = None
+        while time.time() < deadline:
+            saved_f = bv_settings.load().get("frost")
+            if saved_f == 0.4:
+                break
+            time.sleep(0.25)
+        check("theme.frost_persists", saved_f == 0.4, f"(got {saved_f})")
+
         # the effect dropdown lists every effect incl. off
         js(window, "document.querySelector('.modal .btn.fx-pick').click()")
         nitems = poll(window, "document.querySelectorAll('.ctx-menu .ctx-item').length")
         check("theme.fx_menu_items", nitems == 13, f"(got {nitems})")
+        js(window, """document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))""")
+        time.sleep(0.3)
+
+        # ---- customize tab: text & scale are sliders now ----
+        js(window, "BV.themeUI.open('customize')")
+        ncust = poll(window, "document.querySelectorAll('.modal.theme-win input[type=range]').length")
+        check("theme.customize_sliders", ncust == 2, f"(got {ncust})")
+        js(window, """(function(){
+            var r = document.querySelectorAll('.modal.theme-win input[type=range]')[0];
+            r.value = '18';
+            r.dispatchEvent(new Event('input', {bubbles: true}));
+        })()""")
+        check("theme.text_size_live",
+              js(window, "document.documentElement.style.fontSize") == "18px")
         js(window, """document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))""")
         time.sleep(0.3)
 
