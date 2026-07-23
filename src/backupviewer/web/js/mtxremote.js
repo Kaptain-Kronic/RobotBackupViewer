@@ -42,11 +42,14 @@
     var spacer = BV.el("span", { style: "margin-left:auto" });
     var rlBtn = BV.el("button", { class: "btn", title: "reload this tab" }, "⟳ reload");
     var winBtn = BV.el("button", { class: "btn", title: "open this tab in a separate window" }, "open in window");
+    var phBtn = BV.el("button", { class: "btn",
+      title: "live view on your phone (QR) — for focus work at the lens" }, "📱 phone");
     var fsBtn = BV.el("button", { class: "btn", title: "fullscreen" }, "fullscreen");
     var closeBtn = BV.el("button", { class: "btn", title: "close (esc)" }, "✕ close");
     bar.appendChild(title); bar.appendChild(tabStrip); bar.appendChild(status);
     bar.appendChild(spacer);
-    bar.appendChild(rlBtn); bar.appendChild(winBtn); bar.appendChild(fsBtn);
+    bar.appendChild(rlBtn); bar.appendChild(winBtn); bar.appendChild(phBtn);
+    bar.appendChild(fsBtn);
     bar.appendChild(closeBtn);
 
     var stage = BV.el("div", { class: "cvx-stage" });
@@ -91,6 +94,7 @@
         BV.toast("opened in its own window");
       }).catch(function (e) { BV.toast("could not open window: " + e.message); });
     });
+    phBtn.addEventListener("click", function () { BV.openPhoneView(ip, label || ip); });
 
     /* popups are only allowed on the home tab when no operator pages were
        captured (then a browser popup beats a dead link); with tabs in place

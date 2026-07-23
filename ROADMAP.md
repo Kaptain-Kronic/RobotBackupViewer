@@ -86,6 +86,11 @@ Each of these is deliberately scoped to land on its own. Good places to start.
 Attach vision devices to robot entries; open a robot, see its cameras;
 one click backs up the robot + all its cameras together.
 
+- 🔨 **Phone view** — QR handoff to a phone browser showing the Matrox live
+  HMI frame (relayed by the PC; hand-rolled stdlib QR). Landing on the
+  `phone-view` branch. Natural follow-up: the CV-X screen-mirror on the same
+  relay (its frames already flow through cvx_remote's MJPEG server).
+
 - 🔨 **Discovery** — agreed direction: probe the DesignAssistant web portal
   (:80/:443) and EtherNet/IP ListIdentity (UDP 44818, Matrox vendor ID) for
   the newer Iris GTX — the old FTP/SMB port gates only find Keyence CV-X and

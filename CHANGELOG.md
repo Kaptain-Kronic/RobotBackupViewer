@@ -1,6 +1,20 @@
 # Changelog
 
 ## Unreleased
+- **Phone view for Matrox cameras.** A 📱 phone button (in the MTX remote's
+  bar and on camera cards) shows a QR code; scan it and the phone's browser
+  gets a black page with nothing but the camera's live HMI frame — the
+  second pair of eyes for focus work at the lens. The PC relays the frame,
+  so the phone only needs to reach the PC (same wifi, or the Windows mobile
+  hotspot — the modal ranks the hotspot address first and shows a chip per
+  network adapter), never the robot network. Off by default, token-gated,
+  read-only; however many phones watch, the camera sees at most one gentle
+  fetch per beat (the same file its own wall page polls at 1 Hz). The QR
+  encoder is hand-rolled stdlib (the stack stays locked), ground-truthed
+  against an independent decoder across every version and mask it emits.
+- **Dialogs beat overlays.** Modals (and menus above them) now stack above
+  the remote-operation overlay, so the phone-view QR can open from inside
+  the MTX remote without vanishing behind it.
 - **Browser-style backup tabs.** Every opened robot or camera lands on a tab
   in the topbar (the content tabs drop to a slim second row): open several
   backups at once, click to switch — every tab restores exactly where you

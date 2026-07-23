@@ -28,6 +28,8 @@ from . import keyencebackup
 from . import library
 from . import modeldb
 from . import mtxbackup
+from . import phoneview
+from . import qr
 from . import search as search_mod
 from . import settings
 from .parsers import (alarms, callgraph, curpos, dcs, dcszones, frames,
@@ -225,6 +227,7 @@ class Api:
         self._lib_sig: str | None = None  # tree signature at the last scan (None = never)
         self._cvx: dict[str, cvx_remote.CvxRemoteSession] = {}  # live CV-X remote sessions
         self._cvx_server = None  # lazy MJPEG frame server (one for all sessions)
+        self._phone_share: phoneview.PhoneShare | None = None  # lazy phone-view relay
         # linked-camera photo sessions, keyed camera_id -> (path, sig, session).
         # sig is the latest mirror's backup.json mtime, so a fresh camera backup
         # (which rewrites the SAME Latest/ path) invalidates the cache.
@@ -1674,6 +1677,64 @@ class Api:
         import webview   # pywebview supports create_window after start()
         webview.create_window(f"MTX remote · {label}", url, width=1200, height=850)
         return True
+
+    # -- phone live view (scan a QR, the phone shows the camera's frame) --------------
+    # For focus/aim work AT the camera: the phone in your hand shows the same
+    # HMI frame the multicam wall polls, relayed by the laptop so the phone
+    # only needs a route to the laptop (hotspot or wifi), never to the camera
+    # VLAN. Posture (token gates, single-flight camera fetch, off by default)
+    # lives in phoneview.py.
+
+    @_endpoint
+    def phone_view_start(self, spec: dict):
+        """Share camera spec.ip with phones. Boots the relay if needed, mints
+        (or rejoins) the camera's share, and returns {token, port, urls} where
+        urls lists every address this machine answers on, most phone-reachable
+        first: [{ip, url, kind}] with kind hotspot / lan / camera network."""
+        ip = _require_ip(spec)
+        label = (spec.get("label") or "").strip() or ip
+        if self._phone_share is None:
+            self._phone_share = phoneview.PhoneShare()
+        try:
+            r = self._phone_share.start_session(ip, label)
+        except OSError as e:
+            raise ApiError("PHONE_VIEW", f"could not start the share server: {e}")
+        urls = phoneview.lan_urls(ip, r["port"], r["token"])
+        if not urls:
+            raise ApiError("PHONE_VIEW",
+                           "this machine has no reachable address - is any network up?")
+        return {"token": r["token"], "port": r["port"], "urls": urls}
+
+    @_endpoint
+    def phone_view_qr(self, spec: dict):
+        """QR matrix for a share URL: {size, rows} with rows as "0110..."
+        strings, 1 = dark. Renders only URLs the running share actually
+        serves - this is the share's QR, not a general QR maker."""
+        text = ((spec or {}).get("text") or "").strip()
+        share = self._phone_share
+        p = urllib.parse.urlsplit(text)
+        tokens = {s["token"] for s in share.status()["sessions"]} if share else set()
+        if not (share and p.scheme == "http" and p.port == share.port
+                and p.path in {f"/v/{t}" for t in tokens}):
+            raise ApiError("BAD_SPEC", "not an active share URL")
+        matrix = qr.encode(text)
+        return {"size": len(matrix), "rows": ["".join(map(str, row)) for row in matrix]}
+
+    @_endpoint
+    def phone_view_stop(self, spec: dict = None):
+        """Stop one share (spec.token) or every share (no token). The relay
+        server stops with the last share. Returns how many remain."""
+        if self._phone_share is None:
+            return 0
+        return self._phone_share.stop_session((spec or {}).get("token"))
+
+    @_endpoint
+    def phone_view_status(self):
+        """The relay right now: {running, port, sessions:[{token, ip, label,
+        phones, pulls, last_pull_ms, frame_age_ms, fetch_err}]}."""
+        if self._phone_share is None:
+            return {"running": False, "port": None, "sessions": []}
+        return self._phone_share.status()
 
     # -- themes & settings ------------------------------------------------------------
 
