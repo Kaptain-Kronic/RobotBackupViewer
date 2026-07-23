@@ -29,6 +29,17 @@
   is missing (the probe environment). The choice persists like every other
   pref.
 
+- **Release check.** The app can now notice a newer release on GitHub: the
+  packaged exe pings the public releases feed once on boot (source runs and
+  probes never phone home) and shows a quiet toast plus a statusbar pill;
+  the about box grows a **check for updates** button that works anywhere
+  and answers honestly — up to date / newer on github (with an
+  open-the-release-page button) / this build is ahead of the newest
+  release / no releases yet / couldn't reach github. One 4-second attempt,
+  no retries: offline is a first-class outcome, not an error. A found
+  version can be skipped (silences the boot reminder for that one) and ⚙
+  settings gains a check-on-startup switch.
+
 ## v1.3 — the camera wall + six sharper scans
 - **Six new fleet-scan checks.** Two catch hand-edits left in programs:
   **remarked positions** (motion lines commented out with `//` — the robot is

@@ -36,8 +36,9 @@ Each of these is deliberately scoped to land on its own. Good places to start.
   empty-state guidance.
 - 📋 **UI scaling audit + XXL preset** — raise the current 24px/160% caps
   without layouts collapsing; probe-gated at the extremes.
-- 📋 **Auto-update check** — quiet "newer release exists" toast (GitHub
-  releases ping, fully offline-tolerant).
+- ✅ **Auto-update check** — shipped: the packaged exe pings GitHub releases
+  once on boot (toast + statusbar pill, fully offline-tolerant), the about
+  box checks manually anywhere; see CHANGELOG.
 - 📋 **Library-wide content search** — "which robots call PROG_X / use R[57] /
   reference DI[279]" across the whole library, not just the open backup.
 - 📋 **Absorb `tools/restyle.py`** — the style-clone kit builder gets UI inside

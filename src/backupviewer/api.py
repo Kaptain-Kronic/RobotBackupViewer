@@ -1653,6 +1653,21 @@ class Api:
         return __version__
 
     @_endpoint
+    def check_update(self, auto=False):
+        """Newest GitHub release vs the running version (updatecheck.py).
+        auto=True is the boot path: the frozen/setting/env policy can turn it
+        into a no-op that answers "skipped" without touching the network
+        (source runs, probes, ⚙-toggled-off). The about box's manual button
+        calls without auto and always really checks."""
+        import sys
+
+        from . import updatecheck
+        if auto and not updatecheck.should_autocheck(
+                settings.load(), os.environ, getattr(sys, "frozen", False)):
+            return {"status": "skipped", "current": __version__}
+        return updatecheck.check(__version__)
+
+    @_endpoint
     def get_settings(self):
         return settings.load()
 
