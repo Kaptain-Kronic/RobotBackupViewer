@@ -1261,12 +1261,12 @@ class Api:
                     row["diffable"] = True
                     row["summary"] = f"{n} difference{'s' if n != 1 else ''} detected"
                     kept.append(row)
-                result["rows"] = kept
-                counts = {"added": 0, "removed": 0, "changed": 0}
-                for r in kept:
-                    counts[r["kind"]] += 1
-                result["counts"] = counts
-                return result
+                # re-finish over the kept rows so counts/rows/truncated agree with
+                # each other. diff_programs already capped once, so carry its
+                # truncation forward - rows were dropped even if kept is short.
+                out = compare.finish(kept)
+                out["truncated"] = out["truncated"] or bool(result.get("truncated"))
+                return out
 
             def mastering_audit():
                 result = compare.audit_mastering(
