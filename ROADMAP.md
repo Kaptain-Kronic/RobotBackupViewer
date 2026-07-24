@@ -120,6 +120,23 @@ one click backs up the robot + all its cameras together.
 
 ## 2.0 — editing (the headline)
 
+In progress (claimed 2026-07-23, first slices building on main):
+
+- ✅ **Program (.LS) editor v1** — view↔edit toggle on the program detail;
+  edit mode is a pendant-like structured editor (auto line numbers in a
+  gutter, live TP syntax colors, no `;`/scaffolding — you type instructions
+  only), details toggle reveals editable attributes (owner/comment/protect)
+  and point data (masked `********` points are uninitialized, typing a value
+  initializes them). Save exports edited `.LS` to a user-picked flat folder —
+  never the backup. Engine: `parsers/ls_edit.py` (split/renumber/re-emit,
+  byte-exact for untouched lines; format rules measured over 6478 real
+  programs / 378k lines, round-trip fuzz in `tests/test_ls_edit.py`).
+- ❓ **Hardware gate:** load an exported `.LS` (passthrough + edited) on a
+  real controller. Also settles whether stale `LINE_COUNT`/`PROG_SIZE`
+  header attrs matter (we leave them untouched — not ours to invent).
+- 📋 Next in this lane: insert-CALL picker (pick a real program/macro from
+  the backup), then the review-your-edits diff screen.
+
 Decided principles (these are settled — build against them):
 
 - 📋 **Never soil the backup.** Backups stay read-only evidence; edits live in

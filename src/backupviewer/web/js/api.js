@@ -31,6 +31,7 @@
     get_overview: 0, get_styles: 0, get_program: 1,
     get_call_tree: 2, get_alarm_files: 0, get_alarms: 4, list_files: 0,
     get_file: 1, get_photos: 0, get_image: 1,
+    get_program_editable: 1, export_edited_programs: 2,
   };
 
   var readyResolve;
