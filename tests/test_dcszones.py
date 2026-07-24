@@ -352,3 +352,44 @@ def test_empty_sources_stay_total():
     z = dcszones.build_zones(None, None)
     assert z["cpc"] == [] and z["jpc"] == [] and z["models"] == []
     assert z["groups"] == [1] and z["tcp"] is None
+
+
+def _one_cpc(**kw):
+    """A single-zone DCSPOS.VA, defaults sane, one field overridable."""
+    args = dict(n=1, comment="Zone", enable=1, mode=1, grp=1, ufrm=0, num_vtx=8,
+                xs=[-100.0, 100.0], ys=[-100.0, 100.0], z1=500.0, z2=0.0)
+    args.update(kw)
+    return "\n".join([
+        "[*SYSTEM*]$DCSS_CPC  Storage: SHADOW  Access: RW  : ARRAY[32] OF DCSS_CPC_T",
+        _cpc_zone(**args),
+    ])
+
+
+def test_disabled_zone_is_not_reported_enabled():
+    """$ENABLE = FALSE / Uninitialized must read as DISABLED.
+
+    Regression: dcszones used to carry its own scalar coercer that returned
+    the literal text, so bool("FALSE") and bool("Uninitialized") were both
+    True - a disabled or never-taught safety zone drew as an ENABLED fence.
+    Wrong data about a safety zone is the worst thing this app can do."""
+    for raw in ("FALSE", "Uninitialized", "0"):
+        z = dcszones.build_zones(_one_cpc(enable=raw), None)
+        assert z["cpc"][0]["enabled"] is False, f"$ENABLE = {raw} read as enabled"
+    assert dcszones.build_zones(_one_cpc(enable=1), None)["cpc"][0]["enabled"] is True
+
+
+def test_uninitialized_user_frame_does_not_crash():
+    """An untaught $UFRM_NUM used to reach int('Uninitialized') and take the
+    whole 3D tab down; it must degrade to "no frame" instead."""
+    z = dcszones.build_zones(_one_cpc(ufrm="Uninitialized"), None)
+    assert z["cpc"][0]["ufrm_num"] == 0
+    assert z["cpc"][0]["frame"] is None
+    assert z["cpc"][0]["frame_missing"] is False   # 0 = none referenced, not a dangling ref
+
+
+def test_uninitialized_vertex_stays_numeric():
+    """An uninitialized vertex coerces to None; geometry must see 0.0 like an
+    absent one, not None leaking into the projection math."""
+    va = _one_cpc().replace("      [2] = 1.000000e+02", "      [2] = Uninitialized", 1)
+    poly = dcszones.build_zones(va, None)["cpc"][0]["poly"]
+    assert all(isinstance(c, (int, float)) for pt in poly for c in pt)

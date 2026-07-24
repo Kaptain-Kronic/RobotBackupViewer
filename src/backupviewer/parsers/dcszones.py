@@ -36,6 +36,8 @@ from __future__ import annotations
 
 import re
 
+from .common import coerce_scalar
+
 # tables kept from DCSPOS.VA; everything else in the dump is skipped
 _WANTED = {"DCSS_CPC", "DCSS_CSC", "DCSS_JPC", "DCSS_JSC", "DCSS_UFRM", "DCSS_MODEL"}
 
@@ -59,15 +61,14 @@ _LINK_TYPES = {1: "NORMAL"}
 
 
 def _value(tok: str):
-    tok = tok.strip()
-    if tok.startswith("'"):
-        return tok.strip("'").strip()
-    try:
-        if re.fullmatch(r"-?\d+", tok):
-            return int(tok)
-        return float(tok)
-    except ValueError:
-        return tok
+    """Shared .VA scalar rules - do NOT re-implement these here.
+
+    The private version this replaced returned the literal text for
+    'Uninitialized' and 'FALSE', both of which are TRUTHY, so an
+    uninitialized OR explicitly-disabled safety zone read back as
+    enabled (bool("FALSE") is True) and an uninitialized $UFRM_NUM
+    crashed int()."""
+    return coerce_scalar(tok)
 
 
 def _parse_tables(text: str) -> dict:
@@ -115,8 +116,15 @@ def _parse_tables(text: str) -> dict:
 
 
 def _arr(rec: dict, field: str, n: int) -> list:
+    """Vertex/extent arrays as floats. An uninitialized element coerces to
+    None; treat it exactly like an absent one (0.0) so geometry stays
+    numeric rather than throwing deep in the projection math."""
     a = rec.get(field) or {}
-    return [a.get(i, 0.0) for i in range(1, n + 1)]
+    out = []
+    for i in range(1, n + 1):
+        v = a.get(i)
+        out.append(v if isinstance(v, (int, float)) and not isinstance(v, bool) else 0.0)
+    return out
 
 
 def _frames(tables: dict) -> dict:
