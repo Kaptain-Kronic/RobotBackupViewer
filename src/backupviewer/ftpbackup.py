@@ -282,7 +282,8 @@ class _JobBase:
         return {}
 
     def _write_meta(self, dated: Path, when: _dt.datetime, *, complete: bool,
-                    files: int = 0, nbytes: int = 0, errors: list | None = None):
+                    files: int = 0, nbytes: int = 0, errors: list | None = None,
+                    skipped: list | None = None):
         meta = {
             "robot": self.robot, "line": self.line, "plant": self.plant,
             "host": self.host, "taken": when.isoformat(timespec="seconds"),
@@ -292,6 +293,8 @@ class _JobBase:
         }
         if errors:
             meta["errors"] = errors
+        if skipped:
+            meta["skipped"] = skipped
         tmp = dated / "backup.json.tmp"
         tmp.write_text(json.dumps(meta, indent=2), encoding="utf-8")
         tmp.replace(dated / "backup.json")
@@ -301,8 +304,11 @@ class _JobBase:
         note = self.note.strip() or (
             f"{self.NOTE_PREFIX} {self.robot} taken {when.strftime('%Y-%m-%d %H:%M:%S')}")
         (dated / "notes.txt").write_text(note + "\n", encoding="utf-8")
+        # skipped comes off the job rather than the call site: a file we could
+        # not pull is exactly what backup.json exists to record, and a caller
+        # that forgets to pass it turns a lossy pull into a clean-looking one.
         self._write_meta(dated, when, complete=True, files=files, nbytes=nbytes,
-                         errors=errors)
+                         errors=errors, skipped=list(self._p["skipped"]))
 
     def _mirror_latest(self, dated: Path) -> Path | None:
         """Overwrite <...>/Latest/<robot> with this snapshot (see mirror_latest)."""

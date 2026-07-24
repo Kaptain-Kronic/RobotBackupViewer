@@ -305,6 +305,9 @@ body { overflow: hidden; }
 .jobstrip-panel .js-row.ok .js-mark { color: var(--ok); }
 .jobstrip-panel .js-row.err .js-mark,
 .jobstrip-panel .js-row.err .js-detail { color: var(--error); }
+/* finished, but lost files on the way - not a failure, not a clean pass */
+.jobstrip-panel .js-row.warn .js-mark,
+.jobstrip-panel .js-row.warn .js-detail { color: var(--warn); }
 .jobstrip-panel .js-row.dim { opacity: 0.6; }
 .jobstrip-panel .js-robot {
   flex: none; max-width: 12em;

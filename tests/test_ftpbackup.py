@@ -2,6 +2,7 @@
 pull -> disk-layout -> library -> re-open chain is verified with NO real
 controller. Live-controller testing is never the first validation."""
 import ftplib
+import json
 from pathlib import Path
 
 from backupviewer import ftpbackup, library, settings
@@ -155,6 +156,12 @@ def test_backup_end_to_end(monkeypatch, tmp_path):
     assert not list(dated.glob("*.part"))
     assert (dated / "notes.txt").read_text(encoding="utf-8").startswith("post-PM verification")
     assert (dated / "backup.json").is_file()
+
+    # a file we could not pull is recorded IN the backup, not just in the live
+    # snapshot the UI throws away when the job strip closes. backup.json is the
+    # honesty record; a lossy pull must never read as a whole one later.
+    meta = json.loads((dated / "backup.json").read_text(encoding="utf-8"))
+    assert "BACKDATE.IMG" in meta["skipped"]
 
     # Latest mirror: <...>/Latest/<robot>, full copy of the dated snapshot
     latest = Path(res["latest_path"])
