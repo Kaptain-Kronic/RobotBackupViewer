@@ -125,6 +125,31 @@ class _MONITORINFO(ctypes.Structure):
 _MONITOR_DEFAULTTONEAREST = 2
 _HWND_TOPMOST = -1
 _SWP_SHOWWINDOW = 0x0040
+_SWP_FRAMECHANGED = 0x0020
+_SW_SHOW = 5
+
+# Window prototypes on an ISOLATED user32 handle (never mutating the shared
+# ctypes.windll cache app.py also uses). Without restype/argtypes, ctypes
+# treats every handle as a 32-bit C int - and a top-level HWND on Win64 can
+# exceed 32 bits, so it gets truncated and the call silently no-ops. That was
+# the dc9d9b3 "picker never shows" bug: SetWindowPos got a truncated HWND,
+# returned 0, and the hidden window was never revealed. Real handles fix it.
+_u32 = ctypes.WinDLL("user32", use_last_error=True)
+_u32.FindWindowW.restype = wintypes.HWND
+_u32.FindWindowW.argtypes = (wintypes.LPCWSTR, wintypes.LPCWSTR)
+_u32.SetWindowPos.restype = wintypes.BOOL
+_u32.SetWindowPos.argtypes = (wintypes.HWND, wintypes.HWND, ctypes.c_int,
+                              ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT)
+_u32.ShowWindow.restype = wintypes.BOOL
+_u32.ShowWindow.argtypes = (wintypes.HWND, ctypes.c_int)
+_u32.IsWindowVisible.restype = wintypes.BOOL
+_u32.IsWindowVisible.argtypes = (wintypes.HWND,)
+_u32.MonitorFromWindow.restype = wintypes.HANDLE
+_u32.MonitorFromWindow.argtypes = (wintypes.HWND, wintypes.DWORD)
+_u32.GetMonitorInfoW.restype = wintypes.BOOL
+_u32.GetMonitorInfoW.argtypes = (wintypes.HANDLE, ctypes.c_void_p)
+_u32.GetSystemMetrics.restype = ctypes.c_int
+_u32.GetSystemMetrics.argtypes = (ctypes.c_int,)
 
 
 def monitor_rect_for_window(title: str) -> tuple[int, int, int, int]:
@@ -132,33 +157,35 @@ def monitor_rect_for_window(title: str) -> tuple[int, int, int, int]:
     this title - or the primary monitor when the window isn't found. This is
     the screen the area picker should cover."""
     def query():
-        user32 = ctypes.windll.user32
-        hwnd = user32.FindWindowW(None, title)
+        hwnd = _u32.FindWindowW(None, title)
         if hwnd:
-            hmon = user32.MonitorFromWindow(hwnd, _MONITOR_DEFAULTTONEAREST)
+            hmon = _u32.MonitorFromWindow(hwnd, _MONITOR_DEFAULTTONEAREST)
             mi = _MONITORINFO(cbSize=ctypes.sizeof(_MONITORINFO))
-            if hmon and user32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+            if hmon and _u32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
                 r = mi.rcMonitor
                 return (r.left, r.top, r.right - r.left, r.bottom - r.top)
-        return (0, 0, user32.GetSystemMetrics(0), user32.GetSystemMetrics(1))
+        return (0, 0, _u32.GetSystemMetrics(0), _u32.GetSystemMetrics(1))
     return _dpi_aware(query)
 
 
 def cover_window_on_monitor(title: str, rect: tuple[int, int, int, int],
                             tries: int = 25, delay: float = 0.1) -> bool:
-    """Force the window with this title to exactly the physical rect, topmost.
-    pywebview materializes windows asynchronously and speaks logical pixels;
-    SetWindowPos in a DPI-aware thread sidesteps both. Polls for the window
-    up to tries*delay seconds; False when it never appeared."""
+    """Reveal the window with this title and force it to exactly the physical
+    rect, topmost - the area picker, made fullscreen on its monitor. pywebview
+    materializes windows asynchronously and speaks logical pixels; a DPI-aware
+    ShowWindow + SetWindowPos sidesteps both. ShowWindow is what actually
+    un-hides a window born hidden; SetWindowPos alone won't. Polls up to
+    tries*delay seconds; False when the window never appeared or the move
+    was rejected."""
     import time as _time
-    user32 = ctypes.windll.user32
     for _ in range(tries):
-        hwnd = user32.FindWindowW(None, title)
+        hwnd = _u32.FindWindowW(None, title)
         if hwnd:
             def place():
-                return user32.SetWindowPos(
+                _u32.ShowWindow(hwnd, _SW_SHOW)
+                return _u32.SetWindowPos(
                     hwnd, _HWND_TOPMOST, rect[0], rect[1], rect[2], rect[3],
-                    _SWP_SHOWWINDOW)
+                    _SWP_SHOWWINDOW | _SWP_FRAMECHANGED)
             return bool(_dpi_aware(place))
         _time.sleep(delay)
     return False

@@ -89,3 +89,21 @@ def test_monitor_rect_falls_back_to_primary():
 def test_cover_window_gives_up_honestly():
     assert screengrab.cover_window_on_monitor(
         "no window has this title 8f2k", (0, 0, 10, 10), tries=2, delay=0.01) is False
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Win32 prototypes are Windows-only")
+def test_window_handles_are_pointer_sized():
+    """The dc9d9b3 regression guard: without explicit prototypes, ctypes
+    truncates a Win64 HWND to 32 bits and SetWindowPos silently no-ops, so a
+    hidden picker window is never revealed. These calls MUST carry
+    pointer-sized handle types, not the default C int."""
+    import ctypes
+    from ctypes import wintypes
+    u = screengrab._u32
+    assert u.FindWindowW.restype is wintypes.HWND
+    assert u.SetWindowPos.restype is wintypes.BOOL
+    # handle params (window + insert-after) must be pointer-sized, not c_int
+    assert u.SetWindowPos.argtypes[0] is wintypes.HWND
+    assert u.SetWindowPos.argtypes[1] is wintypes.HWND
+    assert ctypes.sizeof(u.SetWindowPos.argtypes[0]) == ctypes.sizeof(ctypes.c_void_p)
+    assert u.ShowWindow.argtypes[0] is wintypes.HWND
