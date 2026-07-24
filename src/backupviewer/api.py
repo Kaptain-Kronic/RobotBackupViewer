@@ -6,16 +6,20 @@ Every public method returns an envelope and never raises across the bridge:
 """
 from __future__ import annotations
 
+import base64
 import functools
 import json
 import logging
 import os
 import re
+import subprocess
 import threading
 import time
 import urllib.parse
 import uuid
 from pathlib import Path
+
+_CREATE_NO_WINDOW = 0x08000000  # keep helper powershell spawns off-screen
 
 from . import backuplog
 from . import compare
@@ -28,6 +32,9 @@ from . import keyencebackup
 from . import library
 from . import modeldb
 from . import mtxbackup
+from . import phoneview
+from . import qr
+from . import screengrab
 from . import search as search_mod
 from . import settings
 from .parsers import (alarms, callgraph, curpos, dcs, dcszones, frames,
@@ -225,6 +232,7 @@ class Api:
         self._lib_sig: str | None = None  # tree signature at the last scan (None = never)
         self._cvx: dict[str, cvx_remote.CvxRemoteSession] = {}  # live CV-X remote sessions
         self._cvx_server = None  # lazy MJPEG frame server (one for all sessions)
+        self._phone_share: phoneview.PhoneShare | None = None  # lazy phone-view relay
         # linked-camera photo sessions, keyed camera_id -> (path, sig, session).
         # sig is the latest mirror's backup.json mtime, so a fresh camera backup
         # (which rewrites the SAME Latest/ path) invalidates the cache.
@@ -1693,6 +1701,151 @@ class Api:
         import webview   # pywebview supports create_window after start()
         webview.create_window(f"MTX remote · {label}", url, width=1200, height=850)
         return True
+
+    # -- phone live view (scan a QR, the phone shows the camera's frame) --------------
+    # For focus/aim work AT the camera: the phone in your hand shows the same
+    # HMI frame the multicam wall polls, relayed by the laptop so the phone
+    # only needs a route to the laptop (hotspot or wifi), never to the camera
+    # VLAN. Posture (token gates, single-flight camera fetch, off by default)
+    # lives in phoneview.py.
+
+    @_endpoint
+    def phone_view_start(self, spec: dict):
+        """Share camera spec.ip with phones. Boots the relay if needed, mints
+        (or rejoins) the camera's share, and returns {token, port, urls} where
+        urls lists every address this machine answers on, most phone-reachable
+        first: [{ip, url, kind}] with kind hotspot / lan / camera network."""
+        ip = _require_ip(spec)
+        label = (spec.get("label") or "").strip() or ip
+        if self._phone_share is None:
+            self._phone_share = phoneview.PhoneShare()
+        try:
+            r = self._phone_share.start_session(ip, label)
+        except OSError as e:
+            raise ApiError("PHONE_VIEW", f"could not start the share server: {e}")
+        urls = phoneview.lan_urls(ip, r["port"], r["token"])
+        if not urls:
+            raise ApiError("PHONE_VIEW",
+                           "this machine has no reachable address - is any network up?")
+        return {"token": r["token"], "port": r["port"], "urls": urls}
+
+    @_endpoint
+    def phone_view_qr(self, spec: dict):
+        """QR matrix for a share URL: {size, rows} with rows as "0110..."
+        strings, 1 = dark. Renders only URLs the running share actually
+        serves - this is the share's QR, not a general QR maker."""
+        text = ((spec or {}).get("text") or "").strip()
+        share = self._phone_share
+        p = urllib.parse.urlsplit(text)
+        tokens = {s["token"] for s in share.status()["sessions"]} if share else set()
+        if not (share and p.scheme == "http" and p.port == share.port
+                and p.path in {f"/v/{t}" for t in tokens}):
+            raise ApiError("BAD_SPEC", "not an active share URL")
+        matrix = qr.encode(text)
+        return {"size": len(matrix), "rows": ["".join(map(str, row)) for row in matrix]}
+
+    @_endpoint
+    def phone_view_stop(self, spec: dict = None):
+        """Stop one share (spec.token) or every share (no token). The relay
+        server stops with the last share. Returns how many remain."""
+        if self._phone_share is None:
+            return 0
+        return self._phone_share.stop_session((spec or {}).get("token"))
+
+    # -- the window viewfinder (mirror the Matrox window to a phone) -------------------
+    # Jake's "window to the phone", simplest form: the phone mirrors whatever
+    # the Matrox remote window shows - which is this app's own window with the
+    # remote overlay up. No rectangle to pick, no extra window: grab the app
+    # window's client area live (it follows if you move or resize it) and the
+    # phone shows exactly that.
+
+    _MAIN_TITLE = "FANUC Backup Viewer"       # app.py's create_window title
+
+    @_endpoint
+    def viewfinder_start(self):
+        """Mirror the Matrox window (this app's window) to phones: boots the
+        relay, mints (or rejoins) THE window share pointed at the app window,
+        and returns {token, port, urls} like phone_view_start. No picker - the
+        QR is ready to scan immediately."""
+        if self._phone_share is None:
+            self._phone_share = phoneview.PhoneShare()
+        if not screengrab.window_is_open(self._MAIN_TITLE):
+            raise ApiError("PHONE_VIEW", "could not find the app window to mirror")
+        title = self._MAIN_TITLE
+        try:
+            r = self._phone_share.start_window_session(
+                "Matrox", lambda: screengrab.grab_window_png(title))
+        except OSError as e:
+            raise ApiError("PHONE_VIEW", f"could not start the share server: {e}")
+        urls = phoneview.lan_urls(None, r["port"], r["token"])
+        if not urls:
+            raise ApiError("PHONE_VIEW",
+                           "this machine has no reachable address - is any network up?")
+        return {"token": r["token"], "port": r["port"], "urls": urls}
+
+    @_endpoint
+    def phone_view_status(self):
+        """The relay right now: {running, port, sessions:[{token, ip, label,
+        phones, pulls, last_pull_ms, frame_age_ms, fetch_err}]}."""
+        if self._phone_share is None:
+            return {"running": False, "port": None, "sessions": []}
+        return self._phone_share.status()
+
+    # -- the firewall helper ("server stopped responding" = blocked port) -------------
+    # When the phone reaches the laptop but the page times out, it's almost
+    # always the Windows Firewall dropping inbound TCP on the network profile
+    # the phone is on (e.g. a rule scoped to Public while the hotspot is
+    # Private). The fix is a one-time inbound-allow rule for the phone-view
+    # port range. The app can't self-elevate, so the "add" path spawns an
+    # elevated PowerShell (UAC); the command is also shown for copy/paste.
+
+    _FW_RULE_NAME = "BackupViewer phone view"
+
+    def _fw_port_range(self) -> str:
+        return f"{phoneview.PORT_BASE}-{phoneview.PORT_BASE + phoneview.PORT_TRIES - 1}"
+
+    def _fw_command(self) -> str:
+        """The exact rule-adding command, shown in the UI for copy/paste."""
+        return ("New-NetFirewallRule -DisplayName '" + self._FW_RULE_NAME +
+                "' -Direction Inbound -Action Allow -Protocol TCP -LocalPort " +
+                self._fw_port_range() + " -Profile Any")
+
+    @_endpoint
+    def phone_view_firewall_status(self):
+        """Whether our inbound-allow rule exists, plus the exact command to add
+        it (single source of truth for the UI's copy button). A non-elevated
+        read - no UAC."""
+        present = False
+        probe = ("if (Get-NetFirewallRule -DisplayName '" + self._FW_RULE_NAME +
+                 "' -ErrorAction SilentlyContinue) { 'yes' } else { 'no' }")
+        try:
+            r = subprocess.run(["powershell", "-NoProfile", "-Command", probe],
+                               capture_output=True, text=True, timeout=10,
+                               creationflags=_CREATE_NO_WINDOW)
+            present = "yes" in (r.stdout or "").lower()
+        except (OSError, subprocess.SubprocessError):
+            pass   # can't read it - the UI just offers the command anyway
+        return {"rule_present": present, "command": self._fw_command(),
+                "port_range": self._fw_port_range()}
+
+    @_endpoint
+    def phone_view_firewall_fix(self):
+        """Add the inbound-allow rule for the phone-view port range, elevating
+        via UAC (the app isn't admin). Spawns an elevated PowerShell that
+        replaces-then-adds the rule; the user approves the Windows prompt.
+        Returns {launched}; the UI re-checks status to confirm approval."""
+        inner = ("Remove-NetFirewallRule -DisplayName '" + self._FW_RULE_NAME +
+                 "' -ErrorAction SilentlyContinue; " + self._fw_command() +
+                 " | Out-Null")
+        enc = base64.b64encode(inner.encode("utf-16-le")).decode()
+        outer = ("Start-Process powershell -Verb RunAs -WindowStyle Hidden "
+                 "-ArgumentList '-NoProfile','-EncodedCommand','" + enc + "'")
+        try:
+            subprocess.Popen(["powershell", "-NoProfile", "-Command", outer],
+                             creationflags=_CREATE_NO_WINDOW)
+        except OSError as e:
+            raise ApiError("PHONE_VIEW", f"could not launch the admin prompt: {e}")
+        return {"launched": True}
 
     # -- themes & settings ------------------------------------------------------------
 

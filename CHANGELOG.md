@@ -1,6 +1,36 @@
 # Changelog
 
 ## Unreleased
+- **Phone view firewall helper.** If a phone reaches the laptop but the page
+  times out with *"server stopped responding,"* that's the Windows Firewall
+  dropping the port on that network profile (a rule scoped to Public while
+  the phone's hotspot is Private is the classic case). The phone-view popup
+  now has a **?** in the corner that explains it and offers the exact
+  one-time fix: **copy command**, or **add the rule (admin)** — one click
+  that opens an elevated prompt and installs an inbound-allow rule for the
+  phone-view port range on every network profile. It reports back whether
+  the rule is already in place.
+- **Phone view: mirror the Matrox window to your phone.** Press 📱 (MTX
+  remote bar, camera cards) and a QR appears immediately — scan it and your
+  phone shows a black page mirroring the Matrox window (the app window, with
+  the remote overlay up), live. No box to draw, no extra window, nothing to
+  place: whatever the window shows is what the phone shows, and the capture
+  follows it if you move or resize it. The second pair of eyes for focus
+  work at the lens: one person's at the camera, the phone is the screen.
+  Scan, hit **close (keeps sharing)** so the camera fills the window again,
+  and walk to the lens. View-only — the phone sends nothing back. The phone
+  just needs to reach the PC (same wifi, or the Windows mobile hotspot — the
+  modal ranks the hotspot address first with a chip per adapter). Off by
+  default, token-gated; the share stops with the app, the stop button, or on
+  its own when it ages out forgotten. A camera-direct relay of the MTX HMI
+  frame ships alongside as the API-level variant. The QR encoder is
+  hand-rolled stdlib (the stack stays locked), ground-truthed against an
+  independent decoder across every version and mask it emits; the window
+  grab is ctypes GDI + a hand-rolled PNG writer, so the exe gains zero
+  dependencies.
+- **Dialogs beat overlays.** Modals (and menus above them) now stack above
+  the remote-operation overlay, so the phone-view QR can open from inside
+  the MTX remote without vanishing behind it.
 - **CV-X remote: full mouse.** The live Keyence remote now forwards the
   scroll wheel (zoom), the middle button, real drags (pan — the controller
   only pans on its dedicated drag events, so dragging used to snap at

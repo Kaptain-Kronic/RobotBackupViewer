@@ -422,6 +422,15 @@
             else BV.openMtxRemote(c.ips[0], c.name);
           });
           card.appendChild(rb);
+          var pb = BV.el("button", { class: "btn", style:
+            "margin:0 0 0.6rem;padding:0.18rem 0.5rem;font-size:0.76rem",
+            title: "mirror this window to your phone (QR) — watch this " +
+              "camera's live view at the lens" }, "📱 phone");
+          pb.addEventListener("click", function (e) {
+            e.stopPropagation();
+            BV.openViewfinder();
+          });
+          card.appendChild(pb);
         }
         card.addEventListener("click", function () {
           location.hash = "#photos/" + encodeURIComponent(c.id);
