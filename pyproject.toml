@@ -10,3 +10,6 @@ dev = ["pytest", "pyinstaller"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# the only sys.path bootstrap used to live in conftest.py, which is untracked -
+# so a fresh clone collected 0 tests. keep this here, not in a conftest.
+pythonpath = ["src"]
