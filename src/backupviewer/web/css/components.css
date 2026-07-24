@@ -215,8 +215,10 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .empty-state .hint kbd { margin: 0 0.2em; }
 
 /* ---- modal ---- */
+/* dialogs sit above the remote-operation overlay (z 80): the phone-view QR
+   opens from inside the MTX remote's bar and must land on top of it */
 #modal-root {
-  position: fixed; inset: 0; z-index: 50;
+  position: fixed; inset: 0; z-index: 90;
   background: color-mix(in srgb, var(--bg) 60%, transparent);
   backdrop-filter: blur(2px);
   display: flex; align-items: flex-start; justify-content: center;
@@ -1178,7 +1180,7 @@ button.btn.danger:disabled { opacity: 0.5; cursor: default; }
 
 /* anchored context menu (right-click-style popup, e.g. + add robot) */
 .ctx-menu {
-  position: fixed; z-index: 70; min-width: 9rem;
+  position: fixed; z-index: 95; min-width: 9rem;  /* above modals (90): menus open from them */
   background: var(--bg2); border: 1px solid var(--edge); border-radius: var(--radius);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4); padding: 0.25rem;
   display: flex; flex-direction: column;
