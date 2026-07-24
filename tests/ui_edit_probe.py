@@ -1,7 +1,7 @@
 """Hidden-window probe for the structured .ls editor (view<->edit + export).
 
 Covers what pytest can't: the real DOM chain - view mode's highlighted source,
-flipping to edit mode mounts the BV.lsEditor overlay (auto-number gutter, live
+flipping to edit mode mounts the single-layer BV.lsEditor (auto-number gutter, live
 highlight layer, transparent textarea), the details panel exposes editable
 attributes + point data (incl. initializing a masked point), and export writes
 a renumbered, attribute-patched, position-patched .ls to a NEW folder while the
@@ -104,47 +104,75 @@ def probe(window):
               bool(js(window, "[...document.querySelectorAll('.seg button')]"
                               ".some(function(b){return b.textContent.trim()==='edit';})")))
 
-        # ---- flip to edit: the overlay editor mounts ----
+        # ---- flip to edit: the single-layer contenteditable editor mounts ----
         js(window, """[...document.querySelectorAll('.seg button')]
             .find(function(b){return b.textContent.trim()==='edit';}).click()""")
-        seeded = poll(window, "(document.querySelector('.lsed-ta')||{}).value || ''")
-        check("edit.overlay_mounted", bool(seeded))
+        seeded = poll(window, "(document.querySelector('.lsed-code')||{}).textContent || ''")
+        check("edit.editor_mounted", bool(seeded))
         check("edit.body_only",
               isinstance(seeded, str)
               and seeded.split("\n") == ["!setup", "DO[1]=ON", "J P[1] 100% FINE"],
               f"(got {seeded!r})")          # no numbers, no ';', no header
+        check("edit.single_layer",           # the two-layer overlay is gone for good
+              not js(window, "!!document.querySelector('.lsed-ta')")
+              and not js(window, "!!document.querySelector('.lsed-hl')"))
+        check("edit.contenteditable",
+              bool(js(window, "(document.querySelector('.lsed-code')||{}).isContentEditable")))
         check("edit.gutter_numbers",
               (js(window, "(document.querySelector('.lsed-nums')||{}).textContent||''") or "")
               .startswith("1\n2\n3"))
         check("edit.live_highlight",
-              bool(js(window, "(document.querySelector('.lsed-hl')||{}).innerHTML"
-                              " && document.querySelector('.lsed-hl').innerHTML.indexOf('tp-')>=0")))
-        # the overlay only lines up if BOTH layers render the SAME font. A
-        # <code> child would pick up the UA `monospace` (Courier) and drift
-        # horizontally, so measure the rendered width of a fixed string with
-        # each layer's font and assert they match.
-        check("edit.no_code_child",
-              not js(window, "!!document.querySelector('.lsed-hl code')"))
-        check("edit.layers_same_font", bool(js(window, """(function(){
-            var hl=document.querySelector('.lsed-hl'), ta=document.querySelector('.lsed-ta');
-            if(!hl||!ta) return false;
-            function w(font){var s=document.createElement('span');s.style.font=font;
-                s.style.whiteSpace='pre';s.style.position='absolute';s.style.visibility='hidden';
-                s.textContent='CALL S08POUNC R[151:name]=1.2345';document.body.appendChild(s);
-                var x=s.getBoundingClientRect().width;document.body.removeChild(s);return x;}
-            var tok=hl.querySelector('span')||hl;
-            return Math.abs(w(getComputedStyle(tok).font)-w(getComputedStyle(ta).font)) < 0.5;
+              bool(js(window, "document.querySelector('.lsed-code .tp-comment')"
+                              " && document.querySelector('.lsed-code .tp-motion')")))
+        # bold/italic tokens INSIDE the editable layer - exactly what the old
+        # overlay could never render without ghosting - plus the editor font
+        # on every token (the UA `code{font-family:monospace}` lesson).
+        check("edit.bold_italic_inline", bool(js(window, """(function(){
+            var m=document.querySelector('.lsed-code .tp-motion');
+            var c=document.querySelector('.lsed-code .tp-comment');
+            var code=document.querySelector('.lsed-code');
+            return !!m && !!c && parseInt(getComputedStyle(m).fontWeight,10) >= 600
+                && getComputedStyle(c).fontStyle === 'italic'
+                && getComputedStyle(m).fontFamily === getComputedStyle(code).fontFamily;
         })()""")))
+        # the selection color must be OPAQUE: Chromium paints token-span
+        # fragments twice, and a translucent ::selection stacks into darker
+        # doubled bands (the overlap-highlight bug)
+        check("edit.selection_opaque", bool(js(window, """(function(){
+            var bg=getComputedStyle(document.querySelector('.lsed-code'),
+                                    '::selection').backgroundColor;
+            return !/\\/\\s*0?\\.\\d+\\)/.test(bg) && bg.indexOf('rgba') !== 0;
+        })()""")))
+        # a selection must survive the re-highlight repaint (text-offset
+        # save/restore) - asserted here in the real WebView2 shell
+        check("edit.selection_survives_repaint",
+              js(window, """(function(){
+            var code=document.querySelector('.lsed-code');
+            try { code.focus(); } catch (e) {}
+            var txt=code.textContent, s=txt.indexOf('DO[1]=ON');
+            var walker=document.createTreeWalker(code, NodeFilter.SHOW_TEXT, null);
+            var pos=0, node, r=document.createRange(), placed=0;
+            while ((node=walker.nextNode())) {
+              var len=node.nodeValue.length;
+              if (!placed && s <= pos+len) { r.setStart(node, s-pos); placed=1; }
+              if (placed && s+8 <= pos+len) { r.setEnd(node, s+8-pos); placed=2; break; }
+              pos+=len;
+            }
+            if (placed!==2) return 'place:'+placed;
+            var sel=window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+            code.dispatchEvent(new Event('input',{bubbles:true}));
+            return window.getSelection().toString();
+        })()""") == "DO[1]=ON")
         check("edit.details_hidden_by_default",
               not js(window, "!!document.querySelector('.edattr-row')"))
 
-        # ---- type a body edit through the real textarea ----
+        # ---- type a body edit through the real editable element ----
         js(window, """(function(){
-            var ta=document.querySelector('.lsed-ta');
-            var lines=ta.value.split('\\n');
+            var code=document.querySelector('.lsed-code');
+            var lines=code.textContent.split('\\n');
             lines.splice(2, 0, 'CALL OTHER');           /* insert between 2 and 3 */
-            ta.value=lines.join('\\n');
-            ta.dispatchEvent(new Event('input',{bubbles:true}));
+            code.textContent=lines.join('\\n');
+            code.dispatchEvent(new Event('input',{bubbles:true}));
         })()""")
         check("edit.dirty", bool(js(window, "BV.edit.anyDirty()")))
         check("edit.gutter_grew",

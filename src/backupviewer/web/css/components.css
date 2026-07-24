@@ -407,39 +407,44 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 }
 .viewer pre { margin: 0; font-family: var(--font-mono); }
 
-/* overlay editor (BV.lsEditor): transparent textarea exactly over a
-   live-highlighted pre + auto-numbering gutter. The two layers MUST share
-   every font metric - alignment breaks on any drift (sandbox-proven set). */
+/* code editor (BV.lsEditor): ONE contenteditable <pre> whose content is the
+   live-highlighted text (the old transparent-textarea-over-highlight overlay
+   ghosted whenever any token style diverged - bold/italic - because it was
+   two renderings of the same text). One scroller holds gutter + code side by
+   side: vertical scroll moves both natively, position:sticky pins the gutter
+   during horizontal scroll - no sync JS at all. */
 .lsed {
-  display: flex; height: 100%; overflow: hidden;
+  height: 100%; overflow: hidden; display: flex;
   background: var(--bg2); border: 1px solid var(--edge); border-radius: var(--radius);
   font-family: var(--font-mono); font-size: 0.83rem; line-height: 1.4;
 }
+.lsed-scroll { flex: 1; min-width: 0; overflow: auto; display: flex; }
 .lsed-gutter {
-  flex: none; overflow: hidden; user-select: none;
+  position: sticky; left: 0; z-index: 2;
+  flex: none; user-select: none;
   padding: 0.7rem 0; text-align: right; color: var(--sub-alt);
-  border-right: 1px solid var(--edge);
+  background: var(--bg2); border-right: 1px solid var(--edge);
 }
 .lsed-nums { padding: 0 0.6em 0 0.9em; white-space: pre; }
-.lsed-body { position: relative; flex: 1; min-width: 0; }
-.lsed-hl, .lsed-ta {
-  position: absolute; inset: 0; margin: 0; border: 0;
+.lsed-code {
+  flex: 1; min-width: 0; margin: 0; border: 0; outline: none;
   font: inherit; line-height: inherit; letter-spacing: normal; tab-size: 4;
   white-space: pre; overflow-wrap: normal; word-break: normal;
   padding: 0.7rem 0.9rem;
+  color: var(--text); caret-color: var(--text);
+  cursor: text;
 }
-.lsed-hl { overflow: hidden; pointer-events: none; }
-/* the highlight layer's glyphs MUST use the same font as the textarea, or the
-   two layers drift horizontally. Force family inheritance on every token span
-   (font-family only - keep each tp-* class's own weight/style) so a UA rule
-   like `code {font-family:monospace}` can never sneak a second font in. */
-.lsed-hl * { font-family: inherit; }
-.lsed-ta {
-  overflow: auto; resize: none; outline: none;
-  background: transparent; color: transparent; caret-color: var(--text);
-  -webkit-text-fill-color: transparent;
-}
-.lsed-ta::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+/* every token span must render in the editor's mono font - a UA rule like
+   `code {font-family: monospace}` once snuck Courier into the highlight layer.
+   font-family only: each tp-* class keeps its own weight/style/color. */
+.lsed-code * { font-family: inherit; }
+/* selection must be OPAQUE (mixed toward the editor bg, not transparent):
+   Chromium paints the selection once per inline fragment and token spans
+   produce duplicate fragments on the same row - a translucent color STACKS
+   where paints double (0.3 + 0.3 = visibly darker bands), an opaque one
+   paints the same pixel twice and doubling cannot show. */
+.lsed-code ::selection,
+.lsed-code::selection { background: color-mix(in srgb, var(--accent) 30%, var(--bg2)); }
 
 /* edit-mode side panel: compact editable attr/position fields */
 .edattr-row { display: flex; align-items: center; gap: 0.6rem; margin: 0.3rem 0; }

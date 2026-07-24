@@ -628,7 +628,7 @@
 
   /* ------------------------------ edit mode ------------------------------ */
   /* The edit view mirrors the read view: same crumb, same split - but the
-     source pane is the BV.lsEditor overlay (auto numbers, live colors, no ';')
+     source pane is the BV.lsEditor editor (auto numbers, live colors, no ';')
      and the side panel is COLLAPSED by default (a "details" toggle reveals
      editable attributes + point data - most edits never touch them). Edit mode
      is sticky per backup (pst.editMode); the toggle re-routes so each mode
