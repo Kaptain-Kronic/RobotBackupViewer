@@ -61,16 +61,20 @@
       root.style.removeProperty("--glass");
       return;
     }
-    var cs = getComputedStyle(root);
+    /* one shared hex reader: this used to carry its own 3-or-6-digit regex and
+       a hardcoded "323437" on a miss, so an 8-digit theme color silently
+       frosted the panels in the DEFAULT bg instead of the theme's. */
     function rgba(varName, alpha) {
-      var m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(cs.getPropertyValue(varName).trim());
-      var h = m ? m[1] : "323437";
-      if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
-      return "rgba(" + parseInt(h.slice(0, 2), 16) + "," + parseInt(h.slice(2, 4), 16) + ","
-        + parseInt(h.slice(4, 6), 16) + "," + alpha.toFixed(3) + ")";
+      var c = BV.varRgb(varName);
+      if (!c) return "";   /* not a hex we can read - leave the stylesheet's own value */
+      return "rgba(" + c[0] + "," + c[1] + "," + c[2] + "," + alpha.toFixed(3) + ")";
     }
-    root.style.setProperty("--panel", rgba("--bg2", 1 - op * 0.6));
-    root.style.setProperty("--glass", rgba("--bg", 1 - op * 0.55));
+    var panel = rgba("--bg2", 1 - op * 0.6);
+    var glass = rgba("--bg", 1 - op * 0.55);
+    if (panel) root.style.setProperty("--panel", panel);
+    else root.style.removeProperty("--panel");
+    if (glass) root.style.setProperty("--glass", glass);
+    else root.style.removeProperty("--glass");
   }
   /* theme switches (including the editor's live preview) move --bg/--bg2 */
   BV.state.on("theme", function () { applyGlass(_lastOp, _lastBlur); });
