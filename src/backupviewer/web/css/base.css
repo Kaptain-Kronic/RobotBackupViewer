@@ -251,7 +251,11 @@ body { overflow: hidden; }
   outline: none;
   position: relative;
 }
-#view.no-pad { padding: 0; }
+/* tabs are handed the .view-slot, not #view, so they tag the SLOT - match on
+   that. The old `#view.no-pad` could never fire once the slot was introduced,
+   which quietly killed edge-to-edge on every full-width table tab. */
+#view.no-pad,
+#view:has(> .no-pad) { padding: 0; }
 
 /* ---- statusbar ---- */
 #statusbar {
