@@ -1,24 +1,22 @@
 # Changelog
 
 ## Unreleased
-- **Phone view: a window from your phone onto this PC's screen.** Press 📱
-  (MTX remote bar, camera cards) and the screen dims into a fullscreen
-  picker with a fixed-size box already waiting — no drawing: drag it over
-  the part that matters (the camera page's live image, say), nudge with
-  arrows, switch size with the phone-pixel preset chips (600×800 out of
-  the box), confirm. Only then does the QR appear: scan it and your phone
-  gets a black page showing exactly that rectangle, live — one thing on
-  screen at a time, never a pile of windows. The second pair of eyes for
-  focus work at the lens: one person's at the camera, the phone is the
-  screen. **▣ pick area** moves the box any time; the phone follows.
-  View-only — the phone sends nothing back. The phone just needs to reach
-  the PC (same wifi, or the Windows mobile hotspot — the modal ranks the
-  hotspot address first with a chip per adapter). Off by default,
-  token-gated; the share stops with the app, the stop button, or on its
-  own when it ages out forgotten. A camera-direct relay of the MTX HMI
+- **Phone view: mirror the Matrox window to your phone.** Press 📱 (MTX
+  remote bar, camera cards) and a QR appears immediately — scan it and your
+  phone shows a black page mirroring the Matrox window (the app window, with
+  the remote overlay up), live. No box to draw, no extra window, nothing to
+  place: whatever the window shows is what the phone shows, and the capture
+  follows it if you move or resize it. The second pair of eyes for focus
+  work at the lens: one person's at the camera, the phone is the screen.
+  Scan, hit **close (keeps sharing)** so the camera fills the window again,
+  and walk to the lens. View-only — the phone sends nothing back. The phone
+  just needs to reach the PC (same wifi, or the Windows mobile hotspot — the
+  modal ranks the hotspot address first with a chip per adapter). Off by
+  default, token-gated; the share stops with the app, the stop button, or on
+  its own when it ages out forgotten. A camera-direct relay of the MTX HMI
   frame ships alongside as the API-level variant. The QR encoder is
   hand-rolled stdlib (the stack stays locked), ground-truthed against an
-  independent decoder across every version and mask it emits; the screen
+  independent decoder across every version and mask it emits; the window
   grab is ctypes GDI + a hand-rolled PNG writer, so the exe gains zero
   dependencies.
 - **Dialogs beat overlays.** Modals (and menus above them) now stack above

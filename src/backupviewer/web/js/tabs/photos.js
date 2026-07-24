@@ -424,8 +424,8 @@
           card.appendChild(rb);
           var pb = BV.el("button", { class: "btn", style:
             "margin:0 0 0.6rem;padding:0.18rem 0.5rem;font-size:0.76rem",
-            title: "share a screen area to your phone (QR) — frame this " +
-              "camera's live view, then watch it at the lens" }, "📱 phone");
+            title: "mirror this window to your phone (QR) — watch this " +
+              "camera's live view at the lens" }, "📱 phone");
           pb.addEventListener("click", function (e) {
             e.stopPropagation();
             BV.openViewfinder();

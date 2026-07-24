@@ -43,8 +43,8 @@
     var rlBtn = BV.el("button", { class: "btn", title: "reload this tab" }, "⟳ reload");
     var winBtn = BV.el("button", { class: "btn", title: "open this tab in a separate window" }, "open in window");
     var phBtn = BV.el("button", { class: "btn",
-      title: "share a screen area to your phone (QR) — frame the live image, " +
-        "then watch it at the lens" }, "📱 phone");
+      title: "mirror this window to your phone (QR) — watch the live image " +
+        "at the lens" }, "📱 phone");
     var fsBtn = BV.el("button", { class: "btn", title: "fullscreen" }, "fullscreen");
     var closeBtn = BV.el("button", { class: "btn", title: "close (esc)" }, "✕ close");
     bar.appendChild(title); bar.appendChild(tabStrip); bar.appendChild(status);

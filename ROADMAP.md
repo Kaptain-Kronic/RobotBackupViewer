@@ -86,13 +86,15 @@ Each of these is deliberately scoped to land on its own. Good places to start.
 Attach vision devices to robot entries; open a robot, see its cameras;
 one click backs up the robot + all its cameras together.
 
-- 🔨 **Phone view** — QR handoff to a phone browser mirroring a snip-picked
-  rectangle of the PC screen (GDI grab + stdlib PNG; hand-rolled stdlib QR;
-  camera-direct HMI relay kept as the API variant). Landing on the
-  `phone-view` branch. Spike findings, for whoever tries "better" designs
-  later: WebView2 windows can be neither transparent nor excluded from
-  BitBlt via WS_EX_LAYERED on Win11 — a live hollow-frame viewfinder is
-  not buildable on this stack; the snip picker is the design that works.
+- 🔨 **Phone view** — QR handoff to a phone browser mirroring the Matrox
+  window (the app window's client area, grabbed live via GDI + stdlib PNG so
+  it follows moves/resizes; hand-rolled stdlib QR; camera-direct HMI relay
+  kept as the API variant). Landing on the `phone-view` branch. Design
+  history, so nobody re-treads it: a snip-a-rectangle picker was built first
+  and cut — WebView2 can't do transparent or capture-excluded windows on
+  Win11 (so no live hollow frame), and even the fullscreen-screenshot picker
+  was fiddlier than the plant wants. Mirroring the whole window is what
+  landed: one click, no placing.
 
 - 🔨 **Discovery** — agreed direction: probe the DesignAssistant web portal
   (:80/:443) and EtherNet/IP ListIdentity (UDP 44818, Matrox vendor ID) for

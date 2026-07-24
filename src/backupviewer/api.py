@@ -102,43 +102,6 @@ def _probe_http(url: str, timeout: float = 4.0):
         return e.code, dict(e.headers or {}), url, body
 
 
-class _PickerBridge:
-    """The area picker window's js_api: exactly two verbs, both terminal.
-    (See Api.viewfinder_start - the picker is the snip-style area chooser
-    for the phone screen share.)"""
-
-    def __init__(self, api, token: str, monitor: tuple):
-        self._api = api
-        self._token = token
-        self._monitor = monitor
-
-    def done(self, rect: dict):
-        phys = phoneview.css_rect_to_physical(
-            rect, float(rect.get("dpr") or 1.0),
-            (self._monitor[0], self._monitor[1]))
-        share = self._api._phone_share
-        if share is not None:
-            share.set_screen_source(
-                self._token, lambda: screengrab.grab_rect_png(*phys), phys)
-        self._api._close_picker()
-        return True
-
-    def cancel(self):
-        """Backing out of a re-pick keeps the running share; backing out of
-        the FIRST pick ends it - otherwise an invisible share (no modal is up
-        yet, the QR only appears after a confirmed pick) would keep serving."""
-        share = self._api._phone_share
-        if share is not None:
-            had_area = any(s["token"] == self._token and s["area"]
-                           for s in share.status()["sessions"])
-            if had_area:
-                share.cancel_picking(self._token)
-            else:
-                share.stop_session(self._token)
-        self._api._close_picker()
-        return True
-
-
 # -- merge-identity evidence ------------------------------------------------------
 # What confirms two library entries are the SAME physical robot (Cody's field
 # checklist): hostname (sometimes changes), IP (sometimes changes), F-number
@@ -266,7 +229,6 @@ class Api:
         self._cvx: dict[str, cvx_remote.CvxRemoteSession] = {}  # live CV-X remote sessions
         self._cvx_server = None  # lazy MJPEG frame server (one for all sessions)
         self._phone_share: phoneview.PhoneShare | None = None  # lazy phone-view relay
-        self._picker = None  # the screen-share area-picker window, when open
         # linked-camera photo sessions, keyed camera_id -> (path, sig, session).
         # sig is the latest mirror's backup.json mtime, so a fresh camera backup
         # (which rewrites the SAME Latest/ path) invalidates the cache.
@@ -1763,86 +1725,40 @@ class Api:
     def phone_view_stop(self, spec: dict = None):
         """Stop one share (spec.token) or every share (no token). The relay
         server stops with the last share. Returns how many remain."""
-        self._close_picker()
         if self._phone_share is None:
             return 0
         return self._phone_share.stop_session((spec or {}).get("token"))
 
-    # -- the screen viewfinder (share a picked rectangle of this PC's screen) ---------
-    # Jake's "window to the phone": pick an area snip-style (drag a box over
-    # the frozen screen), then the phone streams that physical rect live -
-    # whatever is showing there (the DA operator page, Design Assistant
-    # itself, anything). One screen share at a time; picking again moves it.
+    # -- the window viewfinder (mirror the Matrox window to a phone) -------------------
+    # Jake's "window to the phone", simplest form: the phone mirrors whatever
+    # the Matrox remote window shows - which is this app's own window with the
+    # remote overlay up. No rectangle to pick, no extra window: grab the app
+    # window's client area live (it follows if you move or resize it) and the
+    # phone shows exactly that.
 
     _MAIN_TITLE = "FANUC Backup Viewer"       # app.py's create_window title
-    _PICKER_TITLE = "BV area picker"
 
     @_endpoint
     def viewfinder_start(self):
-        """Share a screen area with phones: boots the relay, mints (or
-        rejoins) THE screen share, opens the area picker, and returns
-        {token, port, urls} like phone_view_start."""
+        """Mirror the Matrox window (this app's window) to phones: boots the
+        relay, mints (or rejoins) THE window share pointed at the app window,
+        and returns {token, port, urls} like phone_view_start. No picker - the
+        QR is ready to scan immediately."""
         if self._phone_share is None:
             self._phone_share = phoneview.PhoneShare()
+        if not screengrab.window_is_open(self._MAIN_TITLE):
+            raise ApiError("PHONE_VIEW", "could not find the app window to mirror")
+        title = self._MAIN_TITLE
         try:
-            r = self._phone_share.start_screen_session("screen area")
+            r = self._phone_share.start_window_session(
+                "Matrox", lambda: screengrab.grab_window_png(title))
         except OSError as e:
             raise ApiError("PHONE_VIEW", f"could not start the share server: {e}")
         urls = phoneview.lan_urls(None, r["port"], r["token"])
         if not urls:
             raise ApiError("PHONE_VIEW",
                            "this machine has no reachable address - is any network up?")
-        self._open_area_picker(r["token"])
         return {"token": r["token"], "port": r["port"], "urls": urls}
-
-    @_endpoint
-    def viewfinder_pick(self, spec: dict):
-        """Re-open the area picker for the running screen share - how the
-        shared 'window' gets moved somewhere else."""
-        share = self._phone_share
-        token = ((spec or {}).get("token") or "").strip()
-        if share is None or not any(
-                s["token"] == token and s["kind"] == "screen"
-                for s in share.status()["sessions"]):
-            raise ApiError("BAD_SPEC", "no running screen share by that token")
-        self._open_area_picker(token)
-        return True
-
-    def _open_area_picker(self, token: str):
-        """Freeze the app's monitor into a screenshot, stage it on the share,
-        and cover that monitor with the picker window."""
-        self._close_picker()
-        share = self._phone_share
-        mon = screengrab.monitor_rect_for_window(self._MAIN_TITLE)
-        try:
-            snap = screengrab.grab_rect_png(*mon)
-        except OSError as e:
-            raise ApiError("PHONE_VIEW", f"could not capture the screen: {e}")
-        share.set_picking(token, snap)
-        area = next((tuple(s["area"]) for s in share.status()["sessions"]
-                     if s["token"] == token and s["area"]), None)
-        page = phoneview.picker_page(
-            f"http://127.0.0.1:{share.port}/v/{token}/pick.png",
-            area, (mon[0], mon[1]))
-        import webview   # create_window works after start(); stubbed in tests
-        # born hidden: cover_window_on_monitor reveals it already covering the
-        # monitor (SWP_SHOWWINDOW), so the user sees the screen dim into pick
-        # mode - never a small window popping up and jumping fullscreen
-        self._picker = webview.create_window(
-            self._PICKER_TITLE, html=page, frameless=True, on_top=True,
-            hidden=True, js_api=_PickerBridge(self, token, mon))
-        threading.Thread(
-            target=screengrab.cover_window_on_monitor,
-            args=(self._PICKER_TITLE, mon), daemon=True,
-            name="picker-cover").start()
-
-    def _close_picker(self):
-        w, self._picker = self._picker, None
-        if w is not None:
-            try:
-                w.destroy()
-            except Exception:  # noqa: BLE001 - already gone is fine
-                pass
 
     @_endpoint
     def phone_view_status(self):

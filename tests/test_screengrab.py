@@ -78,32 +78,46 @@ def test_grab_rejects_empty_rect():
         screengrab.grab_rect_png(0, 0, 0, 10)
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="monitor query is Windows-only")
-def test_monitor_rect_falls_back_to_primary():
-    x, y, w, h = screengrab.monitor_rect_for_window("no window has this title 8f2k")
-    assert (x, y) == (0, 0)
+@pytest.mark.skipif(sys.platform != "win32", reason="window query is Windows-only")
+def test_window_is_open_false_for_missing():
+    assert screengrab.window_is_open("no window has this title 8f2k") is False
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="window capture is Windows-only")
+def test_grab_window_png_missing_is_clean_error():
+    with pytest.raises(OSError):
+        screengrab.grab_window_png("no window has this title 8f2k")
+
+
+@needs_desktop
+def test_grab_window_png_captures_the_app_shell_window():
+    """A real window (this process has a console/host) — capture whatever the
+    foreground shell window is by its title, proving the whole find -> client
+    rect -> BitBlt -> PNG chain end to end."""
+    import ctypes
+    from ctypes import wintypes
+    buf = ctypes.create_unicode_buffer(512)
+    ctypes.windll.user32.GetWindowTextW(
+        ctypes.windll.kernel32.GetConsoleWindow() or
+        ctypes.windll.user32.GetForegroundWindow(), buf, 512)
+    title = buf.value
+    if not title:
+        pytest.skip("no titled window to capture in this environment")
+    png = screengrab.grab_window_png(title)
+    w, h, rgba = _decode_png(png)
     assert w > 0 and h > 0
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="window move is Windows-only")
-def test_cover_window_gives_up_honestly():
-    assert screengrab.cover_window_on_monitor(
-        "no window has this title 8f2k", (0, 0, 10, 10), tries=2, delay=0.01) is False
+    assert all(rgba[i] == 255 for i in range(3, len(rgba), 4)), "alpha forced opaque"
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Win32 prototypes are Windows-only")
 def test_window_handles_are_pointer_sized():
-    """The dc9d9b3 regression guard: without explicit prototypes, ctypes
-    truncates a Win64 HWND to 32 bits and SetWindowPos silently no-ops, so a
-    hidden picker window is never revealed. These calls MUST carry
-    pointer-sized handle types, not the default C int."""
+    """Regression guard: without explicit prototypes, ctypes truncates a Win64
+    HWND to 32 bits and the call silently no-ops (that broke the picker reveal
+    once). Every user32 call here MUST carry pointer-sized handle types."""
     import ctypes
     from ctypes import wintypes
     u = screengrab._u32
     assert u.FindWindowW.restype is wintypes.HWND
-    assert u.SetWindowPos.restype is wintypes.BOOL
-    # handle params (window + insert-after) must be pointer-sized, not c_int
-    assert u.SetWindowPos.argtypes[0] is wintypes.HWND
-    assert u.SetWindowPos.argtypes[1] is wintypes.HWND
-    assert ctypes.sizeof(u.SetWindowPos.argtypes[0]) == ctypes.sizeof(ctypes.c_void_p)
-    assert u.ShowWindow.argtypes[0] is wintypes.HWND
+    assert ctypes.sizeof(u.FindWindowW.restype) == ctypes.sizeof(ctypes.c_void_p)
+    assert u.GetClientRect.argtypes[0] is wintypes.HWND
+    assert u.ClientToScreen.argtypes[0] is wintypes.HWND

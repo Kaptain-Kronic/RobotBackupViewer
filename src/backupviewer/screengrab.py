@@ -1,12 +1,11 @@
-"""Screen capture for the phone view: BitBlt a rectangle of the real Windows
-desktop and hand back a PNG. ctypes + zlib only - the stack stays locked, and
-stdlib has no JPEG encoder but writing a PNG is forty lines.
+"""Screen capture for the phone view: BitBlt the client area of a window (the
+Matrox remote, i.e. the app window) and hand back a PNG. ctypes + zlib only -
+the stack stays locked, and stdlib has no JPEG encoder but writing a PNG is
+forty lines.
 
-The user picks the rectangle snip-style (see phoneview.picker_page): WebView2
-can do neither transparent windows nor layered-window capture exclusion (both
-spiked dead on Win11), so a live "hollow frame" window is off the table - the
-picker freezes the monitor into a screenshot instead, and the chosen physical
-rect is then grabbed live per phone pull.
+grab_window_png re-finds the window every call, so the phone mirror follows it
+if the tech moves or resizes it - no rectangle to pick, no extra window to
+manage: whatever the Matrox window shows is what the phone shows.
 
 DPI: capture runs in whatever thread asked (an HTTP handler); each call flips
 that thread to per-monitor DPI awareness (and restores it) so window rects
@@ -117,77 +116,51 @@ def grab_rect_png(x: int, y: int, w: int, h: int) -> bytes:
     return png_encode(w, h, _dpi_aware(_grab_rect_rgba, x, y, w, h))
 
 
-class _MONITORINFO(ctypes.Structure):
-    _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
-                ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
-
-
-_MONITOR_DEFAULTTONEAREST = 2
-_HWND_TOPMOST = -1
-_SWP_SHOWWINDOW = 0x0040
-_SWP_FRAMECHANGED = 0x0020
-_SW_SHOW = 5
-
 # Window prototypes on an ISOLATED user32 handle (never mutating the shared
 # ctypes.windll cache app.py also uses). Without restype/argtypes, ctypes
 # treats every handle as a 32-bit C int - and a top-level HWND on Win64 can
-# exceed 32 bits, so it gets truncated and the call silently no-ops. That was
-# the dc9d9b3 "picker never shows" bug: SetWindowPos got a truncated HWND,
-# returned 0, and the hidden window was never revealed. Real handles fix it.
+# exceed 32 bits, so it gets truncated and the call silently no-ops. Real
+# pointer-sized handle types are mandatory (paid for by the picker-never-showed
+# bug: a truncated HWND made SetWindowPos a no-op). Any new user32 call added
+# here needs its restype/argtypes too.
 _u32 = ctypes.WinDLL("user32", use_last_error=True)
 _u32.FindWindowW.restype = wintypes.HWND
 _u32.FindWindowW.argtypes = (wintypes.LPCWSTR, wintypes.LPCWSTR)
-_u32.SetWindowPos.restype = wintypes.BOOL
-_u32.SetWindowPos.argtypes = (wintypes.HWND, wintypes.HWND, ctypes.c_int,
-                              ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.UINT)
-_u32.ShowWindow.restype = wintypes.BOOL
-_u32.ShowWindow.argtypes = (wintypes.HWND, ctypes.c_int)
-_u32.IsWindowVisible.restype = wintypes.BOOL
-_u32.IsWindowVisible.argtypes = (wintypes.HWND,)
-_u32.MonitorFromWindow.restype = wintypes.HANDLE
-_u32.MonitorFromWindow.argtypes = (wintypes.HWND, wintypes.DWORD)
-_u32.GetMonitorInfoW.restype = wintypes.BOOL
-_u32.GetMonitorInfoW.argtypes = (wintypes.HANDLE, ctypes.c_void_p)
-_u32.GetSystemMetrics.restype = ctypes.c_int
-_u32.GetSystemMetrics.argtypes = (ctypes.c_int,)
+_u32.GetClientRect.restype = wintypes.BOOL
+_u32.GetClientRect.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.RECT))
+_u32.ClientToScreen.restype = wintypes.BOOL
+_u32.ClientToScreen.argtypes = (wintypes.HWND, ctypes.POINTER(wintypes.POINT))
 
 
-def monitor_rect_for_window(title: str) -> tuple[int, int, int, int]:
-    """The physical rect (x, y, w, h) of the monitor holding the window with
-    this title - or the primary monitor when the window isn't found. This is
-    the screen the area picker should cover."""
-    def query():
+def _client_rect(hwnd) -> tuple[int, int, int, int] | None:
+    """Physical (x, y, w, h) of a window's client area - its content, minus
+    the OS title bar and borders. None when minimized (zero-size client)."""
+    rc = wintypes.RECT()
+    if not _u32.GetClientRect(hwnd, ctypes.byref(rc)) or rc.right <= 0 or rc.bottom <= 0:
+        return None
+    pt = wintypes.POINT(0, 0)
+    if not _u32.ClientToScreen(hwnd, ctypes.byref(pt)):
+        return None
+    return (pt.x, pt.y, rc.right, rc.bottom)
+
+
+def window_is_open(title: str) -> bool:
+    return bool(_dpi_aware(lambda: _u32.FindWindowW(None, title)))
+
+
+def grab_window_png(title: str) -> bytes:
+    """The client area of the window with this exact title, captured live as
+    PNG - re-found every call, so the capture follows the window if it moved
+    or resized. Raises OSError when the window is closed or minimized."""
+    def grab():
         hwnd = _u32.FindWindowW(None, title)
-        if hwnd:
-            hmon = _u32.MonitorFromWindow(hwnd, _MONITOR_DEFAULTTONEAREST)
-            mi = _MONITORINFO(cbSize=ctypes.sizeof(_MONITORINFO))
-            if hmon and _u32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
-                r = mi.rcMonitor
-                return (r.left, r.top, r.right - r.left, r.bottom - r.top)
-        return (0, 0, _u32.GetSystemMetrics(0), _u32.GetSystemMetrics(1))
-    return _dpi_aware(query)
-
-
-def cover_window_on_monitor(title: str, rect: tuple[int, int, int, int],
-                            tries: int = 25, delay: float = 0.1) -> bool:
-    """Reveal the window with this title and force it to exactly the physical
-    rect, topmost - the area picker, made fullscreen on its monitor. pywebview
-    materializes windows asynchronously and speaks logical pixels; a DPI-aware
-    ShowWindow + SetWindowPos sidesteps both. ShowWindow is what actually
-    un-hides a window born hidden; SetWindowPos alone won't. Polls up to
-    tries*delay seconds; False when the window never appeared or the move
-    was rejected."""
-    import time as _time
-    for _ in range(tries):
-        hwnd = _u32.FindWindowW(None, title)
-        if hwnd:
-            def place():
-                _u32.ShowWindow(hwnd, _SW_SHOW)
-                return _u32.SetWindowPos(
-                    hwnd, _HWND_TOPMOST, rect[0], rect[1], rect[2], rect[3],
-                    _SWP_SHOWWINDOW | _SWP_FRAMECHANGED)
-            return bool(_dpi_aware(place))
-        _time.sleep(delay)
-    return False
+        if not hwnd:
+            raise OSError(f"the '{title}' window is not open")
+        rect = _client_rect(hwnd)
+        if rect is None:
+            raise OSError(f"the '{title}' window is minimized")
+        x, y, w, h = rect
+        return png_encode(w, h, _grab_rect_rgba(x, y, w, h))
+    return _dpi_aware(grab)
 
 

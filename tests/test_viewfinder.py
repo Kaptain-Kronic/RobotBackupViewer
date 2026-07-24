@@ -1,16 +1,13 @@
-"""The screen viewfinder: a phone share whose frames are a user-picked
-rectangle of the PC screen. Server behavior over real loopback HTTP with the
-capture faked; the api endpoints with webview and the GDI layer stubbed; the
-picker's coordinate math straight."""
-import sys
-import types
+"""The window viewfinder: a phone share whose frames are the live client area
+of a window (the Matrox = the app window). Server behavior over real loopback
+HTTP with the capture faked; the api endpoint with the GDI layer stubbed."""
 import urllib.error
 import urllib.request
 
 import pytest
 
 from backupviewer import phoneview, screengrab
-from backupviewer.phoneview import PhoneShare, css_rect_to_physical, picker_page
+from backupviewer.phoneview import PhoneShare, lan_urls
 
 PNG1 = screengrab.png_encode(1, 1, b"\x10\x20\x30\xff")
 PNG2 = screengrab.png_encode(1, 1, b"\x40\x50\x60\xff")
@@ -42,188 +39,113 @@ def share():
     s.stop_session(None)
 
 
-# -- the screen session on the share server ----------------------------------------
+# -- the window session on the share server ----------------------------------------
 
-def test_screen_session_is_a_singleton(share):
-    a = share.start_screen_session("screen area")
-    b = share.start_screen_session("again")
+def test_window_session_is_a_singleton_and_repoints(share):
+    a = share.start_window_session("Matrox", lambda: PNG1)
+    b = share.start_window_session("Matrox", lambda: PNG2)
     assert a["token"] == b["token"]
     s = share.status()["sessions"][0]
-    assert s["kind"] == "screen" and s["ip"] == ""
+    assert s["kind"] == "window" and s["ip"] == ""
+    # the rejoin re-pointed the fetch at the fresh window
+    _, _, body = _get(share.port, f"/v/{a['token']}/frame")
+    assert body == PNG2
 
 
-def test_no_area_picked_is_an_honest_503(share):
-    r = share.start_screen_session("screen area")
-    code, body = _get_err(share.port, f"/v/{r['token']}/frame")
-    assert code == 503
-    assert b"no screen area picked yet" in body
-
-
-def test_picked_area_streams_png(share):
-    r = share.start_screen_session("screen area")
-    share.set_screen_source(r["token"], lambda: PNG1, (10, 20, 300, 400))
+def test_window_frame_streams_png(share):
+    r = share.start_window_session("Matrox", lambda: PNG1)
     status, headers, body = _get(share.port, f"/v/{r['token']}/frame")
     assert status == 200
     assert headers["Content-Type"] == "image/png"
     assert body == PNG1
-    s = share.status()["sessions"][0]
-    assert s["area"] == [10, 20, 300, 400] and s["picking"] is False
+    assert "X-Frame-Age" in headers
 
 
-def test_picking_freezes_the_stream_on_the_last_frame(share, monkeypatch):
+def test_window_frame_cache_rides_one_grab(share):
     calls = []
-    r = share.start_screen_session("screen area")
-    share.set_screen_source(r["token"], lambda: (calls.append(1), PNG1)[1], (0, 0, 9, 9))
-    _get(share.port, f"/v/{r['token']}/frame")
+    share.start_window_session("Matrox", lambda: (calls.append(1), PNG1)[1])
+    tok = share.status()["sessions"][0]["token"]
+    for _ in range(4):                          # inside MIN_FETCH_GAP
+        _get(share.port, f"/v/{tok}/frame")
     assert calls == [1]
-    monkeypatch.setattr(phoneview, "MIN_FETCH_GAP", 0.0)     # freshness gate off
-    share.set_picking(r["token"], b"SNAPSHOT")
-    _, _, body = _get(share.port, f"/v/{r['token']}/frame")  # stale, no new call
-    assert body == PNG1
-    assert calls == [1]
-    assert share.status()["sessions"][0]["picking"] is True
-    share.set_screen_source(r["token"], lambda: (calls.append(2), PNG2)[1], (0, 0, 9, 9))
-    _, _, body = _get(share.port, f"/v/{r['token']}/frame")
-    assert body == PNG2 and calls == [1, 2]
 
 
-def test_pick_snapshot_route(share):
-    r = share.start_screen_session("screen area")
-    assert _get_err(share.port, f"/v/{r['token']}/pick.png")[0] == 404
-    share.set_picking(r["token"], b"\x89PNGfake")
-    status, headers, body = _get(share.port, f"/v/{r['token']}/pick.png")
-    assert status == 200 and headers["Content-Type"] == "image/png"
-    assert body == b"\x89PNGfake"
-    share.cancel_picking(r["token"])
-    assert _get_err(share.port, f"/v/{r['token']}/pick.png")[0] == 404
-    assert share.status()["sessions"][0]["picking"] is False
-
-
-def test_screen_capture_failure_is_reported(share):
-    r = share.start_screen_session("screen area")
-
+def test_window_capture_failure_is_reported(share):
     def dead():
-        raise OSError("BitBlt failed")
-    share.set_screen_source(r["token"], dead, (0, 0, 9, 9))
+        raise OSError("the 'FANUC Backup Viewer' window is minimized")
+    r = share.start_window_session("Matrox", dead)
     code, body = _get_err(share.port, f"/v/{r['token']}/frame")
-    assert code == 503 and b"screen" in body
-    assert share.status()["sessions"][0]["fetch_err"] == "BitBlt failed"
+    assert code == 503 and b"Matrox window" in body
+    assert "minimized" in share.status()["sessions"][0]["fetch_err"]
 
 
-def test_camera_and_screen_sessions_coexist(share):
+def test_pick_route_is_gone(share):
+    r = share.start_window_session("Matrox", lambda: PNG1)
+    assert _get_err(share.port, f"/v/{r['token']}/pick.png")[0] == 404
+
+
+def test_camera_and_window_sessions_coexist(share):
     cam = share.start_session("192.0.2.10", "cam")
-    scr = share.start_screen_session("screen area")
-    assert cam["token"] != scr["token"]
+    win = share.start_window_session("Matrox", lambda: PNG1)
+    assert cam["token"] != win["token"]
     kinds = {s["kind"] for s in share.status()["sessions"]}
-    assert kinds == {"camera", "screen"}
-
-
-# -- picker math + template --------------------------------------------------------
-
-def test_css_rect_to_physical_scales_and_offsets():
-    phys = css_rect_to_physical({"x": 100, "y": 50, "w": 400, "h": 300},
-                                1.5, (2560, -80))
-    assert phys == (2560 + 150, -80 + 75, 600, 450)
-    assert css_rect_to_physical({"x": 0, "y": 0, "w": 0.1, "h": 0.1}, 1.0, (0, 0)) \
-        == (0, 0, 1, 1)                                     # never a zero rect
-
-
-def test_picker_page_fills_placeholders():
-    page = picker_page("http://127.0.0.1:8756/v/tok/pick.png", (5, 6, 7, 8), (5, 0))
-    assert 'src="http://127.0.0.1:8756/v/tok/pick.png"' in page
-    assert "var AREA = [5, 6, 7, 8], ORIGIN = [5, 0];" in page
-    page2 = picker_page("http://127.0.0.1:1/v/t/pick.png", None, (0, 0))
-    assert "var AREA = null" in page2
+    assert kinds == {"camera", "window"}
 
 
 def test_lan_urls_accepts_no_camera():
-    urls = phoneview.lan_urls(None, 8756, "tok")
+    urls = lan_urls(None, 8756, "tok")
     for u in urls:
         assert u["kind"] in ("hotspot", "lan")              # nothing camera-facing
+        assert u["url"] == f"http://{u['ip']}:8756/v/tok"
 
 
-# -- the api endpoints (webview + GDI stubbed) -------------------------------------
+# -- the api endpoint (GDI stubbed) ------------------------------------------------
 
 @pytest.fixture
 def api(monkeypatch):
     from backupviewer.api import Api
     monkeypatch.setattr(phoneview, "BIND", "127.0.0.1")
-    monkeypatch.setattr(screengrab, "monitor_rect_for_window", lambda title: (0, 0, 800, 600))
-    monkeypatch.setattr(screengrab, "grab_rect_png", lambda x, y, w, h: PNG1)
-    monkeypatch.setattr(screengrab, "cover_window_on_monitor", lambda *a, **k: True)
-    made = []
-    stub = types.SimpleNamespace(create_window=lambda title, **kw: (
-        made.append((title, kw)),
-        types.SimpleNamespace(destroy=lambda: made.append(("destroyed", title))))[1])
-    monkeypatch.setitem(sys.modules, "webview", stub)
+    monkeypatch.setattr(screengrab, "window_is_open", lambda title: True)
+    monkeypatch.setattr(screengrab, "grab_window_png", lambda title: PNG1)
     a = Api()
-    a._made_windows = made
     yield a
     if a._phone_share is not None:
         a._phone_share.stop_session(None)
 
 
-def test_viewfinder_start_opens_picker_and_shares(api):
+def test_viewfinder_start_shares_the_window_immediately(api):
     r = api.viewfinder_start()
     assert r["ok"] is True
     d = r["data"]
     assert d["token"] and d["urls"]
-    title, kw = api._made_windows[0]
-    assert title == "BV area picker"
-    assert kw["frameless"] and kw["on_top"]
-    assert kw["hidden"] is True         # revealed already-fullscreen, no flash
-    assert f"/v/{d['token']}/pick.png" in kw["html"]
-    assert "var AREA = null" in kw["html"]
     st = api.phone_view_status()["data"]["sessions"][0]
-    assert st["kind"] == "screen" and st["picking"] is True
-
-
-def test_picker_done_goes_live_and_pick_again_prefills(api):
-    d = api.viewfinder_start()["data"]
-    bridge = api._made_windows[0][1]["js_api"]
-    bridge.done({"x": 10, "y": 20, "w": 100, "h": 80, "dpr": 1.5})
-    st = api.phone_view_status()["data"]["sessions"][0]
-    assert st["picking"] is False
-    assert st["area"] == [15, 30, 150, 120]
-    assert ("destroyed", "BV area picker") in api._made_windows
+    assert st["kind"] == "window"
+    # QR is live right away - no pick step; the frame is the (stubbed) window
     status, headers, body = _get(d["port"], f"/v/{d['token']}/frame")
     assert status == 200 and headers["Content-Type"] == "image/png" and body == PNG1
-    api.viewfinder_pick({"token": d["token"]})
-    assert "var AREA = [15, 30, 150, 120]" in api._made_windows[-1][1]["html"]
 
 
-def test_cancel_of_first_pick_ends_the_share(api):
-    """No QR modal is up before the first confirm - a cancelled first pick
-    must not leave an invisible share serving."""
-    api.viewfinder_start()
-    api._made_windows[0][1]["js_api"].cancel()
-    st = api.phone_view_status()["data"]
-    assert st["sessions"] == [] and st["running"] is False
+def test_viewfinder_start_errors_when_window_missing(api, monkeypatch):
+    monkeypatch.setattr(screengrab, "window_is_open", lambda title: False)
+    r = api.viewfinder_start()
+    assert r["ok"] is False and r["error"]["code"] == "PHONE_VIEW"
 
 
-def test_cancel_of_a_repick_keeps_the_share_live(api):
+def test_viewfinder_start_rejoins_same_session(api):
+    a = api.viewfinder_start()["data"]
+    b = api.viewfinder_start()["data"]
+    assert a["token"] == b["token"]
+    assert len(api.phone_view_status()["data"]["sessions"]) == 1
+
+
+def test_viewfinder_qr_only_for_active_url(api):
     d = api.viewfinder_start()["data"]
-    api._made_windows[0][1]["js_api"].done({"x": 0, "y": 0, "w": 100, "h": 80, "dpr": 1})
-    api.viewfinder_pick({"token": d["token"]})
-    api._made_windows[-1][1]["js_api"].cancel()
-    st = api.phone_view_status()["data"]["sessions"][0]
-    assert st["picking"] is False and st["area"] == [0, 0, 100, 80]
-    status, headers, _ = _get(d["port"], f"/v/{d['token']}/frame")
-    assert status == 200 and headers["Content-Type"] == "image/png"
+    good = api.phone_view_qr({"text": d["urls"][0]["url"]})
+    assert good["ok"] is True and set("".join(good["data"]["rows"])) <= {"0", "1"}
+    assert api.phone_view_qr({"text": "http://evil.example/x"})["error"]["code"] == "BAD_SPEC"
 
 
-def test_viewfinder_rejoin_and_stop_closes_picker(api):
+def test_viewfinder_stop(api):
     d = api.viewfinder_start()["data"]
-    d2 = api.viewfinder_start()["data"]
-    assert d["token"] == d2["token"]
-    api.phone_view_stop({"token": d["token"]})
-    assert api._picker is None
-    assert ("destroyed", "BV area picker") in api._made_windows
+    assert api.phone_view_stop({"token": d["token"]})["data"] == 0
     assert api.phone_view_status()["data"]["running"] is False
-
-
-def test_viewfinder_pick_rejects_unknown_token(api):
-    assert api.viewfinder_pick({"token": "nope"})["error"]["code"] == "BAD_SPEC"
-    api.viewfinder_start()
-    cam_r = api.phone_view_start({"ip": "192.0.2.9", "label": "cam"})["data"]
-    assert api.viewfinder_pick({"token": cam_r["token"]})["error"]["code"] == "BAD_SPEC"
