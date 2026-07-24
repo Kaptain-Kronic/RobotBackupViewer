@@ -38,7 +38,11 @@ def extract_calls(text: str, macro_by_name: dict[str, str]) -> list[dict]:
         if not m:
             continue
         lineno, body = int(m.group(1)), m.group(2)
-        if body.lstrip().startswith("!"):
+        # '!' is a comment, '//' is a remarked-out instruction. The robot
+        # executes NEITHER, so neither is a call edge. //CALL ships fleet-wide
+        # as a deliberate standard, and counting it made broken_calls flag
+        # calls that never run while orphans called programs reachable.
+        if body.lstrip().startswith(("!", "//")):
             continue
         for kind, target in _CALL.findall(body):
             key = (target, kind.lower())

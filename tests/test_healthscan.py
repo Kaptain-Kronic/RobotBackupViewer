@@ -623,6 +623,30 @@ def test_broken_calls(tmp_path):
     assert _check_broken_calls(_RobotData(FakeSession({})))["status"] == "na"
 
 
+def test_remarked_calls_are_not_edges(tmp_path):
+    """'//' remarks out an instruction: the robot never runs it, so it is not
+    a call edge. //CALL ships fleet-wide as a deliberate standard (see the
+    remarked_logic check), and counting it made broken_calls flag a call that
+    can never fail while orphans treated a dead program as reachable -
+    two checks in ONE report disagreeing about the same line."""
+    progs = [
+        # the style root reaches S04LIVE for real, S05LONE only through a remark
+        _prog(tmp_path, "S04PICK1", ["CALL S04LIVE", "//CALL S05LONE", "//CALL GONE9",
+                                     "! CALL GONE8"]),
+        _prog(tmp_path, "S04LIVE", ["! leaf"]),
+        _prog(tmp_path, "S05LONE", ["! leaf"]),
+    ]
+    ctx = _RobotData(FakeSession({"CELLIO.VA": CELLIO}, program_files=progs))
+
+    # GONE9/GONE8 never execute, so they are not "called programs missing"
+    row = _check_broken_calls(ctx)
+    assert row["status"] == "ok", row.get("detail", "")
+
+    orph = _check_style_orphans(ctx)
+    assert "S05LONE" in orph["detail"]            # a remarked call does not reach it
+    assert "S04LIVE" not in orph["detail"]        # a real call still does
+
+
 def test_multi_query_find(tmp_path):
     r1 = _entry(tmp_path, "RB101R01B01")
     dead = {"id": "id-dead", "robot": "RB103R01B01", "line": "L1", "plant": "P",
