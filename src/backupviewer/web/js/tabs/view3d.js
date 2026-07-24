@@ -67,11 +67,11 @@
     return "hsl(" + h.toFixed(1) + "," + s.toFixed(0) + "%," + l.toFixed(0) + "%)";
   }
 
+  /* one status map, owned by the dcs tab (loaded first in index.html). This
+     used to be a private copy that disagreed with it - the same zone read
+     green here and red there. */
   function statusPill(stat) {
-    if (!stat || /^-+$/.test(stat)) return "";
-    var v = (stat === "OK" || stat === "SAFE") ? "ok-soft"
-      : (stat === "CHGD" || stat === "PEND" || stat === "WARN") ? "warn" : "err";
-    return BV.pill(stat.toLowerCase(), v);
+    return BV.dcsStatusPill(stat);
   }
 
   function niceStep(raw) {
