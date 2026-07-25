@@ -55,7 +55,11 @@ class FakeWindow:
         self.url = url
         self.destroyed = False
         self.fronted = False
+        self.fs_calls = 0
         self.events = type("E", (), {"closed": _Event()})()
+
+    def toggle_fullscreen(self):
+        self.fs_calls += 1
 
     def destroy(self):
         self.destroyed = True
@@ -189,6 +193,42 @@ def test_window_close_after_a_failed_reload_still_closes(api, monkeypatch):
     monkeypatch.setattr(FakeSession, "fail", True)
     api.cvx_remote_reload(sid)
     assert api.cvx_remote_window_close(sid)["ok"] is True and w.destroyed is True
+
+
+# -- fullscreen: the HOST window, not the web fullscreen api -----------------------
+# WebView2 grants requestFullscreen but only stretches the element inside the
+# same window, and the overlays are already inset:0 - so the bars' fullscreen
+# button did visibly nothing until it went through pywebview.
+
+def test_fullscreen_toggles_the_app_window_and_tracks_state(api):
+    api._window = FakeWindow("FANUC Backup Viewer", "")
+    assert api.toggle_fullscreen()["data"] == {"fullscreen": True}
+    assert api._window.fs_calls == 1
+    assert api.toggle_fullscreen({"window": "main"})["data"] == {"fullscreen": False}
+    assert api._window.fs_calls == 2
+
+
+def test_fullscreen_targets_the_popped_out_window(api):
+    api._window = FakeWindow("FANUC Backup Viewer", "")
+    sid = _open(api)
+    api.cvx_remote_window({"session_id": sid, "label": "cam"})
+    assert api.toggle_fullscreen({"window": sid})["data"]["fullscreen"] is True
+    assert api._cvx_windows[sid].fs_calls == 1
+    assert api._window.fs_calls == 0            # the main window stayed put
+
+
+def test_fullscreen_needs_a_window_we_opened(api):
+    api._window = FakeWindow("FANUC Backup Viewer", "")
+    r = api.toggle_fullscreen({"window": "Some Other App"})
+    assert r["ok"] is False and r["error"]["code"] == "NO_WINDOW"
+
+
+def test_closing_a_fullscreen_window_forgets_its_state(api):
+    sid = _open(api)
+    api.cvx_remote_window({"session_id": sid, "label": "cam"})
+    api.toggle_fullscreen({"window": sid})
+    api._cvx_windows[sid].events.closed.fire()
+    assert sid not in api._fullscreen
 
 
 def test_app_close_takes_popped_out_remotes_with_it(api):

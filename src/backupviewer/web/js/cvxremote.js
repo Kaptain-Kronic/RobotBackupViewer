@@ -107,7 +107,7 @@
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("keydown", onKeyCapture, true);
       img.src = "";                       /* drop the MJPEG connection */
-      if (document.fullscreenElement) { try { document.exitFullscreen(); } catch (e) {} }
+      BV.fullscreen.exit();               /* never leave a borderless window behind */
       overlay.remove();
       if (keepSession === true) return;
       /* in its own window the session IS the window: closing it closes the
@@ -117,10 +117,7 @@
     }
     closeBtn.addEventListener("click", function () { close(); });
 
-    function toggleFs() {
-      if (document.fullscreenElement) { try { document.exitFullscreen(); } catch (e) {} }
-      else { try { overlay.requestFullscreen(); } catch (e) {} }
-    }
+    function toggleFs() { BV.fullscreen.toggle(); }
     fsBtn.addEventListener("click", toggleFs);
     rlBtn.addEventListener("click", reconnect);
     phBtn.addEventListener("click", function () { BV.openViewfinder(); });
@@ -139,8 +136,10 @@
 
     function onKey(e) {
       if (e.key === "Escape") {
-        if (document.fullscreenElement) return;   /* let the browser exit fs first */
-        e.preventDefault(); close();
+        e.preventDefault();
+        /* esc backs out one step at a time: window first, then the remote */
+        if (BV.fullscreen.active()) BV.fullscreen.exit();
+        else close();
       } else if (e.key === "f" || e.key === "F") {
         toggleFs();
       }

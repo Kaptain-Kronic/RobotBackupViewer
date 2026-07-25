@@ -168,6 +168,14 @@ human-in-the-loop tier, and it lands last.
   `word-break: break-word` (floors at one glyph); short compound values are
   NBSP-joined (the `\u00A0` escape in source, never the invisible literal)
   so the label wraps instead.
+- **The web Fullscreen API is a silent no-op here.** WebView2 grants
+  `requestFullscreen()` — no exception, `document.fullscreenElement` gets set,
+  `fullscreenEnabled` is true — but it only stretches the element inside the
+  same window; the host window never moves. Any overlay that is already
+  `inset:0` therefore changes by exactly nothing. Fullscreen belongs to the
+  window: go through `BV.fullscreen` (→ `api.toggle_fullscreen` →
+  pywebview `toggle_fullscreen`), and don't read `document.fullscreenElement`
+  to decide what `esc` does.
 - Never write a literal-NUL escape through a tool/JSON layer — build NULs
   programmatically (`String.fromCharCode(0)`, `bytes([0])`).
 - A stray `*/` inside a JS block comment silently kills the whole file (the

@@ -234,6 +234,9 @@ class Api:
         # The session MOVES (the overlay in the sending window closes), so a
         # controller's single remote slot is never asked for twice.
         self._cvx_windows: dict[str, object] = {}
+        # which windows are borderless-fullscreen right now, by window key
+        # ("main" or a popped-out sid) - pywebview only toggles, it doesn't tell
+        self._fullscreen: set[str] = set()
         self._phone_share: phoneview.PhoneShare | None = None  # lazy phone-view relay
         # linked-camera photo sessions, keyed camera_id -> (path, sig, session).
         # sig is the latest mirror's backup.json mtime, so a fresh camera backup
@@ -537,6 +540,39 @@ class Api:
         # closing the pop-out is what really closes the backup
         w.events.closed += (lambda: self._drop_session(sid))
         return True
+
+    def _popped_window(self, key: str):
+        """The window we opened under this key - a CV-X session id or a backup
+        sid - or None. The ONLY way a caller names a window: never by title, so
+        nothing outside this app can be pointed at."""
+        w = self._cvx_windows.get(key)
+        if w is not None:
+            return w
+        e = self._sessions.get(key)
+        return e.get("window") if e else None
+
+    # -- window fullscreen -------------------------------------------------------
+    # The web Fullscreen API cannot do this. WebView2 GRANTS requestFullscreen
+    # (fullscreenElement is set, no error) but only stretches the element inside
+    # the same window - and a remote overlay is already inset:0, so the button
+    # did visibly nothing. Only the host window can go fullscreen, so the bars
+    # ask Python, which owns the toggling and therefore the state.
+
+    @_endpoint
+    def toggle_fullscreen(self, spec: dict = None):
+        """Take a window borderless-fullscreen and back; returns the new state.
+        spec.window is a viewfinder-style key: "main" (default) or the sid of a
+        window we popped out."""
+        key = (spec or {}).get("window") or "main"
+        w = self._window if key == "main" else self._popped_window(key)
+        if w is None:
+            raise ApiError("NO_WINDOW", "that window is not open")
+        w.toggle_fullscreen()
+        if key in self._fullscreen:
+            self._fullscreen.discard(key)
+        else:
+            self._fullscreen.add(key)
+        return {"fullscreen": key in self._fullscreen}
 
     def _destroy_popouts(self):
         """Main window closed = app closes: take every pop-out with it - backups
@@ -1728,6 +1764,7 @@ class Api:
 
     def _close_cvx_window(self, sid: str):
         self._cvx_windows.pop(sid, None)
+        self._fullscreen.discard(sid)      # the window is gone, so is its state
         sess = self._cvx.pop(sid, None)
         if sess is not None:
             sess.stop()
@@ -1859,10 +1896,7 @@ class Api:
         out (a backup sid or a CV-X session id)."""
         if not key or key == "main":
             return self._MAIN_TITLE
-        w = self._cvx_windows.get(key)
-        if w is None:
-            e = self._sessions.get(key)
-            w = e.get("window") if e else None
+        w = self._popped_window(key)
         if w is None:
             raise ApiError("PHONE_VIEW", "that window is not open")
         try:

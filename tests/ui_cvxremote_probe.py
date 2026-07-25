@@ -138,8 +138,38 @@ def probe(window, api):
               f"({FakeSession.dials})")
         check("cvx.reload_repointed_the_stream", src1 != src0 and f"/cvx/{sid}" in src1)
 
+        # ---- B2. fullscreen reaches the WINDOW (the web api can't) ----
+        # requestFullscreen is granted here but only stretches the element
+        # inside the same window - and the overlay is already inset:0, so the
+        # button used to do visibly nothing. It must go through pywebview.
+        js(window, "document.querySelectorAll('.cvx-bar .btn')[3].click()")
+        time.sleep(1.5)
+        check("fs.window_went_fullscreen", "main" in api._fullscreen)
+        check("fs.js_state_agrees", js(window, "BV.fullscreen.active()") is True)
+        # esc in fullscreen backs out the WINDOW, it does not close the remote
+        js(window, """document.dispatchEvent(
+            new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}))""")
+        time.sleep(1.5)
+        check("fs.esc_leaves_fullscreen_first", "main" not in api._fullscreen)
+        check("fs.esc_kept_the_remote_open",
+              js(window, "!!document.querySelector('.cvx-remote')"))
+        # and now a second esc really does close it
+        js(window, """document.dispatchEvent(
+            new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}))""")
+        time.sleep(1)
+        check("fs.second_esc_closes", not js(window, "!!document.querySelector('.cvx-remote')"))
+        # reopen for part C, adopting nothing (the session above was stopped)
+        js(window, f"BV.openCvxRemote('{CAM_IP}', 'probe cam')")
+        sid = poll(window, """(function(){
+            var i = document.querySelector('.cvx-remote img');
+            var m = i && /\\/cvx\\/([^?]+)/.exec(i.src);
+            return m ? m[1] : '';
+        })()""")
+        check("fs.reopened_for_popout", bool(sid) and sid in api._cvx)
+
         # ---- C. the popped-out window adopts, and drops its own pop-out button ----
         live = api._cvx[sid]
+        dials_before = list(FakeSession.dials)
         r = api.cvx_remote_window({"session_id": sid, "label": "probe cam"})
         check("popout.opened", r["ok"] is True, f"({r})")
         win2 = api._cvx_windows.get(sid)
@@ -150,7 +180,7 @@ def probe(window, api):
         check("popout.bar_drops_open_in_window",
               btns2 == ["⟳ reload", "📱 phone", "fullscreen", "✕ close"], f"({btns2})")
         check("popout.adopted_not_redialled",
-              api._cvx.get(sid) is live and FakeSession.dials == [CAM_IP, CAM_IP],
+              api._cvx.get(sid) is live and FakeSession.dials == dials_before,
               f"({FakeSession.dials})")
         check("popout.window_key_is_the_session", js(win2, "BV.windowKey()") == sid)
         check("popout.streams_that_session",

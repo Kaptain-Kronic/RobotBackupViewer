@@ -8,6 +8,14 @@
   whatever is on it — and a popped-out window mirrors itself instead of the
   main one. The window is named by key, never by title, so only windows this
   app opened can ever be shared.
+- **Fullscreen actually goes fullscreen.** On both remote bars the button did
+  nothing at all, and the reason is a trap: WebView2 *grants*
+  `requestFullscreen()` — no error, `fullscreenElement` gets set — but it only
+  stretches the element inside the same window, and a remote overlay is
+  already `inset:0`, so there was nothing left to stretch. Fullscreen belongs
+  to the host window, so it now goes through pywebview and takes the whole
+  screen, borderless. `esc` backs out one step at a time: the window first,
+  then the remote. Closing a remote never leaves a borderless window behind.
 - **The CV-X remote's bar carries the same options as the Matrox one.** It
   had fullscreen and close; it now also has reload, open in window and phone.
   - *reload* hangs up and dials the same camera again, in that order and
