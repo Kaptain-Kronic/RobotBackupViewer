@@ -45,8 +45,11 @@
       /* each side goes to the edit workspace on its own: the two sides are
          different robots, so they are two separate entries. diff_program
          returns no path - the roots come from state, like compare.js does. */
-      var rootA = (BV.state.manifest && BV.state.manifest.path) || "";
-      var rootB = (BV.state.compare && BV.state.compare.path) || "";
+      /* root_key (resolved), not path (the sid's literal spelling) - see
+         BV.workspace.currentSource */
+      var mA = BV.state.manifest || {}, mB = BV.state.compare || {};
+      var rootA = mA.root_key || mA.path || "";
+      var rootB = mB.root_key || mB.path || "";
       if (rootA) {
         toolbar.appendChild(BV.workspace.button({
           label: "+ left", title: "add " + d.a.robot + " · " + d.a.name + " to the edit workspace",

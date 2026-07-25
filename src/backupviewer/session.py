@@ -359,8 +359,19 @@ class BackupSession:
             else:
                 tabs[tab] = any(self.find(n) for n in needs)
 
+        try:
+            root_key = str(Path(self.root).resolve())
+        except OSError:
+            root_key = str(self.root)
+
         return {
             "path": str(self.root),
+            # the RESOLVED root. `path` is the session id and must stay exactly
+            # as the caller spelled it, but that spelling varies (an 8.3 short
+            # name, a mapped drive), so anything that has to recognise "the same
+            # backup reached another way" - the edit workspace keys on it - needs
+            # a canonical form or the same robot shows up twice.
+            "root_key": root_key,
             "name": self.root.name,
             "file_count": len(self.files),
             "robot_name": self.robot_name,

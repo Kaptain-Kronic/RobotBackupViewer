@@ -357,6 +357,12 @@
     this._applySync();
   };
 
+  /* repaint the visible rows without touching data, filter or selection.
+     Rows are rebuilt every frame, so a column whose render() reflects state
+     the caller owns (a checked set, a star) needs this after that state
+     changes - otherwise the change only shows once you happen to scroll. */
+  VTable.prototype.repaint = function () { this._render(); };
+
   VTable.prototype.select = function (i, center) {
     if (i < 0 || i >= this.total) return;
     this.selected = i;

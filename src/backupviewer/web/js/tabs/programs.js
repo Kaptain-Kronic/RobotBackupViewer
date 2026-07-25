@@ -81,23 +81,48 @@
           toolbar.appendChild(mBtn);
         }
 
-        /* add to the edit workspace. VTable has no multi-select (one integer
-           `selected`, reset by every sort/filter), so the honest bulk gesture is
-           "everything the current filter shows" - narrow the list, then add it. */
+        /* add to the edit workspace: the ticked programs, or - via the menu -
+           everything the current filter shows */
         var wsSrc = BV.workspace.currentSource();
+        var pickBtn = null;
+        function toEntry(r) {
+          return { root: wsSrc.root, label: wsSrc.label, file: r.rel, name: r.file };
+        }
+        function syncPickBtn() {
+          if (!pickBtn) return;
+          var n = pickedRows().length;
+          pickBtn.textContent = n ? "+ workspace (" + n + ")" : "+ workspace";
+          pickBtn.classList.toggle("primary", !!n);
+        }
         if (wsSrc) {
-          toolbar.appendChild(BV.workspace.button({
-            label: "+ workspace",
-            title: "add the programs this filter shows to the edit workspace",
-            entries: function () {
-              var rows = (vt && vt.view) ? vt.view : [];
-              return rows.filter(function (r) { return !r.binary && r.rel; })
-                .map(function (r) {
-                  return { root: wsSrc.root, label: wsSrc.label,
-                           file: r.rel, name: r.file };
-                });
-            },
-          }));
+          pickBtn = BV.el("button", { class: "btn",
+            title: "tick programs to add them (shift-click for a range), " +
+                   "or click here with none ticked for options" }, "+ workspace");
+          pickBtn.addEventListener("click", function () {
+            var sel = pickedRows();
+            if (sel.length) {
+              var added = BV.workspace.addMany(sel.map(toEntry));
+              BV.toast(added ? added + " program" + (added === 1 ? "" : "s") + " added to the workspace"
+                             : "already in the workspace");
+              Object.keys(picked).forEach(function (k) { delete picked[k]; });
+              lastPick = null;
+              if (vt && vt.repaint) vt.repaint();
+              syncPickBtn();
+              return;
+            }
+            BV.menu(pickBtn, [
+              { label: "add every program this filter shows",
+                onClick: function () {
+                  var view = (vt && vt.view) ? vt.view : [];
+                  var list = view.filter(function (r) { return !r.binary && r.rel; }).map(toEntry);
+                  var n = BV.workspace.addMany(list);
+                  BV.toast(n ? n + " program" + (n === 1 ? "" : "s") + " added"
+                             : "all " + list.length + " already in the workspace");
+                } },
+              { label: "open the edit workspace", onClick: function () { BV.openWorkspace(); } },
+            ]);
+          });
+          toolbar.appendChild(pickBtn);
         }
 
         var sysBtn = BV.el("button", { class: "btn", title: "-BCKED*- markers and BACKGRND-owned programs" },
@@ -201,7 +226,48 @@
         }
         function rows() { return filterRows(progs); }
 
+        /* --- pick programs for the edit workspace, one at a time or in chunks.
+           VTable has no multi-select (one integer `selected`, reset by every
+           sort/filter) and its cells are HTML strings on rows rebuilt each
+           frame - so the checked set lives HERE, the column re-reads it on
+           every paint, and the click is caught in the CAPTURE phase before the
+           row's own handler navigates. Shift extends from the last pick. */
+        var picked = listState.picked || (listState.picked = {});
+        var lastPick = null;
+        function pickedRows() {
+          return progs.filter(function (p) { return p.rel && picked[p.rel]; });
+        }
+        function onPickClick(ev) {
+          var cb = ev.target;
+          if (!cb || !cb.classList || !cb.classList.contains("vt-pick")) return;
+          ev.stopPropagation();                 /* never open the program */
+          var rel = cb.getAttribute("data-k");
+          var view = (vt && vt.view) || [];
+          var idx = -1, prev = -1;
+          view.forEach(function (r, i) {
+            if (r.rel === rel) idx = i;
+            if (lastPick && r.rel === lastPick) prev = i;
+          });
+          if (ev.shiftKey && prev >= 0 && idx >= 0) {
+            var lo = Math.min(prev, idx), hi = Math.max(prev, idx);
+            for (var i = lo; i <= hi; i++) {
+              var r2 = view[i];
+              if (!r2 || !r2.rel || r2.binary) continue;
+              if (cb.checked) picked[r2.rel] = true; else delete picked[r2.rel];
+            }
+          } else if (cb.checked) picked[rel] = true;
+          else delete picked[rel];
+          lastPick = rel;
+          if (vt && vt.repaint) vt.repaint();
+          syncPickBtn();
+        }
+
         var COLUMNS = [
+          { key: "_pick", label: "", width: 34, render: function (r) {
+              if (!r.rel || r.binary) return "";
+              return '<input type="checkbox" class="vt-pick" data-k="' +
+                BV.esc(r.rel) + '"' + (picked[r.rel] ? " checked" : "") + ">";
+            } },
           { key: "star_rank", label: "★", width: 46, render: function (r) {
               if (!r.styles || !r.styles.length) return "";
               return '<span class="accent" title="style ' + r.styles.join(", ") + '">★</span>';
@@ -261,6 +327,12 @@
           }
           BV.currentVTable = vt;
           vt.setFilter(sb.value());
+          /* CAPTURE phase: the row's own click handler navigates, so a ticked
+             checkbox has to be intercepted on the way DOWN */
+          if (wsSrc && vt.container) {
+            vt.container.addEventListener("click", onPickClick, true);
+          }
+          syncPickBtn();
         }
         build();
 

@@ -55,6 +55,9 @@ PROG_BYTES = (
     b"   3:  R[21]=2 ;\r\n"
     b"   4:  !R[21] remarked on purpose ;\r\n"
     b"   5:J P[1] 100% FINE ;\r\n"
+    b"   6:  CALL HOMEPOS ;\r\n"        # not in this backup -> flagged missing
+    b"   7:  LBL[1:TOP] ;\r\n"
+    b"   8:  IF DI[3]=ON,JMP LBL[1] ;\r\n"
     b"/POS\r\n"
     b"P[1]{\r\n"
     b"   GP1:\r\n"
@@ -75,6 +78,10 @@ def check(name, cond, detail=""):
 
 def js(window, expr):
     return window.evaluate_js(expr)
+
+
+def location_hash(window):
+    return js(window, "location.hash.split('/')[0]")
 
 
 def poll(window, expr, tries=30, delay=0.25):
@@ -151,10 +158,35 @@ def probe(window):
         check("rail.caret_expands",
               js(window, "document.querySelectorAll('.ws-prog').length") == 2)
 
-        # ---- open both programs, one per pane, by double-click ----
-        check("panes.two", js(window, "document.querySelectorAll('.ws-pane').length") == 2)
+        # ---- the split is OPT-IN: one pane until asked ----
+        check("panes.single_by_default",
+              js(window, "document.querySelectorAll('.ws-pane').length") == 1)
+        check("panes.no_resizer_when_unsplit",
+              js(window, "document.querySelectorAll('.ws-panes .ws-resizer').length") == 0)
+        js(window, """[...document.querySelectorAll('.toolbar-slot .btn')]
+            .find(function(b){return b.textContent.trim()==='split';}).click()""")
+        time.sleep(0.5)
+        check("panes.two_after_split",
+              js(window, "document.querySelectorAll('.ws-pane').length") == 2)
         check("panes.resizer_between",
               js(window, "document.querySelectorAll('.ws-panes .ws-resizer').length") == 1)
+
+        # ---- the navigator panel exists and can be hidden/shown ----
+        check("nav.panel_present", bool(js(window, "!!document.querySelector('.ws-nav')")))
+        js(window, "document.querySelector('.ws-navhide').click()")
+        time.sleep(0.35)
+        check("nav.hidden_leaves_stub",
+              not js(window, "!!document.querySelector('.ws-nav')")
+              and js(window, "document.querySelectorAll('.ws-stub').length") == 1)
+        js(window, "document.querySelector('.ws-stub').click()")
+        time.sleep(0.35)
+        check("nav.reopens", bool(js(window, "!!document.querySelector('.ws-nav')")))
+        js(window, "document.querySelector('.ws-hidetab').click()")
+        time.sleep(0.35)
+        check("rail.hides_too", not js(window, "!!document.querySelector('.ws-rail')"))
+        js(window, "document.querySelector('.ws-stub').click()")
+        time.sleep(0.4)
+        check("rail.reopens", bool(js(window, "!!document.querySelector('.ws-rail')")))
         js(window, """(function(){
             var r=document.querySelectorAll('.ws-prog');
             r[0].dispatchEvent(new MouseEvent('click',{bubbles:true}));
@@ -183,6 +215,74 @@ def probe(window):
         check("panes.two_editors",
               js(window, "document.querySelectorAll('.lsed-code').length") == 2,
               "(side-by-side)")
+
+        # ---- undo must SURVIVE closing and reopening a tab ----
+        # (the editor instance is cached and its DOM re-attached, so its history
+        # is still there; a rebuilt editor would start with an empty stack)
+        undo = js(window, """(function(){
+            var code=document.querySelectorAll('.lsed-code')[0];
+            var before=code.textContent;
+            code.textContent = before + '\\nUNDO ME';
+            code.dispatchEvent(new Event('input',{bubbles:true}));
+            var typed=document.querySelectorAll('.lsed-code')[0].textContent;
+            /* close the tab, then reopen the same program */
+            var pane=document.querySelectorAll('.ws-pane')[0];
+            pane.querySelector('.ws-tab .x').click();
+            return JSON.stringify({before:before, typed:typed});
+        })()""")
+        time.sleep(0.5)
+        js(window, """(function(){
+            var p0=document.querySelectorAll('.ws-pane')[0];
+            p0.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));
+            document.querySelectorAll('.ws-prog')[0]
+                .dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
+        })()""")
+        time.sleep(0.7)
+        reopened = js(window, "(document.querySelector('.lsed-code')||{}).textContent||''")
+        check("undo.text_survived_close", "UNDO ME" in (reopened or ""),
+              "(the edit itself must persist)")
+        js(window, """(function(){
+            var code=document.querySelector('.lsed-code');
+            code.focus();
+            code.dispatchEvent(new KeyboardEvent('keydown',
+                {key:'z',ctrlKey:true,bubbles:true,cancelable:true}));
+        })()""")
+        time.sleep(0.4)
+        after_undo = js(window, "(document.querySelector('.lsed-code')||{}).textContent||''")
+        check("undo.survives_tab_close", "UNDO ME" not in (after_undo or ""),
+              f"({undo} -> after ctrl+z: {(after_undo or '')[-24:]!r})")
+
+        # ---- the navigator reads the ACTIVE program, live from its text ----
+        calls_txt = js(window, """(function(){
+            return [...document.querySelectorAll('.ws-navrow')]
+                .map(function(r){return r.textContent;}).join(' | ');
+        })()""") or ""
+        check("nav.lists_calls", "HOMEPOS" in calls_txt, f"({calls_txt[:70]!r})")
+        check("nav.flags_missing_call",
+              bool(js(window, "!!document.querySelector('.ws-navrow .nm.miss')")),
+              "(HOMEPOS is not a program in this backup)")
+        labels_txt = js(window, """(function(){
+            var lab=[...document.querySelectorAll('.ws-navhead .seg button')]
+                .filter(function(b){return b.textContent.trim()==='labels';})[0];
+            if(lab) lab.click();
+            return [...document.querySelectorAll('.ws-navrow')]
+                .map(function(r){return r.textContent;}).join(' | ');
+        })()""") or ""
+        check("nav.lists_labels", "LBL[1]" in labels_txt, f"({labels_txt[:70]!r})")
+
+        # ---- no duplicate tabs across panes ----
+        js(window, """(function(){
+            var p1=document.querySelectorAll('.ws-pane')[1];
+            p1.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));
+            /* ask for a program that is ALREADY open in the left pane */
+            document.querySelectorAll('.ws-prog')[0]
+                .dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
+        })()""")
+        time.sleep(0.5)
+        tabs_l = js(window, "document.querySelectorAll('.ws-pane')[0].querySelectorAll('.ws-tab').length")
+        tabs_r = js(window, "document.querySelectorAll('.ws-pane')[1].querySelectorAll('.ws-tab').length")
+        check("tabs.no_duplicate_across_panes", tabs_l == 1 and tabs_r == 1,
+              f"(left {tabs_l}, right {tabs_r} — asking pane 1 for pane 0's program must focus, not copy)")
 
         # ---- edit one program: dirty must reach the rail + badge ----
         js(window, """(function(){
@@ -219,33 +319,67 @@ def probe(window):
               not any("remarked on purpose" in s for s in snips))
         check("find.grouped_by_robot",
               js(window, "document.querySelectorAll('.fp-rb').length") == 2)
-        check("find.per_program_selectall",
-              js(window, "document.querySelectorAll('.fp-pg input[type=checkbox]').length") == 2)
-        # a robot caret folds its results without losing the selection
-        before = js(window, "document.querySelectorAll('.fp-ln').length")
+        check("find.no_duplicate_scope_row",
+              not js(window, "!!document.querySelector('.fp-scope')"),
+              "(the robot row's own box IS the scope now)")
+        # options a text editor is expected to have
+        check("find.has_case_and_word_options", bool(js(window, """(function(){
+            var t=[...document.querySelectorAll('.fp-opt')].map(function(o){return o.textContent;}).join('|');
+            return t.indexOf('match case')>=0 && t.indexOf('whole word')>=0;
+        })()""")))
+        # a program NAME match is found and marked (navigational, not replaceable)
+        js(window, """(function(){
+            var i=document.querySelector('.fp-inputs input');
+            i.value='MAIN'; i.dispatchEvent(new Event('input',{bubbles:true}));
+        })()""")
+        time.sleep(0.5)
+        check("find.matches_program_names",
+              bool(js(window, "!!document.querySelector('.fp-pg .pill')")),
+              "(MAIN matches the file name, badged 'name')")
+        js(window, """(function(){
+            var i=document.querySelector('.fp-inputs input');
+            i.value='R[21]'; i.dispatchEvent(new Event('input',{bubbles:true}));
+        })()""")
+        time.sleep(0.5)
+
+        # ---- BUG: collapsing must not tick boxes, and one result = one box ----
+        sel_before = js(window, "document.querySelector('.fp-foot .dim').textContent")
+        js(window, """(function(){
+            var cbs=document.querySelectorAll('.fp-ln input[type=checkbox]');
+            cbs[0].checked=false; cbs[0].click();   /* untick one line by hand */
+        })()""")
+        time.sleep(0.3)
+        after_untick = js(window, "document.querySelector('.fp-foot .dim').textContent")
         js(window, "document.querySelector('.fp-rb .caret').click()")
         time.sleep(0.3)
-        folded = js(window, "document.querySelectorAll('.fp-ln').length")
-        check("find.results_collapse", folded < before, f"({before} -> {folded})")
+        folded_txt = js(window, "document.querySelector('.fp-foot .dim').textContent")
+        check("find.collapse_keeps_selection", folded_txt == after_untick,
+              f"(before {sel_before!r} -> untick {after_untick!r} -> folded {folded_txt!r})")
         js(window, "document.querySelector('.fp-rb .caret').click()")
         time.sleep(0.3)
-        # excluding a robot drops it from scope but still SHOWS it
-        js(window, """(function(){
-            var cbs=document.querySelectorAll('.fp-scope input[type=checkbox]');
-            cbs[1].checked=false; cbs[1].dispatchEvent(new Event('change',{bubbles:true}));
-        })()""")
-        time.sleep(0.4)
-        check("find.robot_excluded_but_listed",
-              bool(js(window, "!!document.querySelector('.fp-rb.excluded')")))
-        js(window, """(function(){
-            var cbs=document.querySelectorAll('.fp-scope input[type=checkbox]');
-            cbs[1].checked=true; cbs[1].dispatchEvent(new Event('change',{bubbles:true}));
-        })()""")
-        time.sleep(0.4)
+        # a robot with a single hit must not stack robot+program+line boxes
+        check("find.no_redundant_boxes", bool(js(window, """(function(){
+            var rows=[...document.querySelectorAll('.fp-rb,.fp-pg,.fp-ln')];
+            var bad=0;
+            rows.forEach(function(r){
+              if(!r.classList.contains('fp-ln')){
+                var n=+((r.querySelector('.dim')||{}).textContent||'0');
+                var hasBox=!!r.querySelector('input[type=checkbox]');
+                if(n===1 && hasBox) bad++;   /* a single-hit group needs no box */
+              }
+            });
+            return bad===0;
+        })()""")), "(single-hit groups render no group checkbox)")
         # clicking a result opens it and flashes the line, WITHOUT closing find
         js(window, "document.querySelectorAll('.fp-ln')[0].click()")
         time.sleep(0.5)
-        check("find.click_flashes_line", bool(js(window, "!!document.querySelector('.flashbar')")))
+        flash_dx = js(window, """JSON.stringify({
+            bar: !!document.querySelector('.flashbar'),
+            scrollers: document.querySelectorAll('.lsed-scroll').length,
+            editors: document.querySelectorAll('.lsed-code').length,
+            tabs: document.querySelectorAll('.ws-tab').length })""")
+        check("find.click_flashes_line",
+              bool(js(window, "!!document.querySelector('.flashbar')")), str(flash_dx))
         check("find.panel_survives_click", bool(js(window, "!!document.querySelector('.fp')")),
               "(opening a tab must not rebuild the rail)")
 
@@ -289,13 +423,13 @@ def probe(window):
         js(window, """[...document.querySelectorAll('.ws-railtab')]
             .find(function(t){return t.textContent.indexOf('working')>=0;}).click()""")
         time.sleep(0.3)
-        js(window, """(function(){
-            var r=document.querySelectorAll('.ws-prog');
-            var p0=document.querySelectorAll('.ws-pane')[0];
-            p0.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));
-            r[1].dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
-        })()""")
+        # turning the split OFF must MERGE the right pane's work into the left
+        # (never hide open programs), which also gives us two tabs in one pane
+        js(window, """[...document.querySelectorAll('.toolbar-slot .btn')]
+            .find(function(b){return b.textContent.trim()==='split';}).click()""")
         time.sleep(0.6)
+        check("split.off_merges_panes",
+              js(window, "document.querySelectorAll('.ws-pane').length") == 1)
         n0 = js(window, "document.querySelectorAll('.ws-pane')[0].querySelectorAll('.ws-tab').length")
         check("tabs.two_in_pane", n0 == 2, f"(got {n0})")
         act0 = js(window, """[...document.querySelectorAll('.ws-pane')[0].querySelectorAll('.ws-tab')]
@@ -318,6 +452,43 @@ def probe(window):
         time.sleep(0.8)
         check("persist.set_survives_navigation",
               js(window, "document.querySelectorAll('.ws-prog').length") == 2)
+
+        # ---- the programs list: pick programs one at a time or in chunks ----
+        # needs a backup OPEN (the list is session-backed), so this runs last
+        js(window, """window._ob='';
+            BV.api.call('open_backup', %s).then(function(m){
+                BV.session.open(m); BV.state.setManifest(m); window._ob='ok';
+            }, function(e){ window._ob='err:'+(e.code||e.message); });""" %
+           json.dumps(str(SNAPS[ROBOTS[0]])))
+        check("list.backup_opened", poll(window, "window._ob") == "ok")
+        js(window, "location.hash = '#programs'")
+        boxes = poll(window, "document.querySelectorAll('.vt-pick').length")
+        check("list.pick_column", bool(boxes) and boxes >= 1, f"({boxes} checkboxes)")
+        # a real click toggles the box itself - pre-setting .checked then
+        # clicking would toggle it straight back off
+        js(window, "document.querySelectorAll('.vt-pick')[0].click()")
+        time.sleep(0.35)
+        label = js(window, """(function(){
+            var b=[...document.querySelectorAll('.toolbar-slot .btn')]
+                .filter(function(x){return x.textContent.indexOf('workspace')>=0;})[0];
+            return b ? b.textContent : '';
+        })()""")
+        check("list.tick_updates_button", "(1)" in (label or ""), f"({label!r})")
+        check("list.tick_did_not_navigate", location_hash(window) == "#programs",
+              "(a ticked box must not open the program)")
+        # adding consumes the ticks (the button goes back to its idle label)
+        js(window, """[...document.querySelectorAll('.toolbar-slot .btn')]
+            .filter(function(x){return x.textContent.indexOf('workspace')>=0;})[0].click()""")
+        time.sleep(0.5)
+        after = js(window, """(function(){
+            var b=[...document.querySelectorAll('.toolbar-slot .btn')]
+                .filter(function(x){return x.textContent.indexOf('workspace')>=0;})[0];
+            return b ? b.textContent : '';
+        })()""")
+        check("list.add_clears_ticks", after == "+ workspace", f"({after!r})")
+        check("list.no_duplicate_entry",
+              js(window, "BV.workspace.count()") == 2,
+              "(MAIN.LS was already in the working set - added once, not twice)")
 
         print()
         print("FAILURES:", FAILURES if FAILURES else "none")

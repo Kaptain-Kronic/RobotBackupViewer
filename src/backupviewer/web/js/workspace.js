@@ -255,11 +255,14 @@
     return b;
   };
 
-  /* the current backup as a workspace source: {root, label} or null */
+  /* the current backup as a workspace source: {root, label} or null.
+     root_key, not path: `path` is the session id and carries whatever spelling
+     opened it (8.3 short name, mapped drive), so keying on it would file the
+     same backup under two roots when it is also reached from the library. */
   BV.workspace.currentSource = function () {
     var m = BV.state.manifest;
-    if (!m || !m.path) return null;
-    return { root: m.path, label: m.robot_name || m.name || "" };
+    if (!m || !(m.root_key || m.path)) return null;
+    return { root: m.root_key || m.path, label: m.robot_name || m.name || "" };
   };
 
   function copy(o) {
