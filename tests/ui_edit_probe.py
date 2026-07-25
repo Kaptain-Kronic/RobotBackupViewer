@@ -175,15 +175,18 @@ def probe(window):
         check("shell.logo_hidden_in_main_window",
               js(window, "getComputedStyle(document.getElementById('logo')).display") == "none",
               "(the wordmark is the pop-out's tell)")
+        # getBBox(), not getBoundingClientRect(): the element box is whatever CSS
+        # says regardless of what is drawn, so only the DRAWN geometry's bounds
+        # can catch a path that silently collapsed to nothing
         cubes_box = js(window, """JSON.stringify(['cube-lib','cube-cam','cube-edit'].map(function(id){
             var b=document.getElementById(id), s=b && b.querySelector('svg');
             if(!s) return 0;
-            var r=s.getBoundingClientRect();
-            return Math.round(Math.min(r.width, r.height));
+            try { var g=s.getBBox(); return Math.round(Math.min(g.width, g.height)); }
+            catch (e) { return -1; }
         }))""")
         check("shell.cubes_render",
-              all(v >= 12 for v in json.loads(cubes_box or "[0]")),
-              f"(icon boxes {cubes_box} px — a malformed path collapses to 0)")
+              all(v >= 8 for v in json.loads(cubes_box or "[0]")),
+              f"(drawn bounds {cubes_box} of 24 user units — a collapsed path reads 0)")
         check("shell.chrome_hidden",
               bool(js(window, "document.getElementById('btn-compare').classList.contains('hidden')")))
 
