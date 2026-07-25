@@ -325,6 +325,7 @@
   }
 
   function renderDetail(view, toolbar, file, anchor) {
+    if (BV.tabState("programs").editMode) return renderEditDetail(view, toolbar, file, anchor);
     view.classList.remove("no-pad");
     BV.api.call("get_program", decodeURIComponent(file)).then(function (p) {
       var crumb = BV.el("div", { class: "crumb" });
@@ -615,12 +616,282 @@
         side.appendChild(pc);
       }
 
+      buildModeToolbar(toolbar, file);
+
       /* line anchor from search results: #programs/FILE.LS/L26 */
       if (anchor && /^L\d+$/.test(anchor)) revealLine(anchor.slice(1));
     }).catch(function (e) {
       view.innerHTML = '<div class="empty-state"><div class="big">program unavailable</div>' +
         '<div class="hint">' + BV.esc(e.message) + "</div></div>";
     });
+  }
+
+  /* ------------------------------ edit mode ------------------------------ */
+  /* The edit view mirrors the read view: same crumb, same split - but the
+     source pane is the BV.lsEditor editor (auto numbers, live colors, no ';')
+     and the side panel is COLLAPSED by default (a "details" toggle reveals
+     editable attributes + point data - most edits never touch them). Edit mode
+     is sticky per backup (pst.editMode); the toggle re-routes so each mode
+     builds its own DOM fresh. */
+
+  function buildModeToolbar(toolbar, file, extra) {
+    var pst = BV.tabState("programs");
+    var row = BV.el("div", { style: "display:flex;gap:.6rem;align-items:center;flex-wrap:wrap" });
+    var seg = BV.segmented(
+      [{ id: "view", label: "view" }, { id: "edit", label: "edit" }],
+      { value: pst.editMode ? "edit" : "view", controlled: true,
+        onChange: function (id) {
+          var want = id === "edit";
+          if (want === !!pst.editMode) return;
+          pst.editMode = want;
+          BV.route();
+        } }
+    );
+    seg.setActive(pst.editMode ? "edit" : "view");
+    row.appendChild(seg.el);
+    (extra || []).forEach(function (el) { row.appendChild(el); });
+    if (!pst.editMode && BV.edit && BV.edit.anyDirty()) {
+      row.appendChild(BV.pill.node(BV.edit.dirtyFiles().length + " unsaved", "warn"));
+    }
+    toolbar.appendChild(row);
+    return row;
+  }
+
+  function renderEditDetail(view, toolbar, file, anchor) {
+    view.classList.remove("no-pad");
+    var pst = BV.tabState("programs");
+    var f = decodeURIComponent(file);
+    Promise.all([BV.api.call("get_program", f), BV.edit.ensure(f)]).then(function (res) {
+      var p = res[0], buf = res[1];
+      if (!document.body.contains(view)) return;   // routed away mid-load
+
+      var crumb = BV.el("div", { class: "crumb" });
+      crumb.innerHTML = '<span class="back" id="crumb-hist" title="previous view (backspace)">← back</span>' +
+        '<span class="back" id="crumb-list">programs</span>' +
+        '<span class="title">' + BV.esc(p.name) + "</span>" +
+        '<span class="pill acc">editing</span>' +
+        (p.prog_type ? '<span class="pill ghost">' + BV.esc(p.prog_type.toLowerCase()) + "</span>" : "");
+      crumb.querySelector("#crumb-hist").addEventListener("click", function () { history.back(); });
+      crumb.querySelector("#crumb-list").addEventListener("click", function () { location.hash = "#programs"; });
+      view.appendChild(crumb);
+
+      var split = BV.el("div", { class: pst.editDetails ? "split" : "",
+        style: "height:calc(100% - 2.4rem)" + (pst.editDetails ? "" : ";display:flex") });
+      view.appendChild(split);
+
+      var host = BV.el("div", { style: "min-height:0;flex:1;height:100%" });
+      split.appendChild(host);
+      var ed = BV.lsEditor(host, {
+        text: buf.curBody,
+        onChange: function (t) { BV.edit.setBody(f, t); refreshDirty(); },
+      });
+
+      if (pst.editDetails) {
+        var side = BV.el("div", { style: "display:flex;flex-direction:column;gap:.9rem" });
+        split.appendChild(side);
+        side.appendChild(attrsCard(f, buf, refreshDirty));
+        var posCard = positionsCard(f, p.positions || [], refreshDirty);
+        if (posCard) side.appendChild(posCard);
+      }
+
+      /* toolbar: mode seg · details toggle · save · dirty pill */
+      var details = BV.el("button", {
+        class: "btn", title: "show attributes + point data (rarely edited)",
+      }, pst.editDetails ? "hide details" : "details");
+      details.addEventListener("click", function () {
+        pst.editDetails = !pst.editDetails;
+        BV.route();
+      });
+      var save = BV.el("button", { class: "btn primary",
+        title: "export edited programs to a folder (never the backup)" }, "save / export");
+      save.addEventListener("click", doSave);
+      var pill = BV.el("span");
+      buildModeToolbar(toolbar, file, [details, save, pill]);
+
+      function refreshDirty() {
+        var n = BV.edit.dirtyFiles().length;
+        pill.innerHTML = n ? BV.pill(n === 1 ? "1 unsaved" : n + " unsaved", "warn") : "";
+      }
+      refreshDirty();
+
+      function doSave() {
+        if (view.querySelector(".edpos input.err")) {
+          BV.toast("fix the highlighted position values first", 2600);
+          return;
+        }
+        var edits = BV.edit.edits();
+        if (!edits.length) { BV.toast("no edits to save"); return; }
+        BV.api.call("pick_export_folder").then(function (dest) {
+          if (!dest) return;   // dialog cancelled
+          return BV.api.call("export_edited_programs", edits, dest).then(function (r) {
+            BV.edit.markSaved();
+            refreshDirty();
+            showExported(r);
+          });
+        }).catch(function (e) {
+          BV.toast("export failed: " + (e.message || e), 4000);
+        });
+      }
+
+      if (anchor && /^L(\d+)$/.test(anchor)) ed.focusLine(parseInt(anchor.slice(1), 10));
+    }).catch(function (e) {
+      view.innerHTML = '<div class="empty-state"><div class="big">program unavailable</div>' +
+        '<div class="hint">' + BV.esc(e.message) + "</div></div>";
+    });
+  }
+
+  /* editable attributes: the three fields that are OURS to change. The derived
+     sizes/dates stay read-only - the controller's numbers, not ours to invent. */
+  function attrsCard(file, buf, onChange) {
+    var card = BV.el("div", { class: "card" });
+    card.appendChild(BV.el("h3", null, "attributes"));
+
+    function textRow(label, name) {
+      var row = BV.el("div", { class: "edattr-row" });
+      row.appendChild(BV.el("label", null, label));
+      var inp = BV.el("input", { type: "text", style: "flex:1" });
+      inp.value = buf.curAttrs[name] || "";
+      inp.addEventListener("input", function () {
+        BV.edit.setAttr(file, name, inp.value);
+        onChange();
+      });
+      row.appendChild(inp);
+      return row;
+    }
+    card.appendChild(textRow("comment", "comment"));
+    card.appendChild(textRow("owner", "owner"));
+
+    var prot = buf.baseAttrs.protect;
+    var row = BV.el("div", { class: "edattr-row" });
+    row.appendChild(BV.el("label", null, "protect"));
+    if (prot === "READ_WRITE" || prot === "READ") {
+      var seg = BV.segmented(
+        [{ id: "READ_WRITE", label: "read_write" }, { id: "READ", label: "read" }],
+        { value: buf.curAttrs.protect,
+          onChange: function (id) { BV.edit.setAttr(file, "protect", id); onChange(); } });
+      row.appendChild(seg.el);
+    } else {
+      /* unknown value: show it honestly, don't offer switches we can't prove */
+      row.appendChild(BV.el("span", { class: "dim" }, BV.esc(prot || "—")));
+    }
+    card.appendChild(row);
+    return card;
+  }
+
+  /* editable point data. Masked '********' fields are points placed logically
+     but never initialized - typing a value initializes them in the export. */
+  function positionsCard(file, positions, onChange) {
+    if (!positions.length) return null;
+    var card = BV.el("div", { class: "card edpos" });
+    card.innerHTML = '<h3>positions <span class="count">' + positions.length + "</span></h3>";
+    var body = BV.el("div", { class: "scrollbody", style: "max-height:24rem;overflow:auto" });
+    card.appendChild(body);
+
+    function field(id, gp, name, current, masked, check) {
+      var cell = BV.el("div", { class: "cell" });
+      cell.appendChild(BV.el("span", null, BV.esc(name)));
+      var inp = BV.el("input", { type: "text" });
+      var edited = BV.edit.getPos(file, id, gp, name);
+      inp.value = edited !== null ? edited : (masked ? "" : (current === null || current === undefined ? "" : current));
+      if (masked) inp.placeholder = "********";
+      inp.addEventListener("change", function () {
+        var v = inp.value.trim();
+        if (v === "" || (!masked && String(current) === v)) {
+          inp.classList.remove("err");
+          BV.edit.setPos(file, { id: id, gp: gp, field: name, value: null });
+          if (!masked && v === "") inp.value = current === null ? "" : current;
+        } else if (check(v)) {
+          inp.classList.remove("err");
+          BV.edit.setPos(file, { id: id, gp: gp, field: name, value: v });
+        } else {
+          inp.classList.add("err");
+          BV.edit.setPos(file, { id: id, gp: gp, field: name, value: null });
+        }
+        onChange();
+      });
+      cell.appendChild(inp);
+      return cell;
+    }
+    var isNum = function (v) { return /^-?\d+(\.\d+)?$/.test(v); };
+    var isUfUt = function (v) { return /^(\d+|F)$/i.test(v); };
+    var noQuote = function (v) { return v.indexOf("'") < 0; };
+
+    positions.forEach(function (pos) {
+      var head = BV.el("div", { class: "edpos-p" });
+      head.appendChild(BV.el("span", { class: "pid" }, "P[" + pos.id + "]"));
+      var cmt = BV.el("input", { type: "text", placeholder: "comment" });
+      var ce = BV.edit.getPos(file, pos.id, 1, "comment");
+      cmt.value = ce !== null ? ce : (pos.comment || "");
+      cmt.addEventListener("change", function () {
+        var v = cmt.value;
+        BV.edit.setPos(file, { id: pos.id, gp: 1, field: "comment",
+                               value: v === (pos.comment || "") ? null : v });
+        onChange();
+      });
+      head.appendChild(cmt);
+      body.appendChild(head);
+
+      pos.groups.forEach(function (g) {
+        var grid = BV.el("div", { class: "edpos-grid" });
+        if (pos.groups.length > 1) {
+          body.appendChild(BV.el("div", { class: "dim", style: "margin-left:.4rem;font-size:.72rem" }, "gp" + g.gp));
+        }
+        if (g.kind === "joint") {
+          (g.joints || []).forEach(function (jv, ji) {
+            grid.appendChild(field(pos.id, g.gp, "j" + (ji + 1), jv, g.masked && jv === null, isNum));
+          });
+        } else {
+          ["x", "y", "z", "w", "p", "r"].forEach(function (ax) {
+            grid.appendChild(field(pos.id, g.gp, ax, g[ax], g.masked && (g[ax] === null || g[ax] === undefined), isNum));
+          });
+        }
+        grid.appendChild(field(pos.id, g.gp, "uf", g.uf, false, isUfUt));
+        grid.appendChild(field(pos.id, g.gp, "ut", g.ut, false, isUfUt));
+        var cfg = BV.el("div", { class: "cell", style: "grid-column:1/-1" });
+        cfg.appendChild(BV.el("span", null, "cfg"));
+        var cfgIn = BV.el("input", { type: "text" });
+        var cfe = BV.edit.getPos(file, pos.id, g.gp, "config");
+        cfgIn.value = cfe !== null ? cfe : (g.config || "");
+        cfgIn.addEventListener("change", function () {
+          var v = cfgIn.value;
+          if (!noQuote(v)) { cfgIn.classList.add("err"); return; }
+          cfgIn.classList.remove("err");
+          BV.edit.setPos(file, { id: pos.id, gp: g.gp, field: "config",
+                                 value: v === (g.config || "") ? null : v });
+          onChange();
+        });
+        cfg.appendChild(cfgIn);
+        grid.appendChild(cfg);
+        body.appendChild(grid);
+      });
+    });
+    return card;
+  }
+
+  /* honest post-export confirmation: shows exactly which files landed where,
+     with a reveal-in-explorer affordance (files are law - say what was written) */
+  function showExported(res) {
+    var body = BV.el("div");
+    var files = (res.files || []).map(function (f) {
+      return '<li>' + BV.esc(f) + "</li>";
+    }).join("");
+    body.innerHTML =
+      '<p>exported <b>' + res.count + "</b> file" + (res.count === 1 ? "" : "s") + " to</p>" +
+      '<p style="font-family:var(--font-mono);font-size:.8rem;word-break:break-all">' +
+      BV.esc(res.dest) + "</p>" +
+      '<ul class="dim" style="margin:.3rem 0 0 1.1rem;font-size:.82rem">' + files + "</ul>";
+    var actions = BV.el("div",
+      { style: "display:flex;gap:.6rem;justify-content:flex-end;margin-top:1rem" });
+    var reveal = BV.el("button", { class: "btn" }, "reveal in explorer");
+    var done = BV.el("button", { class: "btn primary" }, "done");
+    actions.appendChild(reveal);
+    actions.appendChild(done);
+    body.appendChild(actions);
+    var m = BV.modal("exported", body);
+    reveal.addEventListener("click", function () {
+      BV.api.call("reveal_export_folder", res.dest).catch(function () {});
+    });
+    done.addEventListener("click", function () { m.close(true); });
   }
 
   /* KAREL (.PC) program: show its variables (from the .VA twin) as a

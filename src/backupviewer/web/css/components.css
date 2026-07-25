@@ -406,6 +406,76 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
   user-select: text;
 }
 .viewer pre { margin: 0; font-family: var(--font-mono); }
+
+/* code editor (BV.lsEditor): ONE contenteditable <pre> whose content is the
+   live-highlighted text (the old transparent-textarea-over-highlight overlay
+   ghosted whenever any token style diverged - bold/italic - because it was
+   two renderings of the same text). One scroller holds gutter + code side by
+   side: vertical scroll moves both natively, position:sticky pins the gutter
+   during horizontal scroll - no sync JS at all. */
+.lsed {
+  height: 100%; overflow: hidden; display: flex;
+  background: var(--bg2); border: 1px solid var(--edge); border-radius: var(--radius);
+  font-family: var(--font-mono); font-size: 0.83rem; line-height: 1.4;
+}
+/* align-items:flex-start, NOT the default stretch: a stretched flex item is
+   sized to the scroller's VISIBLE box, so every line you had to scroll to sat
+   OUTSIDE the editable element - only the glyphs themselves stayed clickable
+   and blank space past a line's text hit the scroller instead ("you have to
+   click on the letter"). Sized to content, the editable covers all its text. */
+.lsed-scroll { flex: 1; min-width: 0; overflow: auto; display: flex; align-items: flex-start; }
+.lsed-gutter {
+  position: sticky; left: 0; z-index: 2;
+  flex: none; user-select: none; min-height: 100%;
+  padding: 0.7rem 0; text-align: right; color: var(--sub-alt);
+  background: var(--bg2); border-right: 1px solid var(--edge);
+}
+.lsed-nums { padding: 0 0.6em 0 0.9em; white-space: pre; }
+.lsed-code {
+  /* 1 0 auto + min-height:100%: as wide/tall as its content (so the whole
+     text is a click target) but never smaller than the pane (so clicking
+     past the last line, or right of a short line, still lands in the
+     editor). Growing only into free space keeps phantom scrollbars away. */
+  flex: 1 0 auto; min-height: 100%; margin: 0; border: 0; outline: none;
+  font: inherit; line-height: inherit; letter-spacing: normal; tab-size: 4;
+  white-space: pre; overflow-wrap: normal; word-break: normal;
+  padding: 0.7rem 0.9rem;
+  color: var(--text); caret-color: var(--text);
+  cursor: text;
+}
+/* every token span must render in the editor's mono font - a UA rule like
+   `code {font-family: monospace}` once snuck Courier into the highlight layer.
+   font-family only: each tp-* class keeps its own weight/style/color. */
+.lsed-code * { font-family: inherit; }
+/* selection must be OPAQUE (mixed toward the editor bg, not transparent):
+   Chromium paints the selection once per inline fragment and token spans
+   produce duplicate fragments on the same row - a translucent color STACKS
+   where paints double (0.3 + 0.3 = visibly darker bands), an opaque one
+   paints the same pixel twice and doubling cannot show. */
+.lsed-code ::selection,
+.lsed-code::selection { background: color-mix(in srgb, var(--accent) 30%, var(--bg2)); }
+
+/* edit-mode side panel: compact editable attr/position fields */
+.edattr-row { display: flex; align-items: center; gap: 0.6rem; margin: 0.3rem 0; }
+.edattr-row label { color: var(--sub); font-size: 0.78rem; min-width: 4.5em; }
+.edattr-row input, .edpos input {
+  background: var(--bg); color: var(--text); border: 1px solid var(--edge);
+  border-radius: 4px; font: inherit; font-family: var(--font-mono);
+  font-size: 0.8rem; padding: 0.15rem 0.4rem; min-width: 0;
+}
+.edattr-row input:focus, .edpos input:focus { border-color: var(--accent); outline: none; }
+.edpos { font-size: 0.8rem; }
+.edpos .edpos-p { margin: 0.5rem 0 0.2rem; display: flex; gap: 0.5rem; align-items: center; }
+.edpos .edpos-p .pid { font-family: var(--font-mono); color: var(--accent); }
+.edpos .edpos-p input { flex: 1; }
+.edpos-grid {
+  display: grid; grid-template-columns: repeat(3, minmax(min(7rem, 100%), 1fr));
+  gap: 0.25rem 0.5rem; margin-left: 0.4rem;
+}
+.edpos-grid .cell { display: flex; align-items: center; gap: 0.3rem; }
+.edpos-grid .cell span { color: var(--sub); font-size: 0.72rem; min-width: 1.4em; }
+.edpos-grid .cell input { width: 100%; }
+.edpos input.err { border-color: var(--error); }
 .code-line { display: flex; padding: 0 0.9rem; min-height: 1.4em; font-family: var(--font-mono); }
 .code-line:hover { background: color-mix(in srgb, var(--sub-alt) 18%, transparent); }
 .code-line .ln {

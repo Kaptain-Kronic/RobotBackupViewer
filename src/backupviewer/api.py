@@ -38,11 +38,11 @@ from . import screengrab
 from . import search as search_mod
 from . import settings
 from .parsers import (alarms, callgraph, curpos, dcs, dcszones, frames,
-                      gmwizlog, io_dg, kinematics, ls_program, macros, magnet,
-                      mastering, mhvalves, mtx_portal, mtx_saved_image,
+                      gmwizlog, io_dg, kinematics, ls_edit, ls_program, macros,
+                      magnet, mastering, mhvalves, mtx_portal, mtx_saved_image,
                       payloads, registers, styles, summary_dg, sysvars)
 from .parsers.common import is_binary, read_text
-from .session import BackupSession
+from .session import BackupSession, looks_like_backup
 
 log = logging.getLogger(__name__)
 
@@ -868,6 +868,140 @@ class Api:
             return prog
 
         return s.cached(f"program:{p.name.upper()}", build)
+
+    # -- edit / export ---------------------------------------------------------
+    # The viewer is read-only evidence; editing exports a modified COPY to a new
+    # folder the user picks and never touches the backup (enforced below).
+
+    def _need_program(self, s: BackupSession, file_name: str) -> Path:
+        p = s.find(file_name)
+        if p is None or p not in s.program_files:
+            raise ApiError("NOT_FOUND", f"Program not found: {file_name}")
+        return p
+
+    @_endpoint
+    def get_program_editable(self, file_name: str, sid: str | None = None):
+        """The editor's seed: the body as display text (no numbers, no ';',
+        wrapped statements joined) plus the three editable attributes. Derived
+        from pristine bytes via ls_edit.split_sections - the SAME code save
+        uses, so what you edit is exactly what re-emits. Byte-exact latin-1,
+        NOT get_program's lossy cp1252 `source`."""
+        s = self._need_session(sid)
+        p = self._need_program(s, file_name)
+        text = ls_edit.decode_ls(p.read_bytes())
+        sections = ls_edit.split_sections(text)
+        attrs = ls_program.parse_ls_header(text)["attrs"]
+        return {
+            "name": p.name,
+            "body": ls_edit.body_text(sections),
+            "attrs": {"owner": attrs.get("owner", ""),
+                      "comment": attrs.get("comment", ""),
+                      "protect": attrs.get("protect", "")},
+        }
+
+    @_endpoint
+    def pick_export_folder(self):
+        import webview
+
+        start = settings.get("last_export_folder") or settings.library_root()
+        result = self._window.create_file_dialog(
+            webview.FOLDER_DIALOG, directory=start if Path(start or ".").exists() else ""
+        )
+        if not result:
+            return None
+        return result[0] if isinstance(result, (list, tuple)) else result
+
+    @_endpoint
+    def export_edited_programs(self, edits, dest, sid: str | None = None):
+        """Write edited .LS programs to a NEW folder chosen by the user.
+
+        The backup is never touched: the destination must be OUTSIDE the open
+        backup and must not itself already look like a backup. All-or-nothing
+        (every output is built in memory first, then written .part -> os.replace
+        so a partial export never appears), flat layout, byte-faithful latin-1.
+
+        `edits` = [{"file": <basename>, "body": tokens|None,
+                    "attrs": {owner|comment|protect}|None,
+                    "positions": [{id,gp,field,value}]|None}] - each part None
+        when unchanged. Body tokens: {"ref": i} keeps pristine record i
+        byte-exact (renumbered), {"text": s} emits canonically; the split/emit
+        engine lives in parsers/ls_edit.py.
+        """
+        s = self._need_session(sid)
+        if not edits:
+            raise ApiError("NO_EDITS", "nothing to export")
+        if not dest:
+            raise ApiError("BAD_DEST", "an export folder is required")
+        try:
+            d = Path(dest).resolve()
+            root = Path(s.root).resolve()
+        except OSError:
+            raise ApiError("BAD_DEST", "could not resolve the export folder")
+        if d == root or library._within(d, root) or looks_like_backup(d):
+            raise ApiError(
+                "BAD_DEST",
+                "choose a folder outside the backup - the viewer never writes "
+                "into a backup")
+        outputs: list[tuple[str, bytes]] = []
+        for e in edits:
+            e = e or {}
+            name = e.get("file")
+            p = self._need_program(s, name) if name else None
+            if p is None:
+                raise ApiError("NOT_FOUND", "an edit is missing its file name")
+            text = ls_edit.decode_ls(p.read_bytes())
+            try:
+                sections = ls_edit.split_sections(text)
+                if e.get("attrs"):
+                    sections["prefix"] = ls_edit.apply_attrs(sections["prefix"], e["attrs"])
+                if e.get("positions"):
+                    sections["suffix"] = ls_edit.apply_positions(
+                        sections["suffix"], e["positions"])
+                tokens = e.get("body")
+                if tokens is None:
+                    tokens = [{"ref": i} for i in range(len(sections["records"]))]
+                data = ls_edit.encode_ls(ls_edit.emit(sections, tokens))
+            except ls_edit.LsEncodeError as ex:
+                raise ApiError("BAD_CHAR", f"{p.name}: {ex}")
+            except ls_edit.LsEditError as ex:
+                raise ApiError("BAD_EDIT", f"{p.name}: {ex}")
+            outputs.append((p.name, data))
+        os.makedirs(ftpbackup.long_path(str(d)), exist_ok=True)
+        written: list[str] = []
+        for name, data in outputs:
+            target = str(d / name)
+            part = ftpbackup.long_path(target + ".part")
+            with open(part, "wb") as f:
+                f.write(data)
+            os.replace(part, ftpbackup.long_path(target))
+            written.append(name)
+        self._last_export_dest = str(d)
+        settings.set_value("last_export_folder", str(d))
+        return {"dest": str(d), "files": written, "count": len(written)}
+
+    @_endpoint
+    def reveal_export_folder(self, path: str):
+        """Open the just-exported folder in Explorer. Guarded to the folder THIS
+        session last exported to (open_path's guard is library-root-only)."""
+        import subprocess
+
+        last = getattr(self, "_last_export_dest", None)
+        if not last:
+            raise ApiError("BAD_PATH", "nothing has been exported yet")
+        try:
+            rp = Path(path or "").resolve()
+        except OSError:
+            raise ApiError("BAD_PATH", "could not resolve path")
+        if str(rp) != last or not rp.is_dir():
+            raise ApiError("BAD_PATH", "not the exported folder")
+        try:
+            os.startfile(str(rp))  # Windows-native; the app only ships on Windows
+        except (AttributeError, OSError):
+            try:
+                subprocess.Popen(["explorer", str(rp)])  # noqa: S607
+            except OSError:
+                pass
+        return str(rp)
 
     def _karel_records(self, s: BackupSession, stem: str):
         kp = s.karel_programs.get(stem.upper())

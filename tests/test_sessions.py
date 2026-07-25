@@ -169,6 +169,7 @@ def test_sid_sits_immediately_before_side_everywhere():
     # readers without side carry sid LAST
     for name in ["get_overview", "get_styles", "get_program",
                  "get_call_tree", "get_alarm_files", "get_alarms", "list_files",
-                 "get_file", "get_photos", "get_image", "get_state"]:
+                 "get_file", "get_photos", "get_image", "get_state",
+                 "get_program_editable", "export_edited_programs"]:
         params = list(inspect.signature(getattr(Api, name)).parameters)
         assert params[-1] == "sid", (name, params)

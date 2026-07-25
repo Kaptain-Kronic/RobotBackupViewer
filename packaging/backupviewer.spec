@@ -45,5 +45,8 @@ exe = EXE(
     upx=False,
     console=False,
     disable_windowed_traceback=False,
-    icon=None,
+    # multi-resolution (16-256) so Explorer, the taskbar and the window's
+    # title bar all get a crisp entry; pywebview takes no icon argument, so
+    # the window inherits this one from the exe.
+    icon=str(ROOT / "packaging" / "backupviewer.ico"),
 )
