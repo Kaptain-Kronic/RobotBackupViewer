@@ -94,6 +94,43 @@ def poll(window, expr, tries=30, delay=0.25):
     return val
 
 
+# The split is opened by DRAGGING, so the probe has to drive real drag events.
+# Synthetic MouseEvents carry no dataTransfer, which edit.js's dragstart already
+# tolerates (its setData sits in a try/catch); dragover/drop read only clientX.
+_DRAG_JS = """(function(){
+    var wrap=document.querySelector('.ws-panes');
+    var r=wrap.getBoundingClientRect();
+    var x=r.left+r.width*%(frac)f, y=r.top+r.height/2;
+    var src=%(src)s;
+    src.dispatchEvent(new MouseEvent('dragstart',{bubbles:true}));
+    wrap.dispatchEvent(new MouseEvent('dragover',
+        {bubbles:true,cancelable:true,clientX:x,clientY:y}));
+    var z=document.querySelector('.dropzone');
+    /* read the zone BEFORE the drop - dropping hides it again */
+    var seen=JSON.stringify({show:z.classList.contains('show'),
+                             split:z.classList.contains('split'),
+                             left:z.style.left});
+    wrap.dispatchEvent(new MouseEvent('drop',
+        {bubbles:true,cancelable:true,clientX:x,clientY:y}));
+    src.dispatchEvent(new MouseEvent('dragend',{bubbles:true}));
+    return seen;
+})()"""
+
+
+def drag_prog(window, row_idx, frac):
+    """Drag working-set row `row_idx` onto the pane area at `frac` of its width."""
+    return js(window, _DRAG_JS % {
+        "frac": frac, "src": "document.querySelectorAll('.ws-prog')[%d]" % row_idx})
+
+
+def drag_tab(window, pane_idx, tab_idx, frac):
+    """Drag an open program TAB out of its pane and onto `frac` of the width."""
+    return js(window, _DRAG_JS % {
+        "frac": frac,
+        "src": "document.querySelectorAll('.ws-pane')[%d].querySelectorAll('.ws-tab')[%d]"
+               % (pane_idx, tab_idx)})
+
+
 def probe(window):
     try:
         time.sleep(4)  # boot
@@ -158,18 +195,15 @@ def probe(window):
         check("rail.caret_expands",
               js(window, "document.querySelectorAll('.ws-prog').length") == 2)
 
-        # ---- the split is OPT-IN: one pane until asked ----
+        # ---- the split is DERIVED: one pane until a program is dropped right ----
         check("panes.single_by_default",
               js(window, "document.querySelectorAll('.ws-pane').length") == 1)
         check("panes.no_resizer_when_unsplit",
               js(window, "document.querySelectorAll('.ws-panes .ws-resizer').length") == 0)
-        js(window, """[...document.querySelectorAll('.toolbar-slot .btn')]
-            .find(function(b){return b.textContent.trim()==='split';}).click()""")
-        time.sleep(0.5)
-        check("panes.two_after_split",
-              js(window, "document.querySelectorAll('.ws-pane').length") == 2)
-        check("panes.resizer_between",
-              js(window, "document.querySelectorAll('.ws-panes .ws-resizer').length") == 1)
+        check("panes.no_split_toggle",
+              not js(window, """[...document.querySelectorAll('.toolbar-slot .btn')]
+                  .some(function(b){return b.textContent.trim()==='split';})"""),
+              "(the split is opened by dragging, never armed by a button)")
 
         # ---- the navigator panel exists and can be hidden/shown ----
         check("nav.panel_present", bool(js(window, "!!document.querySelector('.ws-nav')")))
@@ -202,19 +236,77 @@ def probe(window):
         check("pane.tab_created",
               js(window, "document.querySelectorAll('.ws-pane')[0].querySelectorAll('.ws-tab').length") == 1)
 
-        # second program into the RIGHT pane
-        js(window, """(function(){
-            var r=document.querySelectorAll('.ws-prog')[1];
-            var p1=document.querySelectorAll('.ws-pane')[1];
-            p1.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));
-            r.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
-        })()""")
-        time.sleep(0.7)
+        # ---- the drag decides the pane; the RIGHT QUARTER opens the split ----
+        # order matters: there is nothing to split AGAINST until one program is
+        # open, so the left-zone drop runs first
+        left_seen = drag_prog(window, 1, 0.30)
+        time.sleep(0.6)
+        check("panes.left_zone_no_split",
+              js(window, "document.querySelectorAll('.ws-pane').length") == 1
+              and '"split":false' in (left_seen or ""), f"({left_seen})")
+        check("panes.left_zone_lands_in_pane0",
+              js(window, "document.querySelectorAll('.ws-pane')[0]"
+                         ".querySelectorAll('.ws-tab').length") == 2)
+        right_seen = drag_prog(window, 1, 0.90)
+        time.sleep(0.6)
+        check("panes.right_quarter_paints_split_zone",
+              '"split":true' in (right_seen or "") and '"left":"75%"' in (right_seen or ""),
+              f"({right_seen})")
+        check("panes.two_after_drag_split",
+              js(window, "document.querySelectorAll('.ws-pane').length") == 2)
+        check("panes.resizer_between",
+              js(window, "document.querySelectorAll('.ws-panes .ws-resizer').length") == 1)
         check("panes.second_pane_has_tab",
               js(window, "document.querySelectorAll('.ws-pane')[1].querySelectorAll('.ws-tab').length") == 1)
         check("panes.two_editors",
-              js(window, "document.querySelectorAll('.lsed-code').length") == 2,
+              bool(poll(window, "document.querySelectorAll('.lsed-code').length === 2")),
               "(side-by-side)")
+
+        # ---- closing the last tab of a pane folds the split away ----
+        right_label = js(window, """(function(){
+            var t=document.querySelectorAll('.ws-pane')[1].querySelector('.ws-tab');
+            return t ? t.textContent.replace('✕','') : '';
+        })()""")
+        js(window, "document.querySelectorAll('.ws-pane')[0].querySelector('.ws-tab .x').click()")
+        time.sleep(0.6)
+        check("split.autocollapses_when_pane_empties",
+              js(window, "document.querySelectorAll('.ws-pane').length") == 1)
+        now_label = js(window, """(function(){
+            var t=document.querySelector('.ws-pane .ws-tab');
+            return t ? t.textContent.replace('✕','') : '';
+        })()""")
+        # emptying the LEFT pane must slide the right one over, not leave a hole
+        check("split.left_empty_slides_right_over", bool(now_label) and now_label == right_label,
+              f"({right_label!r} survived as {now_label!r})")
+        # activePane must come home, or the next double-click silently re-splits
+        js(window, """document.querySelectorAll('.ws-prog')[0]
+            .dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))""")
+        time.sleep(0.7)
+        check("panes.activepane_comes_home",
+              js(window, "document.querySelectorAll('.ws-pane').length") == 1
+              and js(window, "document.querySelectorAll('.ws-pane')[0]"
+                             ".querySelectorAll('.ws-tab').length") == 2)
+
+        # ---- one menu from the ⋯ button AND from right-click on the row ----
+        menu_txt = js(window, """(function(){
+            document.querySelectorAll('.ws-prog')[0].dispatchEvent(
+                new MouseEvent('contextmenu',
+                    {bubbles:true,cancelable:true,clientX:60,clientY:120}));
+            var m=document.querySelector('.ctx-menu');
+            return m ? [...m.querySelectorAll('.ctx-item')]
+                .map(function(b){return b.textContent;}).join(' | ') : '';
+        })()""") or ""
+        check("menu.right_click_opens_row_menu", "rename" in menu_txt, f"({menu_txt[:90]!r})")
+        check("menu.has_open_in_split", "open in split view" in menu_txt, f"({menu_txt[:90]!r})")
+        js(window, """[...document.querySelectorAll('.ctx-menu .ctx-item')]
+            .find(function(b){return b.textContent.indexOf('open in split')>=0;}).click()""")
+        time.sleep(0.7)
+        check("menu.open_in_split_splits",
+              js(window, "document.querySelectorAll('.ws-pane').length") == 2,
+              "(an already-open program MOVES to the other side)")
+        # put it back so the undo test below starts from one pane, two tabs
+        drag_tab(window, 1, 0, 0.30)
+        time.sleep(0.7)
 
         # ---- undo must SURVIVE closing and reopening a tab ----
         # (the editor instance is cached and its DOM re-attached, so its history
@@ -225,9 +317,9 @@ def probe(window):
             code.textContent = before + '\\nUNDO ME';
             code.dispatchEvent(new Event('input',{bubbles:true}));
             var typed=document.querySelectorAll('.lsed-code')[0].textContent;
-            /* close the tab, then reopen the same program */
+            /* close the tab we just edited, then reopen the same program */
             var pane=document.querySelectorAll('.ws-pane')[0];
-            pane.querySelector('.ws-tab .x').click();
+            pane.querySelector('.ws-tab.active .x').click();
             return JSON.stringify({before:before, typed:typed});
         })()""")
         time.sleep(0.5)
@@ -271,6 +363,11 @@ def probe(window):
         check("nav.lists_labels", "LBL[1]" in labels_txt, f"({labels_txt[:70]!r})")
 
         # ---- no duplicate tabs across panes ----
+        # re-open the split (the auto-collapse test above folded it away)
+        drag_prog(window, 1, 0.90)
+        time.sleep(0.7)
+        check("panes.resplit_by_drag",
+              js(window, "document.querySelectorAll('.ws-pane').length") == 2)
         js(window, """(function(){
             var p1=document.querySelectorAll('.ws-pane')[1];
             p1.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));
@@ -423,12 +520,11 @@ def probe(window):
         js(window, """[...document.querySelectorAll('.ws-railtab')]
             .find(function(t){return t.textContent.indexOf('working')>=0;}).click()""")
         time.sleep(0.3)
-        # turning the split OFF must MERGE the right pane's work into the left
-        # (never hide open programs), which also gives us two tabs in one pane
-        js(window, """[...document.querySelectorAll('.toolbar-slot .btn')]
-            .find(function(b){return b.textContent.trim()==='split';}).click()""")
-        time.sleep(0.6)
-        check("split.off_merges_panes",
+        # dragging the right pane's only tab back to the LEFT zone moves it and
+        # folds the split away - which also gives us two tabs in one pane
+        drag_tab(window, 1, 0, 0.30)
+        time.sleep(0.7)
+        check("split.folds_when_tab_dragged_back",
               js(window, "document.querySelectorAll('.ws-pane').length") == 1)
         n0 = js(window, "document.querySelectorAll('.ws-pane')[0].querySelectorAll('.ws-tab').length")
         check("tabs.two_in_pane", n0 == 2, f"(got {n0})")
@@ -444,6 +540,26 @@ def probe(window):
         time.sleep(0.4)
         check("tabs.x_closes",
               js(window, "document.querySelectorAll('.ws-pane')[0].querySelectorAll('.ws-tab').length") == 1)
+        # close the last one too: with nothing open there is nothing to split
+        # AGAINST, so the item is omitted rather than shown dead (BV.menu has no
+        # disabled state)
+        js(window, "document.querySelectorAll('.ws-pane')[0].querySelector('.ws-tab .x').click()")
+        time.sleep(0.4)
+        lone_menu = js(window, """(function(){
+            document.querySelectorAll('.ws-prog')[0].dispatchEvent(
+                new MouseEvent('contextmenu',
+                    {bubbles:true,cancelable:true,clientX:60,clientY:120}));
+            var m=document.querySelector('.ctx-menu');
+            var t = m ? [...m.querySelectorAll('.ctx-item')]
+                .map(function(b){return b.textContent;}).join(' | ') : '';
+            if(m) window.dispatchEvent(new KeyboardEvent('keydown',
+                {key:'Escape',bubbles:true,cancelable:true}));
+            return t;
+        })()""") or ""
+        check("menu.no_split_item_with_nothing_open",
+              "rename" in lone_menu and "open in split view" not in lone_menu,
+              f"({lone_menu[:90]!r})")
+        time.sleep(0.3)
 
         # ---- the workspace survives a route away and back ----
         js(window, "location.hash = '#home'")

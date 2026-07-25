@@ -577,6 +577,19 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
   pointer-events: none; z-index: 5; display: none;
 }
 .dropzone.show { display: block; }
+/* the right quarter of a single pane OPENS the second one - the zone has to
+   say so, or it reads as "drop into the pane you are already over". Solid left
+   edge = a new pane starts here. Written as a compound selector on purpose:
+   .dropzone.show and a bare .dropzone.split have equal specificity, so which
+   display wins would be decided by source order. */
+.dropzone.show.split {
+  display: flex; align-items: center; justify-content: center;
+  border-left: 2px solid var(--accent);
+}
+.dropzone.show.split::after {
+  content: "split"; color: var(--accent);
+  font-size: 0.72rem; letter-spacing: 0.06em;
+}
 
 /* find/replace panel (lives in the rail so the code stays visible) */
 .fp { display: flex; flex-direction: column; min-height: 0; flex: 1; }

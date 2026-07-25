@@ -6,9 +6,11 @@
    lived in the programs tab - one editing surface, no drift.
 
    Layout: [rail] | panes | [navigator], both side panels collapsible, every
-   divider draggable. The second pane is OPT-IN (a split toggle). Programs are
-   read and exported through the path-addressed ws_* endpoints (BV.workspace),
-   so the workspace never opens a session.
+   divider draggable. The split is DERIVED, never toggled: a second pane exists
+   exactly while it holds tabs, so dropping a program on the right edge opens it
+   and closing the last tab folds it away. Programs are read and exported
+   through the path-addressed ws_* endpoints (BV.workspace), so the workspace
+   never opens a session.
 
    Editor instances are CACHED per program and their DOM re-attached on every
    re-render, so undo history, caret and scroll survive closing a tab, switching
@@ -22,7 +24,6 @@
 
   var st = {
     panes: [{ tabs: [], active: 0 }, { tabs: [], active: 0 }],
-    split: false,            /* the second pane is optional */
     activePane: 0,
     railOpen: true,
     navOpen: true,
@@ -47,7 +48,10 @@
 
   function keyOf(t) { return t.id; }   /* stable: a rename must not orphan a tab */
   function paneOf(idx) { return st.panes[idx] || st.panes[0]; }
-  function visiblePanes() { return st.split ? 2 : 1; }
+  /* the split is DERIVED, not a setting: the second pane exists exactly while
+     it holds tabs. Nothing to toggle, nothing to remember, and no stored flag
+     that can disagree with what is on screen. */
+  function visiblePanes() { return st.panes[1].tabs.length ? 2 : 1; }
 
   /* ------------------------------------------------------------------ *
    * render
@@ -61,7 +65,8 @@
       st.railOpen = s.ws_panels.rail !== false;
       st.navOpen = s.ws_panels.nav !== false;
     }
-    if (typeof s.ws_split === "boolean") st.split = s.ws_split;
+    /* (ws_split is dead - the split is derived from pane 1's tabs now. The
+       stale settings key is left alone rather than bought with a migration.) */
   }
 
   function render(view, toolbar, params) {
@@ -74,26 +79,6 @@
     el.counts = BV.el("span", { class: "dim", style: "font-size:.78rem" });
     bar.appendChild(el.counts);
     bar.appendChild(BV.el("span", { style: "flex:1" }));
-    var splitBtn = BV.el("button", { class: "btn" + (st.split ? " primary" : ""),
-      title: "show a second program window side by side" }, "split");
-    splitBtn.addEventListener("click", function () {
-      st.split = !st.split;
-      if (!st.split) {
-        /* folding the split away must not hide open work - move it left */
-        st.panes[1].tabs.forEach(function (t) {
-          if (!st.panes[0].tabs.some(function (x) { return keyOf(x) === keyOf(t); })) {
-            st.panes[0].tabs.push(t);
-          }
-        });
-        st.panes[1].tabs = [];
-        st.panes[1].active = 0;
-        st.activePane = 0;
-      }
-      BV.api.call("set_setting", "ws_split", st.split).catch(function () {});
-      splitBtn.classList.toggle("primary", st.split);
-      renderPanes();
-    });
-    bar.appendChild(splitBtn);
     el.exportBtn = BV.el("button", { class: "btn primary" }, "export…");
     el.exportBtn.addEventListener("click", showExport);
     bar.appendChild(el.exportBtn);
@@ -264,6 +249,7 @@
         BV.workspace.entries().forEach(function (e) { dropEditor(e); });
         BV.workspace.clear();
         st.panes.forEach(function (p) { p.tabs = []; p.active = 0; });
+        normalizePanes();
         renderPanes();
         afterChange();
       });
@@ -306,12 +292,22 @@
         if (st.selRow === keyOf(e)) row.classList.add("sel");
         row.innerHTML = '<span class="dot' + (dirty ? " dirty" : "") + '"></span>' +
           '<span class="nm">' + BV.esc(BV.workspace.displayName(e)) + "</span>";
-        var more = BV.el("span", { class: "rm", title: "rename, duplicate, remove" }, "⋯");
+        var more = BV.el("span", { class: "rm",
+          title: "actions (or right-click the row)" }, "⋯");
         more.addEventListener("click", function (ev) {
           ev.stopPropagation();
           rowMenu(more, e, dirty);
         });
         row.appendChild(more);
+        /* one menu for the ⋯ button AND right-click on the row (home.js does
+           the same for library rows). Anchored to a POINT, not to the ⋯ node:
+           the rail can be rebuilt under an open menu, and BV.menu's dismissal
+           holds on to an element anchor. */
+        row.addEventListener("contextmenu", function (ev) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          rowMenu({ x: ev.clientX, y: ev.clientY }, e, dirty);
+        });
         row.addEventListener("click", function () {
           st.selRow = keyOf(e);
           renderWorkingSet();
@@ -375,8 +371,32 @@
     return (e.saveAs || e.name).replace(/\.[Ll][Ss]$/, "");
   }
 
+  function otherPane() { return st.activePane === 0 ? 1 : 0; }
+
+  /* "open it over there": a program lives in exactly one pane, so one that is
+     already open MOVES rather than being focused where it already was. */
+  function moveToPane(entry, paneIdx) {
+    var held = paneHolding(entry);
+    if (held >= 0 && held !== paneIdx) {
+      var from = paneOf(held);
+      from.tabs = from.tabs.filter(function (t) { return keyOf(t) !== keyOf(entry); });
+    }
+    openTab(entry, paneIdx);
+  }
+
   function rowMenu(anchor, e, dirty) {
-    BV.menu(anchor, [
+    var items = [];
+    var held = paneHolding(e);
+    var to = otherPane();
+    /* a split needs work on BOTH sides. Offering the item when the move would
+       just collapse the split back would be a lie, and BV.menu has no disabled
+       state - so it is omitted rather than shown dead. */
+    var keeps = paneOf(st.activePane).tabs.length - (held === st.activePane ? 1 : 0);
+    if (held !== to && keeps > 0) {
+      items.push({ label: "open in split view",
+        onClick: function () { moveToPane(e, to); } });
+    }
+    items.push(
       { label: e.saveAs ? "rename (now " + e.saveAs + ")" : "rename…",
         onClick: function () {
           askName("rename program", baseName(e),
@@ -430,8 +450,8 @@
           BV.workspace.remove(e.id);
           renderPanes();
           afterChange();
-        } },
-    ]);
+        } });
+    BV.menu(anchor, items);
   }
 
   /* ------------------------------------------------------------------ *
@@ -447,8 +467,29 @@
     return -1;
   }
 
-  function openTab(entry, paneIdx) {
-    if (paneIdx >= visiblePanes()) paneIdx = 0;
+  /* every path that can empty a pane funnels through here. A two-pane layout
+     with an empty LEFT pane is not "unsplit", it is a hole - so the right pane
+     slides over, its details panel in tow. activePane comes home too, or the
+     next double-click would silently re-open the split that just closed. */
+  function normalizePanes() {
+    if (!st.panes[0].tabs.length && st.panes[1].tabs.length) {
+      st.panes[0] = st.panes[1];
+      st.panes[1] = { tabs: [], active: 0 };
+      st.details[0] = st.details[1];
+      st.details[1] = false;
+    }
+    if (!st.panes[1].tabs.length) st.activePane = 0;
+    st.panes.forEach(function (p) {
+      if (p.active >= p.tabs.length || p.active < 0) {
+        p.active = p.tabs.length ? p.tabs.length - 1 : 0;
+      }
+    });
+  }
+
+  /* put an entry in a pane WITHOUT painting; returns the pane it actually
+     landed in (a program lives in exactly one pane, so an already-open one
+     wins). openTab is the single-entry wrapper that paints. */
+  function placeTab(entry, paneIdx) {
     var held = paneHolding(entry);
     if (held >= 0) paneIdx = held;          /* never duplicate across panes */
     var pane = paneOf(paneIdx);
@@ -459,23 +500,31 @@
       at = pane.tabs.length - 1;
     }
     pane.active = at;
-    st.activePane = paneIdx;
+    return paneIdx;
+  }
+
+  function openTab(entry, paneIdx) {
+    /* asking for pane 1 CREATES the split - it is not a hidden pane to clamp
+       away from, it is an empty one, and putting a tab in it IS the gesture.
+       What is left here is a plain bounds check. */
+    if (paneIdx !== 0 && paneIdx !== 1) paneIdx = 0;
+    st.activePane = placeTab(entry, paneIdx);
+    normalizePanes();
     renderPanes();
     afterChange();
   }
   /* closing a tab keeps the cached editor, so its undo history is still there
      when the program is reopened */
   function closeTab(paneIdx, idx) {
-    var pane = paneOf(paneIdx);
-    pane.tabs.splice(idx, 1);
-    if (pane.active >= pane.tabs.length) pane.active = pane.tabs.length - 1;
+    paneOf(paneIdx).tabs.splice(idx, 1);
+    normalizePanes();
     renderPanes();
   }
   function closeEverywhere(entry) {
     st.panes.forEach(function (pane) {
       pane.tabs = pane.tabs.filter(function (t) { return keyOf(t) !== keyOf(entry); });
-      if (pane.active >= pane.tabs.length) pane.active = pane.tabs.length - 1;
     });
+    normalizePanes();
   }
   /* only leaving the workspace discards the editor (and its undo) */
   function dropEditor(entry) {
@@ -490,7 +539,30 @@
     pane.active = (pane.active + dir + pane.tabs.length) % pane.tabs.length;
     renderPanes();
   }
-  function hideDrop() { if (el.dropzone) el.dropzone.classList.remove("show"); }
+  function hideDrop() { if (el.dropzone) el.dropzone.classList.remove("show", "split"); }
+
+  var SPLIT_ZONE = 0.25;   /* the right quarter of a single pane opens a second */
+
+  /* where would a drop land, and what should the zone look like? Read by
+     dragover (to paint it) and by drop (to act on it), so the picture and the
+     result can never drift apart.
+
+       unsplit : |<--- 75%: into this pane --->|<- 25%: split, land right ->|
+       split   : |<---- left pane ---->|<---- right pane ---->|
+
+     The right EDGE always means the right-hand pane; while there is no right
+     pane yet the zone is narrower, because creating one should take intent. */
+  function dropTarget(wrap, clientX) {
+    var r = wrap.getBoundingClientRect();
+    var f = r.width ? (clientX - r.left) / r.width : 0;
+    if (visiblePanes() === 2) {
+      return f > 0.5 ? { pane: 1, left: "50%", width: "50%", makes: false }
+                     : { pane: 0, left: "0", width: "50%", makes: false };
+    }
+    return f > 1 - SPLIT_ZONE
+      ? { pane: 1, left: "75%", width: "25%", makes: true }
+      : { pane: 0, left: "0", width: "75%", makes: false };
+  }
 
   function activeTab() {
     var pane = paneOf(st.activePane);
@@ -514,33 +586,32 @@
     wrap.addEventListener("dragover", function (e) {
       if (!drag) return;
       e.preventDefault();
-      if (!st.split) { el.dropzone.style.left = "0"; el.dropzone.style.width = "100%"; }
-      else {
-        el.dropzone.style.width = "50%";
-        var r = wrap.getBoundingClientRect();
-        el.dropzone.style.left = ((e.clientX - r.left) > r.width / 2) ? "50%" : "0";
-      }
+      var t = dropTarget(wrap, e.clientX);
+      el.dropzone.style.left = t.left;
+      el.dropzone.style.width = t.width;
+      el.dropzone.classList.toggle("split", t.makes);
       el.dropzone.classList.add("show");
     });
     wrap.addEventListener("dragleave", function (e) { if (e.target === wrap) hideDrop(); });
     wrap.addEventListener("drop", function (e) {
       if (!drag) return;
       e.preventDefault();
-      var target = 0;
-      if (st.split) {
-        var r = wrap.getBoundingClientRect();
-        target = (e.clientX - r.left) > r.width / 2 ? 1 : 0;
-      }
+      var target = dropTarget(wrap, e.clientX).pane;
       var d = drag; drag = null; hideDrop();
-      if (d.kind === "tab") {
-        if (d.fromPane === target) return;
-        /* a MOVE between panes - the dedupe in openTab would otherwise just
-           bounce it back to the pane it came from */
-        var from = paneOf(d.fromPane);
-        from.tabs.splice(d.idx, 1);
-        if (from.active >= from.tabs.length) from.active = from.tabs.length - 1;
+      if (d.kind === "tab" && d.fromPane === target) return;   /* no reorder yet */
+      var held = paneHolding(d.entry);
+      if (held === target) { openTab(d.entry, target); return; }   /* already there */
+      /* moving a pane's LAST tab to the empty other side is a swap, not a
+         split: the layout would collapse straight back and look broken. Say so
+         instead of doing nothing. */
+      if (held >= 0 && paneOf(held).tabs.length === 1 && !paneOf(target).tabs.length) {
+        BV.toast("that's the only program open — nothing to split against");
+        return;
       }
-      openTab(d.entry, target);
+      /* a drop is an explicit PLACEMENT, so it moves a program that is already
+         open elsewhere. (Double-click is the "just show me this" gesture, and
+         that one still focuses wherever it already lives.) */
+      moveToPane(d.entry, target);
     });
 
     for (var i = 0; i < visiblePanes(); i++) {
@@ -560,13 +631,14 @@
 
   function buildPane(wrap, i) {
     var pane = paneOf(i);
-    var p = BV.el("div", { class: "ws-pane" + (st.activePane === i && st.split ? " active" : "") });
+    var split = visiblePanes() === 2;
+    var p = BV.el("div", { class: "ws-pane" + (st.activePane === i && split ? " active" : "") });
     el.paneEls[i] = p;
     p.addEventListener("mousedown", function () {
       if (st.activePane !== i) {
         st.activePane = i;
         (el.paneEls || []).forEach(function (pe, idx) {
-          if (pe) pe.classList.toggle("active", idx === i && st.split);
+          if (pe) pe.classList.toggle("active", idx === i && visiblePanes() === 2);
         });
         renderNav();
       }
