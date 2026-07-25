@@ -15,7 +15,7 @@ def test_scanner_adopts_a_seeded_library(monkeypatch, tmp_path):
     src = tmp_path / "robots.json"
     src.write_text(json.dumps({
         "RBB01": {"010R01": "192.0.2.10", "020R01": "192.0.2.11"},
-        "FAB02": {"005R01": "192.0.2.20"},
+        "RCB02": {"005R01": "192.0.2.20"},
     }), encoding="utf-8")
     model = core.parse_source(src)
     assert model["ok"]
@@ -23,7 +23,7 @@ def test_scanner_adopts_a_seeded_library(monkeypatch, tmp_path):
     root = tmp_path / "RobotBackups"
     dest = root / "FakePlant"
     dest.mkdir(parents=True)
-    res = core.seed(model, dest, {"RBB01": ["010R01", "020R01"], "FAB02": ["005R01"]})
+    res = core.seed(model, dest, {"RBB01": ["010R01", "020R01"], "RCB02": ["005R01"]})
     assert res["created"] == 3 and res["errors"] == []
 
     robots = library.scan_library_root(root)["robots"]
@@ -31,11 +31,11 @@ def test_scanner_adopts_a_seeded_library(monkeypatch, tmp_path):
     assert set(by_ident) == {
         ("FakePlant", "RBB01", "RB010R01B01"),
         ("FakePlant", "RBB01", "RB020R01B01"),
-        ("FakePlant", "FAB02", "FA005R01B02"),
+        ("FakePlant", "RCB02", "RC005R01B02"),
     }
     # the seeded IP rides along (ips[0] is what the backup engine dials)
     assert by_ident[("FakePlant", "RBB01", "RB010R01B01")]["ips"] == ["192.0.2.10"]
-    assert by_ident[("FakePlant", "FAB02", "FA005R01B02")]["ips"] == ["192.0.2.20"]
+    assert by_ident[("FakePlant", "RCB02", "RC005R01B02")]["ips"] == ["192.0.2.20"]
     # sidecar ids are adopted verbatim: stable, unique, rename-survivable
     ids = {e["id"] for e in robots}
     assert len(ids) == 3 and all(len(i) == 32 for i in ids)

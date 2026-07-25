@@ -28,7 +28,7 @@ from libraryimporter.api import Api  # noqa: E402
 FAILURES = []
 
 LIST = {
-    "FAB02": {"005R01": "192.0.2.20", "010R01": "192.0.2.21", "020R01": "192.0.2.22"},
+    "RCB02": {"005R01": "192.0.2.20", "010R01": "192.0.2.21", "020R01": "192.0.2.22"},
     "RBB01": {"010R01": "192.0.2.10", "020R01": "192.0.2.11",
               "030R01": "192.0.2.12", "040R01": "192.0.2.13"},
     "RBB02": {"010R01": "192.0.2.30", "020R01": "192.0.2.31"},
@@ -134,22 +134,25 @@ def probe(window, api, work: Path):
               and '"sum":"3 robots across 1 line"' in r, f"({r})")
 
         # ---- a range never reaches into a COLLAPSED line ----
+        # the lines render SORTED, so the folded one has to be the middle name
+        # (RBB01 < RBB02 < RCB02) for the range to have to step over it
         r = js(window, """(function(){
-            var ad=document.querySelector('details[data-line="FAB02"]');
-            var rb1=document.querySelector('details[data-line="RBB01"]');
-            var rb2=document.querySelector('details[data-line="RBB02"]');
-            ad.open=true; rb2.open=true; rb1.open=false;
+            var first=document.querySelector('details[data-line="RBB01"]');
+            var folded=document.querySelector('details[data-line="RBB02"]');
+            var last=document.querySelector('details[data-line="RCB02"]');
+            first.open=true; last.open=true; folded.open=false;
             document.getElementById('sel-all').dispatchEvent(new Event('change')); /* clear (had 3) */
-            var adB=ad.querySelectorAll('.li-row:not(.present) .lf-check');
-            var rb2B=rb2.querySelectorAll('.li-row:not(.present) .lf-check');
-            adB[adB.length-1].dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
-            rb2B[0].dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,shiftKey:true}));
+            var fB=first.querySelectorAll('.li-row:not(.present) .lf-check');
+            var lB=last.querySelectorAll('.li-row:not(.present) .lf-check');
+            fB[fB.length-1].dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
+            lB[0].dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,shiftKey:true}));
             return JSON.stringify({go:document.getElementById('btn-go').textContent,
                 sum:document.getElementById('go-summary').textContent,
-                rb1:rb1.querySelector('.li-count').textContent});
+                folded:folded.querySelector('.li-count').textContent});
         })()""") or ""
         check("range.skips_folded", '"go":"import 2 robots"' in r
-              and '"sum":"2 robots across 2 lines"' in r and '"rb1":"0/3"' in r, f"({r})")
+              and '"sum":"2 robots across 2 lines"' in r
+              and '"folded":"0/' in r, f"({r})")
 
         # ---- master select-all: clear (had selection), select all 7, partial -> minus ----
         r = js(window, """(function(){
@@ -158,7 +161,7 @@ def probe(window, api, work: Path):
             var afterClear=document.getElementById('btn-go').textContent;
             m.dispatchEvent(new Event('change'));   /* none -> all */
             var afterAll=document.getElementById('btn-go').textContent;
-            var ad=document.querySelector('details[data-line="FAB02"]');
+            var ad=document.querySelector('details[data-line="RCB02"]');
             var box=ad.querySelectorAll('.li-row:not(.present) .lf-check')[0];
             box.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
             return JSON.stringify({afterClear:afterClear, afterAll:afterAll,
@@ -182,7 +185,7 @@ def probe(window, api, work: Path):
               and "plant" not in sc and "line" not in sc)
         check("seed.no_tmp_orphans", not list(dest.rglob("robot.json.tmp")))
         check("seed.skipped_stay_absent", not (dest / "RBB01" / "RB040R01B01" / "robot.json").exists()
-              and not (dest / "FAB02" / "FA010R01B02").exists(),
+              and not (dest / "RCB02" / "RC010R01B02").exists(),
               "(present rows were never in the selection)")
 
         # ---- import more: back to steps, everything now grayed ----
@@ -235,7 +238,7 @@ def main():
     dest = work / "FakePlant"
     # two robots are already "theirs": one by folder name, one by a claimed IP
     (dest / "RBB01" / "RB040R01B01").mkdir(parents=True)
-    other = dest / "FAB02" / "010R01"          # short-named twin claiming .21
+    other = dest / "RCB02" / "010R01"          # short-named twin claiming .21
     other.mkdir(parents=True)
     (other / "robot.json").write_text(json.dumps({"ips": ["192.0.2.21"]}), encoding="utf-8")
 

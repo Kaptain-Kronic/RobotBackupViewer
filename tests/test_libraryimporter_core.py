@@ -13,7 +13,7 @@ def _write_list(tmp_path, data, name="robots.json"):
 
 GOOD = {
     "RBB01": {"010R01": "192.0.2.10", "020R01": "192.0.2.11"},
-    "FAB02": {"005R01": "192.0.2.20"},
+    "RCB02": {"005R01": "192.0.2.20"},
 }
 
 
@@ -23,11 +23,11 @@ def test_parse_good_list_sorted_and_expanded(tmp_path):
     m = core.parse_source(_write_list(tmp_path, GOOD))
     assert m["ok"] and m["error"] == ""
     assert m["robots"] == 3 and m["warnings"] == []
-    assert [ln["line"] for ln in m["lines"]] == ["FAB02", "RBB01"]
-    rb = {r["robot"]: r for r in m["lines"][1]["robots"]}
+    assert [ln["line"] for ln in m["lines"]] == ["RBB01", "RCB02"]
+    rb = {r["robot"]: r for r in m["lines"][0]["robots"]}
     assert rb["010R01"]["full"] == "RB010R01B01"
     assert rb["020R01"]["ip"] == "192.0.2.11"
-    assert m["lines"][0]["robots"][0]["full"] == "FA005R01B02"
+    assert m["lines"][1]["robots"][0]["full"] == "RC005R01B02"
 
 
 def test_parse_skips_blanks_and_junk_with_warnings(tmp_path):
@@ -71,7 +71,7 @@ def test_full_name_expansion_table():
     assert core.full_name("rbb01", "080r01") == "RB080R01B01"        # case folds
     assert core.full_name("RBB01", "RB080R01B01") == "RB080R01B01"   # already full
     assert core.full_name("LAB", "WELDER") == "WELDER"               # one-off passes raw
-    assert core.full_name("FAB02", "005R01") == "FA005R01B02"
+    assert core.full_name("RCB02", "005R01") == "RC005R01B02"
 
 
 # ---- sidecar -------------------------------------------------------------------
@@ -142,11 +142,11 @@ def test_seed_creates_the_skeleton(tmp_path):
     assert res["created"] == 3 and res["skipped"] == 0 and res["errors"] == []
     for line, name, ip in [("RBB01", "RB010R01B01", "192.0.2.10"),
                            ("RBB01", "RB020R01B01", "192.0.2.11"),
-                           ("FAB02", "FA005R01B02", "192.0.2.20")]:
+                           ("RCB02", "RC005R01B02", "192.0.2.20")]:
         sc = json.loads((dest / line / name / "robot.json").read_text(encoding="utf-8"))
         assert sc["schema"] == 2 and sc["ips"] == [ip]
         assert not (dest / line / name / "robot.json.tmp").exists()
-    assert {b["line"]: b["created"] for b in res["by_line"]} == {"RBB01": 2, "FAB02": 1}
+    assert {b["line"]: b["created"] for b in res["by_line"]} == {"RBB01": 2, "RCB02": 1}
 
 
 def test_seed_rerun_skips_everything(tmp_path):
@@ -166,7 +166,7 @@ def test_seed_honors_the_selection_subset(tmp_path):
     assert res["created"] == 1
     assert (dest / "RBB01" / "RB020R01B01").is_dir()
     assert not (dest / "RBB01" / "RB010R01B01").exists()
-    assert not (dest / "FAB02").exists()
+    assert not (dest / "RCB02").exists()
 
 
 def test_seed_reports_progress_per_line(tmp_path):
@@ -175,7 +175,7 @@ def test_seed_reports_progress_per_line(tmp_path):
     dest.mkdir()
     ticks = []
     core.seed(m, dest, _selection(m), progress=lambda d, t, ln: ticks.append((d, t, ln)))
-    assert ticks == [(0, 2, ""), (1, 2, "FAB02"), (2, 2, "RBB01")]
+    assert ticks == [(0, 2, ""), (1, 2, "RBB01"), (2, 2, "RCB02")]
 
 
 def test_seed_error_on_one_line_leaves_the_rest_intact(tmp_path):
@@ -185,7 +185,7 @@ def test_seed_error_on_one_line_leaves_the_rest_intact(tmp_path):
     (dest / "RBB01").write_text("a file where the line folder should be", encoding="utf-8")
     res = core.seed(m, dest, _selection(m))
     assert res["created"] == 1 and len(res["errors"]) == 2
-    assert (dest / "FAB02" / "FA005R01B02" / "robot.json").is_file()
+    assert (dest / "RCB02" / "RC005R01B02" / "robot.json").is_file()
 
 
 # ---- destination sanity ----------------------------------------------------------
