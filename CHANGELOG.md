@@ -1,6 +1,11 @@
 # Changelog
 
 ## Unreleased
+- **The app has its own icon.** A pixel-art robot arm lifting a floppy disk —
+  the whole job in one picture — replacing the generic PyInstaller default in
+  Explorer, the taskbar, and the window's title bar. Ships as a
+  multi-resolution `.ico` (16 through 256) so every size Windows asks for is a
+  real entry rather than a scaled-down 256.
 - **Phone view firewall helper.** If a phone reaches the laptop but the page
   times out with *"server stopped responding,"* that's the Windows Firewall
   dropping the port on that network profile (a rule scoped to Public while
