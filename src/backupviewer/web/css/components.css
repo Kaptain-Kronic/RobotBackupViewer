@@ -13,12 +13,53 @@
   align-items: start;
 }
 .card {
-  background: var(--bg2);
+  /* --panel, not --bg2: this is a content surface, so the opacity slider reaches
+     it like it already reached .vtable / .tbl-wrap / .dcs-entry / .sysvar-node.
+     One rule covers the overview boxes AND the frames/payloads cards — both are
+     BV.card (BV.frameCard renders "card frame-card"). Identical to --bg2 while
+     the slider is at 0. The FROST half is opt-in below (html.frosted). */
+  background: var(--panel);
   border: 1px solid var(--edge);
   border-radius: var(--radius);
   padding: 0.9rem 1.1rem 1rem;
   min-width: 0;
 }
+/* ---- frost: the second half of every --panel surface ----
+   The opacity slider makes a surface see-through (--panel); the frost slider
+   blurs what shows through it. They are separate mechanisms, so a surface that
+   took --panel without a backdrop-filter went translucent over a SHARP
+   background — frost looked broken everywhere except the few overlays that
+   happened to carry one.
+
+   THE INVARIANT: everything that takes --panel takes the frost blur, so the two
+   sliders always describe the same set of surfaces. If you add a --panel
+   surface, add it here. (.stab and #jobstrip live in base.css; they are listed
+   here anyway so the set stays in ONE place — components.css loads second, so
+   this wins.) Surfaces that already blur on their own are not repeated:
+   .modal, .ctx-menu, .bv-drop, .hero.stick, .home-lib-head, .jobstrip-details.
+
+   --panel used to be documented as "translucency only, no blur" to keep
+   hundreds of blurred table rows off a software-rendered plant PC. That is a
+   real cost, and it is accepted deliberately: the whole effect is off by
+   default, so nobody pays for it until they ask for it. The html.frosted gate
+   (toggled in settings_ui.applyGlass) keeps even the layer promotion away at
+   frost 0, since a backdrop-filter costs one even at blur(0).
+
+   Sticky table headers (.tbl th, .vt-head) stay solid on purpose — rows
+   scrolling under a translucent header ghost through it. */
+html.frosted .card,
+html.frosted .viewer,
+html.frosted .tbl-wrap,
+html.frosted .vtable,
+html.frosted .dcs-entry,
+html.frosted .dcs-dash-cell,
+html.frosted .sysvar-node,
+html.frosted .lib-robot,
+html.frosted .cam-tile,
+html.frosted .v3-row,
+html.frosted .stab,
+html.frosted #jobstrip { backdrop-filter: var(--glass-blur); }
+
 .card h3 {
   margin: 0 0 0.6rem;
   font-size: 0.78rem;
@@ -218,12 +259,19 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 #modal-root {
   position: fixed; inset: 0; z-index: 90;
   background: color-mix(in srgb, var(--bg) 60%, transparent);
-  backdrop-filter: blur(2px);
+  /* THIS is the blur that dialogs actually get, and it has to carry --frost.
+     A backdrop-filter makes an element the BACKDROP ROOT for its descendants,
+     so .modal's own backdrop-filter below can only ever blur this scrim's flat
+     fill — never the app (or a running background effect) behind it. The frost
+     slider was therefore structurally incapable of reaching any dialog. Floor
+     stays 2px so frost 0 looks exactly as it always has; 8px at frost 100
+     matches --glass-blur's scale. */
+  backdrop-filter: blur(calc(2px + var(--frost) * 6px));
   display: flex; align-items: flex-start; justify-content: center;
   padding-top: 10vh;
 }
 .modal {
-  background: var(--panel);
+  background: var(--overlay);          /* floats over content — see base.css */
   backdrop-filter: var(--glass-blur);
   border: 1px solid var(--edge);
   border-radius: var(--radius);
@@ -239,56 +287,66 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
   font-size: 0.8rem; color: var(--sub); text-transform: lowercase;
 }
 .modal .modal-body { overflow: auto; padding: 0.3rem 0.5rem 0.8rem; }
-.modal .opt-row {
+/* pickable rows: dialogs (library/compare pickers) and anchored drop panels
+   (the theme picker) share them */
+:is(.modal, .bv-drop) .opt-row {
   display: flex; align-items: center; justify-content: space-between; gap: 1.5rem;
   padding: 0.4rem 0.7rem; border-radius: 6px; cursor: pointer;
   transition: background var(--trans);
 }
-.modal .opt-row:hover, .modal .opt-row.focused { background: var(--bg); }
-.modal .opt-row .name { color: var(--text); font-size: 0.88rem; }
-.modal .opt-row.sel .name { color: var(--accent); }
+:is(.modal, .bv-drop) .opt-row:hover,
+:is(.modal, .bv-drop) .opt-row.focused { background: var(--bg); }
+:is(.modal, .bv-drop) .opt-row .name { color: var(--text); font-size: 0.88rem; }
+:is(.modal, .bv-drop) .opt-row.sel .name { color: var(--accent); }
 /* non-interactive modal rows (help overlay etc) */
 .modal .static-row {
   display: flex; align-items: center; justify-content: space-between; gap: 1.5rem;
   padding: 0.4rem 0.7rem;
 }
 .modal .static-row .name { color: var(--text); font-size: 0.88rem; }
-.modal .swatches { display: flex; gap: 0.3rem; }
-.modal .swatch { width: 14px; height: 14px; border-radius: 50%; }
-/* theme picker: a collapsible accordion, one section per category */
-.modal .theme-acc { display: flex; flex-direction: column; gap: 0.1rem; }
-.modal .acc-head {
+/* a theme's colors at a glance — on the picker button and on every row in it */
+.swatches { display: flex; gap: 0.3rem; }
+.swatch { width: 14px; height: 14px; border-radius: 50%; }
+/* cluster swatches (+ the custom row's edit/delete buttons) at the right edge */
+:is(.modal, .bv-drop) .opt-row .swatches { margin-left: auto; }
+/* theme picker list: one section per pack. The heads are DIVIDERS, not
+   controls — nothing in the picker folds any more, so a filter is the only way
+   the list gets shorter. */
+.bv-drop .theme-acc { display: flex; flex-direction: column; gap: 0.1rem; }
+.bv-drop .acc-head {
   display: flex; align-items: center; gap: 0.5rem;
-  padding: 0.45rem 0.7rem; border-radius: 6px; cursor: pointer;
-  color: var(--text); font-size: 0.9rem; transition: background var(--trans);
+  padding: 0.5rem 0.7rem 0.2rem;
+  color: var(--sub); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
+  border-bottom: 1px solid var(--edge-soft, transparent);
+  margin-bottom: 0.15rem;
 }
-.modal .acc-head:hover { background: var(--bg); }
-.modal .acc-name { font-weight: 600; text-transform: lowercase; }
-.modal .acc-count { color: var(--sub); font-size: 0.76rem; }
-.modal .acc-reveal {
+.bv-drop .acc-name { font-weight: 600; }
+.bv-drop .acc-count { font-size: 0.7rem; opacity: 0.8; }
+.bv-drop .acc-reveal {
   margin-left: auto; appearance: none; background: none; border: none; cursor: pointer;
   font-size: 0.9rem; line-height: 1; padding: 0.1rem 0.35rem; border-radius: 5px;
   opacity: 0.65; transition: opacity var(--trans), background var(--trans);
 }
-.modal .acc-reveal:hover { opacity: 1; background: var(--bg2); }
-.modal .acc-body { padding-left: 0.5rem; }
-.modal .acc-credit { font-size: 0.64rem; color: var(--sub); padding: 0.1rem 0.7rem 0.4rem; }
-.modal .acc-empty { font-size: 0.76rem; color: var(--sub); padding: 0.25rem 0.7rem 0.45rem; }
-.modal .opt-new .name { color: var(--accent); }
-.modal .opt-del {
+.bv-drop .acc-reveal:hover { opacity: 1; background: var(--bg2); }
+.bv-drop .acc-body { padding-left: 0.25rem; }
+.bv-drop .acc-empty { font-size: 0.76rem; color: var(--sub); padding: 0.25rem 0.7rem 0.45rem; }
+.bv-drop .opt-del {
   appearance: none; background: none; border: none; cursor: pointer; font: inherit;
   font-size: 0.82rem; line-height: 1; padding: 0.1rem 0.3rem; border-radius: 5px;
   opacity: 0.55; flex: none; transition: opacity var(--trans), background var(--trans);
 }
-.modal .opt-del:hover { opacity: 1; background: var(--bg2); }
-/* cluster swatches (+ the custom row's edit/delete buttons) at the right edge */
-.modal .opt-row .swatches { margin-left: auto; }
-.modal .opt-edit {
+.bv-drop .opt-del:hover { opacity: 1; background: var(--bg2); }
+.bv-drop .opt-edit {
   appearance: none; background: none; border: none; cursor: pointer; font: inherit;
   color: var(--sub); font-size: 0.95rem; line-height: 1; padding: 0.1rem 0.35rem;
   border-radius: 5px; transition: color var(--trans), background var(--trans); flex: none;
 }
-.modal .opt-edit:hover { color: var(--accent); background: var(--bg2); }
+.bv-drop .opt-edit:hover { color: var(--accent); background: var(--bg2); }
+/* the effects credit sits under the background block in the ⚙ dialog, and each
+   pack's credit under its rows in the picker */
+:is(.modal, .bv-drop) .acc-credit {
+  font-size: 0.64rem; color: var(--sub); padding: 0.1rem 0.7rem 0.4rem;
+}
 
 /* ---- custom theme editor ---- */
 .modal .editor-row {
@@ -338,7 +396,7 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 
 /* ---- program / file viewer ---- */
 .viewer {
-  background: var(--bg2); border: 1px solid var(--edge); border-radius: var(--radius);
+  background: var(--panel); border: 1px solid var(--edge); border-radius: var(--radius);
   font-size: 0.83rem; overflow: auto;
   padding: 0.7rem 0;
   height: 100%;
@@ -1162,7 +1220,12 @@ button.btn.danger:disabled { opacity: 0.5; cursor: default; }
 /* anchored context menu (right-click-style popup, e.g. + add robot) */
 .ctx-menu {
   position: fixed; z-index: 95; min-width: 9rem;  /* above modals (90): menus open from them */
-  background: var(--bg2); border: 1px solid var(--edge); border-radius: var(--radius);
+  /* frost-aware for the same reason as .bv-drop; identical to a solid --bg2
+     panel while opacity/frost are 0. --overlay, not --panel: a menu sits over
+     text, and the content curve made it a window you could read through. */
+  background: var(--overlay);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--edge); border-radius: var(--radius);
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4); padding: 0.25rem;
   display: flex; flex-direction: column;
   /* a long list (e.g. compare-from-library) scrolls inside the menu instead of
@@ -1503,16 +1566,49 @@ text.v3-ax-z { fill: var(--accent); }
 .v3-check { width: 15px; height: 15px; accent-color: var(--accent); flex: none; }
 .v3-swatch { width: 11px; height: 11px; border-radius: 3px; flex: none; }
 
-/* ---- theme window (theme_ui.js) ---- */
-.modal.theme-win { width: min(43rem, 94vw); }
-.theme-win .theme-tabs {
+/* ---- the ⚙ settings dialog (settings_ui.js) ---- */
+.modal.settings-win { width: min(43rem, 94vw); }
+.settings-win .set-tabs {
   display: inline-flex; align-self: flex-start;
   margin: 0.1rem 0.6rem 0.55rem;
 }
-.theme-win .theme-tabs button { padding: 0.3rem 1.1rem; }
-/* the sliders (background intensity / size) */
+.settings-win .set-tabs button { padding: 0.3rem 1.1rem; }
+/* the sliders (text/toolbar size, opacity, frost, effect intensity/size) */
 .range-wrap { display: flex; align-items: center; gap: 0.6rem; flex: 1; max-width: 17rem; }
 .range-wrap input[type="range"] { flex: 1; min-width: 0; accent-color: var(--accent); }
 .range-wrap .range-val { color: var(--sub); font-size: 0.8rem; min-width: 3.4ch; text-align: right; }
 /* the effect dropdown button shows the current pick */
 .btn.fx-pick { min-width: 10rem; text-align: left; }
+
+/* the theme row: ＋ and the picker, snug, right-aligned with the controls above */
+.set-theme { display: flex; align-items: center; gap: 0.3rem; margin-left: auto; min-width: 0; }
+.btn.theme-new { flex: none; padding: 0.32rem 0.55rem; line-height: 1; }
+.btn.theme-pick {
+  display: flex; align-items: center; gap: 0.5rem;
+  min-width: 11rem; text-align: left; flex: none;
+}
+.btn.theme-pick .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn.theme-pick .swatches { margin-left: auto; }
+.btn.theme-pick .caret { color: var(--sub); }
+.btn.theme-pick:hover .caret { color: inherit; }
+
+/* ---- anchored drop panel (BV.dropPanel) ---- */
+/* z 96 clears .ctx-menu (95) and #modal-root (90): panels open from dialogs */
+.bv-drop {
+  position: fixed; z-index: 96;
+  width: min(26rem, 92vw); max-height: min(60vh, 32rem);
+  /* frost-aware, like .modal: --overlay carries the opacity slider's
+     translucency and --glass-blur the frost slider's blur, so an open picker
+     reads as frosted glass over the dialog it belongs to. --overlay, not
+     --panel: this floats over the settings dialog's TEXT, and the content curve
+     let you read that text through it. At opacity/frost 0 it resolves to
+     var(--bg2) and paints exactly as a solid panel did. */
+  background: var(--overlay);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--edge); border-radius: var(--radius);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.bv-drop-body { overflow: auto; padding: 0.35rem 0.4rem 0.5rem; }
+.theme-pick-search { padding: 0.15rem 0.3rem 0.4rem; }
+.theme-pick-search .search-box { max-width: none; }

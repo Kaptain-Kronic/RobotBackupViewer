@@ -152,22 +152,105 @@ window.BV = {};
     };
   };
 
-  /* small anchored context menu (right-click-style popup). items is a list of
-     {label, onClick, danger?}. anchorEl is an ELEMENT (menu floats just under
-     it) or a POINT {x, y} (right-click menus open at the mouse). Dismisses
-     itself on outside-click, Esc, scroll, or resize. Returns {close}.
+  /* ---- anchored floating surfaces ----
+     One placement + dismissal contract, shared by BV.menu (a list of items) and
+     BV.dropPanel (caller-owned content, e.g. the theme picker). Both append to
+     <html> so no ancestor's overflow can clip them, and both dismiss on
+     outside-click, Esc, scroll, or resize.
 
-     Clicking the anchor while its own menu is open TOGGLES it closed: the
-     outside-mousedown closes the menu, and the click that follows would
-     land on the anchor and instantly reopen it — that call is swallowed. */
-  var _menuJustClosed = { el: null, at: 0 };
+     Clicking the anchor while its own surface is open TOGGLES it closed: the
+     outside-mousedown closes it, and the click that follows would land on the
+     anchor and instantly reopen it — that call is swallowed. */
+  var _justClosed = { el: null, at: 0 };
+  function swallowReopen(anchorNode) {
+    if (anchorNode && _justClosed.el === anchorNode && Date.now() - _justClosed.at < 500) {
+      _justClosed.el = null;
+      return true;
+    }
+    return false;
+  }
+
+  /* fixed coords under the anchor (an ELEMENT) or at a POINT {x, y} for
+     right-click menus; spills leftward and flips above when the viewport runs
+     out. (The page-zoom era needed a transform compensation here; the zoom is
+     retired with the v0.98 chrome/content scale split, so fixed coords work.) */
+  function placeFloat(el, anchorEl, alignRight) {
+    var anchorNode = anchorEl && anchorEl.nodeType === 1 ? anchorEl : null;
+    var r = anchorNode ? anchorNode.getBoundingClientRect()
+      : { left: anchorEl.x, right: anchorEl.x, top: anchorEl.y - 4, bottom: anchorEl.y - 4 };
+    var mw = el.offsetWidth, mh = el.offsetHeight;
+    /* right-aligned surfaces hang off the anchor's right edge, so a value
+       control stays flush with the column of controls above it */
+    var left = alignRight ? Math.max(8, r.right - mw) : r.left;
+    if (left + mw > window.innerWidth - 8) left = Math.max(8, r.right - mw);  /* spill leftward */
+    var top = r.bottom + 4;
+    if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - 4 - mh); /* flip above */
+    el.style.left = left + "px";
+    el.style.top = top + "px";
+  }
+
+  /* close() must stay safe against ANY ordering: the dismiss listeners attach
+     DEFERRED (below), so a surface closed in its opening tick (an item clicked
+     immediately) must both skip the attach and not try to remove listeners that
+     never existed. The old "already detached -> return" guard silently kept
+     deferred listeners alive forever — a leaked document-CAPTURE Escape handler
+     that swallowed the key for every element underneath it from then on.
+
+     opts: {anchorNode, escOnWindow, onKey(e)->bool, onClose}. */
+  function wireDismiss(el, opts) {
+    var keyTarget = opts.escOnWindow ? window : document;
+    var closed = false, attached = false;
+    function close() {
+      if (closed) return;
+      closed = true;
+      if (el.parentNode) el.parentNode.removeChild(el);
+      if (attached) {
+        document.removeEventListener("mousedown", onOutside, true);
+        keyTarget.removeEventListener("keydown", onKey, true);
+        window.removeEventListener("scroll", onScroll, true);
+        window.removeEventListener("resize", close);
+      }
+      if (opts.onClose) opts.onClose();
+    }
+    function onOutside(e) {
+      if (el.contains(e.target)) return;
+      /* closing because the anchor itself was pressed: remember it so the
+         click that follows toggles instead of reopening */
+      if (opts.anchorNode && opts.anchorNode.contains(e.target)) {
+        _justClosed = { el: opts.anchorNode, at: Date.now() };
+      }
+      close();
+    }
+    function onKey(e) {
+      if (e.key === "Escape") { e.stopPropagation(); close(); return; }
+      if (opts.onKey && opts.onKey(e)) { e.stopPropagation(); e.preventDefault(); }
+    }
+    /* page scroll closes it, but scrolling INSIDE it (long lists) must not */
+    function onScroll(e) { if (!el.contains(e.target)) close(); }
+    /* defer the listeners so the click that opened it doesn't close it */
+    setTimeout(function () {
+      if (closed) return;                    /* closed before we ever attached */
+      attached = true;
+      document.addEventListener("mousedown", onOutside, true);
+      keyTarget.addEventListener("keydown", onKey, true);
+      window.addEventListener("scroll", onScroll, true);
+      window.addEventListener("resize", close);
+    }, 0);
+    return { close: close };
+  }
+
+  /* small anchored context menu (right-click-style popup). items is a list of
+     {label, onClick, danger?}. Returns {close}.
+
+     Esc is captured on WINDOW (see wireDismiss): a menu opened from inside a
+     dialog — the ⚙ effect picker — used to lose the key to the dialog's own
+     document-capture handler, which was registered first, so Esc closed the
+     whole dialog instead of just the menu. Outside a dialog it means Esc
+     dismisses the menu WITHOUT also backing out of the view underneath. */
   BV.menu = function (anchorEl, items) {
     var anchorNode = anchorEl && anchorEl.nodeType === 1 ? anchorEl : null;
-    if (anchorNode && _menuJustClosed.el === anchorNode &&
-        Date.now() - _menuJustClosed.at < 500) {
-      _menuJustClosed.el = null;
-      return { close: function () {} };
-    }
+    if (swallowReopen(anchorNode)) return { close: function () {} };
+    var handle = null;
     var menu = BV.el("div", { class: "ctx-menu" });
     items.forEach(function (it) {
       /* it.action = {label,title,onClick}: a small trailing pill on the row with
@@ -178,75 +261,49 @@ window.BV = {};
           BV.esc(it.action.label) + "</span>" : ""));
       b.addEventListener("click", function (e) {
         e.stopPropagation();
-        close();
+        if (handle) handle.close();
         if (it.onClick) it.onClick();
       });
       var act = it.action && b.querySelector(".ctx-act");
       if (act) {
         act.addEventListener("click", function (e) {
           e.stopPropagation();
-          close();
+          if (handle) handle.close();
           it.action.onClick();
         });
       }
       menu.appendChild(b);
     });
-    /* Append to <html> so no ancestor's overflow can clip it. (The page-zoom
-       era needed a transform compensation here; the zoom is retired with the
-       v0.98 chrome/content scale split, so fixed coords just work.) */
     document.documentElement.appendChild(menu);
+    placeFloat(menu, anchorEl, false);
+    handle = wireDismiss(menu, { anchorNode: anchorNode, escOnWindow: true });
+    return handle;
+  };
 
-    var r = anchorNode ? anchorNode.getBoundingClientRect()
-      : { left: anchorEl.x, right: anchorEl.x, top: anchorEl.y - 4, bottom: anchorEl.y - 4 };
-    var mw = menu.offsetWidth, mh = menu.offsetHeight;
-    var left = r.left;
-    if (left + mw > window.innerWidth - 8) left = Math.max(8, r.right - mw);  /* spill leftward */
-    var top = r.bottom + 4;
-    if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - 4 - mh); /* flip above */
-    menu.style.left = left + "px";
-    menu.style.top = top + "px";
+  /* An anchored panel with caller-owned content — same placement and dismissal
+     as BV.menu, but you fill it (a filter + a list, a mini tree). Returns
+     {close}, or null when this call is the swallowed half of a toggle.
 
-    /* close() must stay safe against ANY ordering: the dismiss listeners
-       attach DEFERRED (below), so a menu closed in its opening tick (an item
-       clicked immediately) must both skip the attach and not try to remove
-       listeners that never existed. The old "menu already detached -> return"
-       guard silently kept deferred listeners alive forever — a leaked
-       document-CAPTURE Escape handler that swallowed the key for every
-       element underneath it from then on. */
-    var closed = false, attached = false;
-    function close() {
-      if (closed) return;
-      closed = true;
-      if (menu.parentNode) menu.parentNode.removeChild(menu);
-      if (attached) {
-        document.removeEventListener("mousedown", onOutside, true);
-        document.removeEventListener("keydown", onKey, true);
-        window.removeEventListener("scroll", onScroll, true);
-        window.removeEventListener("resize", close);
-      }
-    }
-    function onOutside(e) {
-      if (menu.contains(e.target)) return;
-      /* closing because the anchor itself was pressed: remember it so the
-         click that follows toggles instead of reopening */
-      if (anchorNode && anchorNode.contains(e.target)) {
-        _menuJustClosed = { el: anchorNode, at: Date.now() };
-      }
-      close();
-    }
-    function onKey(e) { if (e.key === "Escape") { e.stopPropagation(); close(); } }
-    /* page scroll closes the menu, but scrolling INSIDE it (long lists) must not */
-    function onScroll(e) { if (!menu.contains(e.target)) close(); }
-    /* defer the listeners so the click that opened the menu doesn't close it */
-    setTimeout(function () {
-      if (closed) return;                    /* closed before we ever attached */
-      attached = true;
-      document.addEventListener("mousedown", onOutside, true);
-      document.addEventListener("keydown", onKey, true);
-      window.addEventListener("scroll", onScroll, true);
-      window.addEventListener("resize", close);
-    }, 0);
-    return { close: close };
+     Esc is captured on WINDOW, not document: a panel opened from inside a
+     dialog must not let the dialog's own Esc handler (a document-capture
+     listener registered first, so it would win) close the dialog underneath.
+     opts: {align: "right", onKey(e)->bool, onClose}. */
+  BV.dropPanel = function (anchorEl, contentEl, opts) {
+    opts = opts || {};
+    var anchorNode = anchorEl && anchorEl.nodeType === 1 ? anchorEl : null;
+    if (swallowReopen(anchorNode)) return null;
+    var panel = BV.el("div", { class: "bv-drop" });
+    var body = BV.el("div", { class: "bv-drop-body" });
+    body.appendChild(contentEl);
+    panel.appendChild(body);
+    document.documentElement.appendChild(panel);
+    placeFloat(panel, anchorEl, opts.align === "right");
+    return wireDismiss(panel, {
+      anchorNode: anchorNode,
+      escOnWindow: true,
+      onKey: opts.onKey,
+      onClose: opts.onClose,
+    });
   };
 
   /* ---- collapsible primitive ----

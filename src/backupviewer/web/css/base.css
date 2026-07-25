@@ -29,7 +29,7 @@
   --edge: color-mix(in srgb, var(--accent) 45%, transparent);
   --edge-soft: color-mix(in srgb, var(--accent) 26%, transparent);
 
-  /* frosted surfaces: the theme window's frost slider drives these. The
+  /* frosted surfaces: the ⚙ dialog's opacity + frost sliders drive these. The
      rgba fills are computed in JS (BV.uiPrefs.apply) and set inline on
      <html> whenever frost or the theme changes — NOT via
      color-mix(calc(var())) here, because Chromium does not reliably
@@ -37,15 +37,27 @@
      elements got the new value, live ones kept the old — a real
      invalidation quirk we hit). These defaults are the solid original, so
      at frost 0 / with no JS override every theme renders exactly as before.
-     --panel skins content surfaces (rows, tables, cards) — translucency
-     only, no blur: dozens of blurred rows would crawl under software
-     rendering. --glass + --glass-blur are for the FEW sticky overlays
-     (library head, hero, modal) that need real backdrop blur to keep
-     content legible scrolling beneath. */
+     THREE surface tracks, because the same alpha over different backdrops does
+     not read the same:
+       --panel   content over the PAGE (cards, tables, rows). Backdrop is --bg
+                 plus a sparse effect, so it can go far see-through. Every
+                 --panel surface ALSO takes --glass-blur via the html.frosted
+                 rules in components.css, so both sliders describe one set.
+       --overlay floating UI over CONTENT (dialogs, menus, the theme picker).
+                 Backdrop is TEXT, so the panel curve turned these into windows
+                 you could read the settings through; this one stops at ~25%.
+       --glass   sticky page overlays (library head, hero) that carry their own
+                 blur to keep content legible scrolling beneath.
+     All three default to the solid original, so frost 0 renders as before. */
   --frost: 0;
   --panel: var(--bg2);
+  --overlay: var(--bg2);
   --glass: var(--bg);
-  --glass-blur: blur(calc(var(--frost) * 14px));
+  /* 8px, not 14: every bundled effect is SPARSE (particles on a flat field),
+     and a 14px blur averaged them out of existence — cards went uniform, which
+     reads as solid even though the alpha never changed. 8px still smears the
+     dense backdrop behind a dialog into glass. */
+  --glass-blur: blur(calc(var(--frost) * 8px));
 
   --font-mono: "Cascadia Code", "Consolas", "JetBrains Mono", ui-monospace, monospace;
   /* UI font - the font picker (settings_ui.js) overrides this at runtime. Defaults to

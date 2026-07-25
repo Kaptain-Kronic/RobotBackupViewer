@@ -29,7 +29,7 @@
       ["j / k or ↓ / ↑", "move selection"],
       ["h / l or ← / →", "switch pane (split views)"],
       ["enter", "open selection · search signal"],
-      ["t / shift+t", "theme window / cycle theme"],
+      ["t / shift+t", "settings / cycle theme"],
       ["?", "this help"],
     ];
     body.innerHTML = rows.map(function (r) {
@@ -110,7 +110,7 @@
         history.back();
         break;
       case "t":
-        BV.themeUI.open();
+        BV.uiPrefs.modal();          /* lands on display — theme is its first row */
         break;
       case "T":
         BV.theme.cycle();
