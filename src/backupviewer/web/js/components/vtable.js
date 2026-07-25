@@ -5,10 +5,12 @@
             server-side filter+page (used by alarms).
 
    var vt = new BV.VTable(container, {
-     columns: [{key, label, width, grow, num, dim, accent, sortable, render(row)}],
+     columns: [{key, label, width, grow, num, dim, accent, sortable, render(row),
+                headRender() -> node}],
      data: [...]  OR  provider: fn,
      rowHeight: 27,
      onOpen: fn(row),
+     onContext: fn(row, ev),          // right-click a row (selects it first)
      rowClass: fn(row) -> extra class string
    });
    vt.setFilter(text); vt.refresh(); vt.destroy();
@@ -78,6 +80,14 @@
       var cls = "vt-cell" + (self._growCls(col) ? " grow" : "") + (col.num ? " num" : "") +
         (col.sortable !== false && !self.async ? " sortable" : "");
       var cell = BV.el("div", { class: cls }, '<span class="vt-label">' + BV.esc(col.label) + "</span>");
+      /* col.headRender() -> a NODE prepended inside the header cell (a
+         select-all box, a units switch). Deliberately OUTSIDE .vt-label, for
+         the same reason the resize grip is: _updateArrows rewrites only the
+         label span, so a sort toggle leaves this alone. */
+      if (col.headRender) {
+        var extra = col.headRender();
+        if (extra) cell.insertBefore(extra, cell.firstChild);
+      }
       if (self._colWidth(col)) { cell.style.width = self._colWidth(col); }
       if (col.sortable !== false && !self.async) {
         cell.addEventListener("click", function () {
@@ -333,6 +343,17 @@
             self.select(idx);
             if (self.opts.onOpen) self.opts.onOpen(r);
           });
+          /* right-click = row actions. select() first, so the menu and the
+             highlight can never point at different rows; preventDefault lives
+             here rather than in the caller, so a table WITHOUT onContext keeps
+             the platform menu. */
+          if (self.opts.onContext) {
+            el.addEventListener("contextmenu", function (ev) {
+              ev.preventDefault();
+              self.select(idx);
+              self.opts.onContext(r, ev);
+            });
+          }
         })(i, row);
       } else {
         el.innerHTML = '<div class="vt-cell dim">…</div>';

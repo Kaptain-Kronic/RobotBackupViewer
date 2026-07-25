@@ -9,10 +9,14 @@
      program and back (router re-runs render on an emptied #view). Default view
      is names A-Z with system hidden / binary shown. */
   var listState = { showSystem: false, showBinary: true, sortKey: "name", sortDir: 1, scrollTop: 0 };
+  /* set by the list render, cleared by every other route: ctrl+a is only ever
+     "select every program this filter shows", never a stale closure's */
+  var selectAllHook = null;
 
   function render(view, toolbar, params) {
     view.innerHTML = "";
     toolbar.innerHTML = "";
+    selectAllHook = null;
     if (params && params[0] === "styles") renderStyleTable(view, toolbar);
     else if (params && params[0] === "macros") renderMacros(view, toolbar);
     else if (params && params[0] && decodeURIComponent(params[0]).toUpperCase().endsWith(".PC")) {
@@ -81,48 +85,59 @@
           toolbar.appendChild(mBtn);
         }
 
-        /* add to the edit workspace: the ticked programs, or - via the menu -
-           everything the current filter shows */
+        /* add to the edit workspace. ONE two-part control: the left half turns
+           selecting on (the checkbox column is not rendered at all until it
+           does - the list stays a list), the right half adds what is selected
+           and shows how many. "Turn selecting on" and "add what's selected"
+           are the same errand, and this toolbar already carries ten controls. */
         var wsSrc = BV.workspace.currentSource();
-        var pickBtn = null;
+        var pickBtn = null, pickToggle = null, headCb = null;
         function toEntry(r) {
           return { root: wsSrc.root, label: wsSrc.label, file: r.rel, name: r.file };
+        }
+        function pickOn() { return !!listState.pickMode; }
+        function clearPicks() {
+          Object.keys(picked).forEach(function (k) { delete picked[k]; });
+          lastPick = null;
         }
         function syncPickBtn() {
           if (!pickBtn) return;
           var n = pickedRows().length;
           pickBtn.textContent = n ? "+ workspace (" + n + ")" : "+ workspace";
           pickBtn.classList.toggle("primary", !!n);
+          pickBtn.disabled = !n;
+          pickToggle.textContent = pickOn() ? "☑" : "☐";
+          pickToggle.classList.toggle("on", pickOn());
+          pickToggle.setAttribute("aria-pressed", pickOn() ? "true" : "false");
+          pickToggle.title = pickOn()
+            ? "hide the selection column"
+            : "select programs to add (shift-click for a range · ctrl+a for all)";
+          if (headCb) headCb.checked = allPicked();
         }
         if (wsSrc) {
-          pickBtn = BV.el("button", { class: "btn",
-            title: "tick programs to add them (shift-click for a range), " +
-                   "or click here with none ticked for options" }, "+ workspace");
+          var pickWrap = BV.el("div", { class: "btn-split" });
+          pickToggle = BV.el("button", { class: "btn bs-toggle" }, "☐");
+          pickBtn = BV.el("button", { class: "btn bs-main",
+            title: "add the selected programs to the edit workspace" }, "+ workspace");
+          pickToggle.addEventListener("click", function () {
+            listState.pickMode = !listState.pickMode;
+            if (!listState.pickMode) clearPicks();   /* leaving the mode drops the ticks */
+            rebuildColumns();
+            syncPickBtn();
+          });
           pickBtn.addEventListener("click", function () {
             var sel = pickedRows();
-            if (sel.length) {
-              var added = BV.workspace.addMany(sel.map(toEntry));
-              BV.toast(added ? added + " program" + (added === 1 ? "" : "s") + " added to the workspace"
-                             : "already in the workspace");
-              Object.keys(picked).forEach(function (k) { delete picked[k]; });
-              lastPick = null;
-              if (vt && vt.repaint) vt.repaint();
-              syncPickBtn();
-              return;
-            }
-            BV.menu(pickBtn, [
-              { label: "add every program this filter shows",
-                onClick: function () {
-                  var view = (vt && vt.view) ? vt.view : [];
-                  var list = view.filter(function (r) { return !r.binary && r.rel; }).map(toEntry);
-                  var n = BV.workspace.addMany(list);
-                  BV.toast(n ? n + " program" + (n === 1 ? "" : "s") + " added"
-                             : "all " + list.length + " already in the workspace");
-                } },
-              { label: "open the edit workspace", onClick: function () { BV.openWorkspace(); } },
-            ]);
+            if (!sel.length) return;                 /* disabled anyway; belt and braces */
+            var added = BV.workspace.addMany(sel.map(toEntry));
+            BV.toast(added ? added + " program" + (added === 1 ? "" : "s") + " added to the workspace"
+                           : "already in the workspace");
+            clearPicks();
+            if (vt && vt.repaint) vt.repaint();
+            syncPickBtn();
           });
-          toolbar.appendChild(pickBtn);
+          pickWrap.appendChild(pickToggle);
+          pickWrap.appendChild(pickBtn);
+          toolbar.appendChild(pickWrap);
         }
 
         var sysBtn = BV.el("button", { class: "btn", title: "-BCKED*- markers and BACKGRND-owned programs" },
@@ -232,10 +247,37 @@
            frame - so the checked set lives HERE, the column re-reads it on
            every paint, and the click is caught in the CAPTURE phase before the
            row's own handler navigates. Shift extends from the last pick. */
+        /* the tick set is keyed by rel path, and those repeat across robots
+           (every robot has a MAIN.LS) - so it resets when the SOURCE backup
+           changes, or robot B opens with robot A's ticks already lit */
+        if (listState.pickRoot !== (wsSrc && wsSrc.root)) {
+          listState.pickRoot = wsSrc && wsSrc.root;
+          listState.picked = {};
+          listState.pickMode = false;
+        }
         var picked = listState.picked || (listState.picked = {});
         var lastPick = null;
+        function pickable(r) { return !!(r && r.rel) && !r.binary; }
         function pickedRows() {
           return progs.filter(function (p) { return p.rel && picked[p.rel]; });
+        }
+        /* "all" is exactly the rows this filter and the system/binary/type
+           toggles are showing. A MultiTable has no .view, and "all" across two
+           robots' lists means nothing - so compare mode gets no select-all. */
+        function viewRows() {
+          return (!vs && vt && vt.view) ? vt.view.filter(pickable) : null;
+        }
+        function allPicked() {
+          var v = viewRows();
+          return !!(v && v.length && v.every(function (r) { return picked[r.rel]; }));
+        }
+        function setAll(on) {
+          var v = viewRows();
+          if (!v) return;
+          v.forEach(function (r) { if (on) picked[r.rel] = true; else delete picked[r.rel]; });
+          lastPick = null;
+          if (vt && vt.repaint) vt.repaint();
+          syncPickBtn();
         }
         function onPickClick(ev) {
           var cb = ev.target;
@@ -262,12 +304,31 @@
           syncPickBtn();
         }
 
-        var COLUMNS = [
-          { key: "_pick", label: "", width: 34, render: function (r) {
-              if (!r.rel || r.binary) return "";
-              return '<input type="checkbox" class="vt-pick" data-k="' +
-                BV.esc(r.rel) + '"' + (picked[r.rel] ? " checked" : "") + ">";
-            } },
+        var PICK_COL = { key: "_pick", label: "", width: 34,
+          /* NOT sortable: "_pick" is not a field, and sorting by it scrambled
+             the list into undefined-comparator order */
+          sortable: false, resizable: false,
+          headRender: function () {
+            /* see viewRows(): no "all" in compare mode. Also note this runs
+               from the VTable constructor, BEFORE vt is assigned here - so it
+               decides from `vs`, and syncPickBtn() sets the checked state once
+               the table exists and its filter has run. */
+            if (vs) return null;
+            headCb = BV.el("input", { type: "checkbox", class: "vt-pickall",
+              title: "select every program this filter shows" });
+            headCb.addEventListener("click", function (ev) {
+              ev.stopPropagation();
+              setAll(headCb.checked);
+            });
+            return headCb;
+          },
+          render: function (r) {
+            if (!pickable(r)) return "";
+            return '<input type="checkbox" class="vt-pick" data-k="' +
+              BV.esc(r.rel) + '"' + (picked[r.rel] ? " checked" : "") + ">";
+          } };
+
+        var BASE_COLUMNS = [
           { key: "star_rank", label: "★", width: 46, render: function (r) {
               if (!r.styles || !r.styles.length) return "";
               return '<span class="accent" title="style ' + r.styles.join(", ") + '">★</span>';
@@ -282,9 +343,52 @@
           { key: "modified", label: "modified", width: 165, dim: true, render: function (r) {
               return BV.esc(BV.fmt.date(r.modified)); } },
         ];
+        /* the SAME PICK_COL object every time, so a user-resized width (which
+           lives on the column object) survives a flip */
+        function columns() {
+          return pickOn() ? [PICK_COL].concat(BASE_COLUMNS) : BASE_COLUMNS.slice();
+        }
+
+        /* right-click a program row. "add to workspace" ADDS ONLY - jumping to
+           #edit is what the topbar is for, and being thrown off the list you
+           are working through is the opposite of what you asked for. */
+        function sourceOf(m) {
+          if (!m || !(m.root_key || m.path)) return null;
+          return { root: m.root_key || m.path, label: m.robot_name || m.name || "" };
+        }
+        function ctxFor(src) {
+          if (!src) return null;
+          return function (r, ev) {
+            var items = [];
+            if (pickable(r)) {
+              items.push({ label: "add to workspace", onClick: function () {
+                var n = BV.workspace.addMany([{ root: src.root, label: src.label,
+                                                file: r.rel, name: r.file }]);
+                BV.toast(n ? r.file + " added to the workspace"
+                           : r.file + " is already in the workspace");
+              } });
+            }
+            if (!r.binary) {
+              items.push({ label: "open program", onClick: function () {
+                location.hash = "#programs/" + encodeURIComponent(r.file);
+              } });
+            }
+            /* BV.menu has no disabled state, and an empty menu reads as broken */
+            if (!items.length) {
+              items.push({ label: "binary — no listing", onClick: function () {
+                BV.toast(r.file + " is binary — no listing to show");
+              } });
+            }
+            BV.menu({ x: ev.clientX, y: ev.clientY }, items);
+          };
+        }
 
         function build() {
           if (vt) vt.destroy();
+          /* the old head is gone with the old table; headRender re-sets this
+             when the pick column is in the set, and it must not linger as a
+             reference to a node that was thrown away */
+          headCb = null;
           if (vs && progsB) {
             var nameA = BV.state.manifest.robot_name || BV.state.manifest.name;
             var nameB = BV.state.compare.robot_name || BV.state.compare.name;
@@ -298,10 +402,12 @@
             vt = new BV.MultiTable(host, {
               mode: "pair",
               panes: [
-                { label: nameA, columns: COLUMNS, data: filterRows(progs),
-                  rowClass: paneClass(filterRows(progsB)) },
-                { label: nameB, columns: COLUMNS, data: filterRows(progsB),
-                  rowClass: paneClass(filterRows(progs)) },
+                { label: nameA, columns: columns(), data: filterRows(progs),
+                  rowClass: paneClass(filterRows(progsB)),
+                  onContext: ctxFor(wsSrc) },
+                { label: nameB, columns: columns(), data: filterRows(progsB),
+                  rowClass: paneClass(filterRows(progs)),
+                  onContext: ctxFor(sourceOf(BV.state.compare)) },
               ],
               onCount: function (n) { sb.setCount(n); },
               /* clicking selects (for diffing); double-purpose nav would fight it */
@@ -309,7 +415,7 @@
             });
           } else {
             vt = new BV.VTable(host, {
-              columns: COLUMNS,
+              columns: columns(),
               data: rows(),
               /* default names A-Z; unified across TP/binary/KAREL (the client
                  sort interleaves them, so toggled rows slot in, not at the
@@ -323,18 +429,37 @@
                 if (r.binary) { BV.toast(r.file + " is binary — no listing to show"); return; }
                 location.hash = "#programs/" + encodeURIComponent(r.file);
               },
+              onContext: ctxFor(wsSrc),
             });
           }
           BV.currentVTable = vt;
           vt.setFilter(sb.value());
-          /* CAPTURE phase: the row's own click handler navigates, so a ticked
-             checkbox has to be intercepted on the way DOWN */
-          if (wsSrc && vt.container) {
-            vt.container.addEventListener("click", onPickClick, true);
-          }
+          /* now vt.view is real, so the head's select-all box can be painted */
           syncPickBtn();
         }
+
+        /* a column-set change IS a rebuild (VTable takes columns at
+           construction), so reuse build() - it already handles both table
+           kinds. Only the scroll needs carrying by hand: listState.scrollTop is
+           restored once per renderList, in a rAF the probe window never runs.
+           (vt.selected is lost with the old table; that is a highlight, not
+           state worth threading through.) */
+        function rebuildColumns() {
+          var keep = host.scrollTop;
+          build();
+          host.scrollTop = keep;
+        }
+
+        /* ONE capture listener for the life of this render. build() runs again
+           on a vs toggle and now on every column flip, and re-adding it there
+           stacked a duplicate handler each time - the tick fired twice and
+           undid itself. `host` is the container both table kinds are given, and
+           neither destroy() removes that node.
+           CAPTURE phase: the row's own click handler navigates, so a ticked
+           checkbox has to be intercepted on the way DOWN. */
+        if (wsSrc) host.addEventListener("click", onPickClick, true);
         build();
+        selectAllHook = function () { if (pickOn()) setAll(true); };
 
         /* keep the scroll position across navigating into a program and back */
         host.addEventListener("scroll", BV.debounce(function () {
@@ -816,6 +941,19 @@
     }
     return el;
   }
+
+  /* ctrl+a on the programs LIST, while it is picking, ticks everything the
+     filter shows. Route-gated like the workspace's own keys (edit.js), so one
+     permanent listener is enough and there is nothing to tear down. */
+  document.addEventListener("keydown", function (e) {
+    if (!(e.ctrlKey || e.metaKey) || String(e.key).toLowerCase() !== "a") return;
+    if (location.hash.split("/")[0] !== "#programs") return;
+    if (BV.modalOpen() || !selectAllHook) return;
+    var a = document.activeElement;
+    if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)) return;
+    e.preventDefault();
+    selectAllHook();
+  });
 
   BV.tabs = BV.tabs || [];
   BV.tabs.push({ id: "programs", label: "programs", render: render });

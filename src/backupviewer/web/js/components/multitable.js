@@ -84,6 +84,13 @@
           self._remember();
           if (self.opts.onOpen) self.opts.onOpen(row);
         },
+        /* per-pane onContext: in a compare each pane is a DIFFERENT robot, so
+           its row menu has to be bound to that pane's own source */
+        onContext: (pane.onContext || self.opts.onContext) ? function (row, ev) {
+          self.active = i;
+          self._remember();
+          (pane.onContext || self.opts.onContext)(row, ev);
+        } : null,
       });
       self.tables.push({ vt: vt, pane: pane });
     });

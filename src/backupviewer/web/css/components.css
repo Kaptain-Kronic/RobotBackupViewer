@@ -627,8 +627,22 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .fp-foot { border-top: 1px solid var(--edge); padding: 0.45rem 0.6rem; display: flex; align-items: center; gap: 0.5rem; flex: none; }
 .caret { cursor: pointer; width: 0.8em; display: inline-block; user-select: none; flex: none; }
 
-/* the programs list's pick-for-workspace checkbox column */
-.vt-cell input.vt-pick { margin: 0; cursor: pointer; vertical-align: middle; }
+/* the programs list's pick-for-workspace column: row boxes + select-all */
+.vt-cell input.vt-pick,
+.vt-cell input.vt-pickall { margin: 0; cursor: pointer; vertical-align: middle; }
+
+/* a two-part control: a mode toggle welded to the action it arms. One radius
+   across both halves so it reads as ONE button, not two crammed together.
+   .btn has no border, so the divider is an inset shadow rather than a rule. */
+.btn-split { display: inline-flex; align-items: stretch; flex: none; }
+.btn-split > .btn { border-radius: 0; }
+.btn-split > .btn:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+.btn-split > .btn:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+.btn-split > .btn + .btn { box-shadow: inset 1px 0 0 var(--bg); }
+.btn-split .bs-toggle { padding: 0.32rem 0.5rem; line-height: 1; }
+.btn-split .bs-toggle.on { color: var(--accent); }
+.btn-split .bs-main:disabled { opacity: 0.5; cursor: default; }
+.btn-split .bs-main:disabled:hover { color: var(--text); }
 
 /* the workspace entry button in the topbar carries a count badge */
 #btn-edit { position: relative; }

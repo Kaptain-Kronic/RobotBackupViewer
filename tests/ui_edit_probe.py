@@ -784,34 +784,84 @@ def probe(window):
            json.dumps(str(SNAPS[ROBOTS[0]])))
         check("list.backup_opened", poll(window, "window._ob") == "ok")
         js(window, "location.hash = '#programs'")
+        poll(window, "!!document.querySelector('.btn-split .bs-main')")
+        # selecting is OFF by default: no checkbox column at all
+        check("list.pick_column_hidden_by_default",
+              js(window, "document.querySelectorAll('.vt-pick').length") == 0,
+              "(the list stays a list until you ask to select)")
+        check("list.add_disabled_at_zero",
+              bool(js(window, "document.querySelector('.btn-split .bs-main').disabled")))
+        js(window, "document.querySelector('.btn-split .bs-toggle').click()")
         boxes = poll(window, "document.querySelectorAll('.vt-pick').length")
-        check("list.pick_column", bool(boxes) and boxes >= 1, f"({boxes} checkboxes)")
+        check("list.pick_toggle_shows_column", bool(boxes) and boxes >= 1, f"({boxes} checkboxes)")
+        check("list.pick_col_not_sortable",
+              not js(window, """document.querySelectorAll('.vt-head .vt-cell')[0]
+                  .classList.contains('sortable')"""),
+              "(sorting by a non-field scrambled the list)")
         # a real click toggles the box itself - pre-setting .checked then
         # clicking would toggle it straight back off
         count_before_add = js(window, "BV.workspace.count()")
         js(window, "document.querySelectorAll('.vt-pick')[0].click()")
         time.sleep(0.35)
-        label = js(window, """(function(){
-            var b=[...document.querySelectorAll('.toolbar-slot .btn')]
-                .filter(function(x){return x.textContent.indexOf('workspace')>=0;})[0];
-            return b ? b.textContent : '';
-        })()""")
+        label = js(window, "document.querySelector('.btn-split .bs-main').textContent")
         check("list.tick_updates_button", "(1)" in (label or ""), f"({label!r})")
         check("list.tick_did_not_navigate", location_hash(window) == "#programs",
               "(a ticked box must not open the program)")
+        # one tick means ONE: a stacked capture listener would toggle it twice
+        check("list.single_capture_listener",
+              js(window, "document.querySelectorAll('.vt-pick:checked').length") == 1,
+              "(a doubled handler ticks and unticks in the same click)")
+        # the header box tracks "is every shown row picked?" and toggles them
+        shown = js(window, "BV.currentVTable.view.filter(function(r){return r.rel && !r.binary;}).length")
+        js(window, "document.querySelector('.vt-pickall').click()")
+        time.sleep(0.4)
+        cleared = js(window, "document.querySelector('.btn-split .bs-main').textContent")
+        js(window, "document.querySelector('.vt-pickall').click()")
+        time.sleep(0.4)
+        all_label = js(window, "document.querySelector('.btn-split .bs-main').textContent")
+        check("list.select_all_header",
+              ("(" + str(shown) + ")") in (all_label or "") and cleared == "+ workspace",
+              f"(off {cleared!r} -> on {all_label!r}, {shown} pickable rows)")
         # adding consumes the ticks (the button goes back to its idle label)
-        js(window, """[...document.querySelectorAll('.toolbar-slot .btn')]
-            .filter(function(x){return x.textContent.indexOf('workspace')>=0;})[0].click()""")
+        js(window, "document.querySelector('.btn-split .bs-main').click()")
         time.sleep(0.5)
-        after = js(window, """(function(){
-            var b=[...document.querySelectorAll('.toolbar-slot .btn')]
-                .filter(function(x){return x.textContent.indexOf('workspace')>=0;})[0];
-            return b ? b.textContent : '';
-        })()""")
+        after = js(window, "document.querySelector('.btn-split .bs-main').textContent")
         check("list.add_clears_ticks", after == "+ workspace", f"({after!r})")
+        check("list.add_disables_again",
+              bool(js(window, "document.querySelector('.btn-split .bs-main').disabled")))
         check("list.no_duplicate_entry",
               js(window, "BV.workspace.count()") == count_before_add,
               "(that source was already in the working set - a second add is a no-op)")
+        # turning selecting back off takes the column and the ticks with it
+        js(window, "document.querySelectorAll('.vt-pick')[0].click()")
+        time.sleep(0.3)
+        js(window, "document.querySelector('.btn-split .bs-toggle').click()")
+        time.sleep(0.4)
+        check("list.toggle_off_clears",
+              js(window, "document.querySelectorAll('.vt-pick').length") == 0
+              and bool(js(window, "document.querySelector('.btn-split .bs-main').disabled")))
+
+        # ---- right-click a program row: add WITHOUT being thrown to #edit ----
+        js(window, """(function(){
+            var r=document.querySelector('.vt-row');
+            var b=r.getBoundingClientRect();
+            r.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,
+                clientX:b.left+20, clientY:b.top+5}));
+        })()""")
+        time.sleep(0.35)
+        ctx = menu_text(window)
+        check("list.row_context_menu", "add to workspace" in ctx, f"({ctx[:70]!r})")
+        check("list.context_selects_row",
+              bool(js(window, "!!document.querySelector('.vt-row.selected')")),
+              "(the menu and the highlight must point at the same row)")
+        n_ws = js(window, "BV.workspace.count()")
+        js(window, """[...document.querySelectorAll('.ctx-menu .ctx-item')]
+            .find(function(b){return b.textContent.indexOf('add to workspace')>=0;}).click()""")
+        time.sleep(0.5)
+        check("list.context_add_does_not_jump", location_hash(window) == "#programs",
+              "(add only - the topbar is how you go to the workspace)")
+        check("list.context_add_worked",
+              js(window, "BV.workspace.count()") >= n_ws)
 
         print()
         print("FAILURES:", FAILURES if FAILURES else "none")
