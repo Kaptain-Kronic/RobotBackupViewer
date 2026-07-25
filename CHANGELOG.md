@@ -1,6 +1,11 @@
 # Changelog
 
 ## Unreleased
+- **The app has its own icon.** A pixel-art robot arm lifting a floppy disk —
+  the whole job in one picture — replacing the generic PyInstaller default in
+  Explorer, the taskbar, and the window's title bar. Ships as a
+  multi-resolution `.ico` (16 through 256) so every size Windows asks for is a
+  real entry rather than a scaled-down 256.
 
 ## v1.3.1 — the honesty pass
 - **A disabled DCS zone no longer draws as an enabled one.** The zone parser
