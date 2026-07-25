@@ -141,11 +141,31 @@ In progress (claimed 2026-07-23, first slices building on main):
   never the backup. Engine: `parsers/ls_edit.py` (split/renumber/re-emit,
   byte-exact for untouched lines; format rules measured over 6478 real
   programs / 378k lines, round-trip fuzz in `tests/test_ls_edit.py`).
-- ❓ **Hardware gate:** load an exported `.LS` (passthrough + edited) on a
-  real controller. Also settles whether stale `LINE_COUNT`/`PROG_SIZE`
-  header attrs matter (we leave them untouched — not ours to invent).
+- ✅ **Multi-robot edit workspace** (`#edit`) — the editor moved off the
+  program detail and onto its own shell screen, because a working set spans
+  robots while the tab strip is per-backup. Rail (working set · find/replace) │
+  panes │ navigator. Programs are read and exported through path-addressed
+  `ws_*` endpoints so the workspace never consumes a session; export writes one
+  folder per robot and never into a backup. Find/replace matches on IDENTITY
+  (`R[21]` finds `R[21:SERVO GUN WORK]`), which is the thing VS Code
+  structurally cannot do.
+- ✅ **Editor ergonomics** — split view is derived from where programs are open
+  (drag onto the right quarter to open it, close the last tab to fold it away),
+  the working set is multi-selectable by click/ctrl/shift with Delete, and the
+  workspace is reachable from the topbar anvil or ctrl+E anywhere.
+- ✅ **Loading gate CLOSED** (field-verified, hundreds of loads): the
+  controller's `.LS` load is liberal — it rejects with line + column on a
+  syntax error, `LINE_COUNT` need not be updated, and lines need not even be
+  renumbered in order. Our renumbering is a convenience, not a correctness
+  requirement.
+- ❓ **Hardware gate (remaining):** whether loading an `.LS` with edited
+  comments OVERWRITES the controller's comment table. If yes it is both the
+  offline path for fleet-wide register/IO renaming and a hazard (loading an old
+  program silently reverts renamed comments) — the hazard half is already
+  detectable offline, so it is a candidate scan check either way.
 - 📋 Next in this lane: insert-CALL picker (pick a real program/macro from
-  the backup), then the review-your-edits diff screen.
+  the backup), then the review-your-edits diff screen, then
+  validation/autocomplete against the backup's own IO and register tables.
 
 Decided principles (these are settled — build against them):
 

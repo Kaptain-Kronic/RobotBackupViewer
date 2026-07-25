@@ -1,6 +1,47 @@
 # Changelog
 
 ## Unreleased
+- **The top-left is three buttons instead of a logo.** A book (the library), a
+  camera (the live camera wall) and a hammer-and-anvil (the edit workspace),
+  with the count of programs you're editing riding the anvil — tinted amber
+  when any of them have unsaved changes, so "there's work in there" is visible
+  from every screen. The backup/multi-cam switch moves out of the library
+  header and onto those buttons: it was a control you had to arrive somewhere
+  to find, and it changed the very screen it sat on. The wordmark isn't gone —
+  it's how a popped-out window tells you it isn't the main one.
+- **Split view opens by dragging, and closes itself.** There's no "split"
+  button any more. Drop a program on the right edge of the editing area and a
+  second pane appears there; close the last thing in a pane and the layout
+  folds back to one. If the left side is what empties, the right slides over
+  rather than leaving a hole. Dropping a program somewhere is now a real
+  instruction — it moves the program there, even if it's already open
+  elsewhere.
+- **Pick several programs in the working set at once.** Click, ctrl+click and
+  shift+click select a range, and Delete removes the lot — no checkbox column,
+  just highlighting. Right-clicking a selection offers to remove all of it;
+  right-clicking outside one selects just that row first, so a menu can never
+  act on rows you'd forgotten were still lit. A range stops at rows you can
+  actually see, so one shift+click can't sweep up a folded robot's forty
+  programs, and the header says how many are selected.
+- **Adding programs to the workspace is one control, not a button with moods.**
+  "+ workspace" used to act if you'd ticked something and open a menu if you
+  hadn't. Now it's two halves: a switch that shows or hides the selection
+  checkboxes (off by default — the list stays a list), and an add button
+  showing the count. A header checkbox or ctrl+a takes everything the filter is
+  showing. Right-clicking any program adds it straight to the workspace without
+  throwing you onto another screen.
+- **Tear a backup tab off downward to float it.** Popping a backup into its own
+  window used to need the tab released outside the whole application — which is
+  impossible while the window is maximized, so on most plant PCs that gesture
+  simply didn't exist. Drag it down out of the strip instead. Ctrl+E opens the
+  edit workspace from anywhere; from a floating window it raises the main
+  window and opens it there, rather than starting a second workspace over the
+  same drafts.
+- **A camera-only backup opens on its photos again.** It had started landing on
+  the edit workspace instead: when a backup has no overview to show, the app
+  picks the first tab it can, and the workspace counts as always-available even
+  though it isn't something you can click to. It now falls back only to tabs
+  that are actually on the bar.
 - **The app has its own icon.** A pixel-art robot arm lifting a floppy disk —
   the whole job in one picture — replacing the generic PyInstaller default in
   Explorer, the taskbar, and the window's title bar. Ships as a
