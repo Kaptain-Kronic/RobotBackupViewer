@@ -3,11 +3,12 @@
 
    One tab per open backup, riding the topbar like a browser: click to
    switch, ✕ / middle-click to close, drag to rearrange (BV.dragReorder,
-   axis "x"), right-click for [pop out · close], and a drag released outside
-   the window pops the backup into its own OS window (the context menu is
-   the guaranteed path; the drag is a forgiving enhancement). The strip
-   stays visible on the home screen - home is just a screen, the tabs
-   persist - with no tab highlighted there.
+   axis "x"), right-click for [pop out · close], and TEAR OFF a tab into its
+   own OS window by dragging it down out of the strip (or right out of the
+   window, which still works). The context menu is the guaranteed path; the
+   drags are forgiving enhancements. The strip stays visible on the home
+   screen - home is just a screen, the tabs persist - with no tab highlighted
+   there.
 
    State model: BV.state.manifest stays "what THIS window is showing";
    switching tabs re-points it (per-backup UI memory lives in state.js's
@@ -155,10 +156,25 @@
     },
   });
 
-  /* drag-out -> pop out: released outside the window (with margin) and not
-     dropped anywhere. Ambiguity is a no-op - never a surprise window. */
+  /* where the drag started, in SCREEN coords. A tear-off is judged on the
+     DELTA rather than an absolute position, which avoids having to work out
+     where the strip sits inside the window chrome - and is the whole reason
+     this works when the window is maximized. */
+  var dragFromY = null;
+  bar.addEventListener("dragstart", function (e) {
+    var item = e.target && e.target.closest ? e.target.closest(".stab") : null;
+    dragFromY = item ? (e.screenY || 0) : null;
+  });
+
+  /* pop out: released outside the window (with margin), OR torn straight DOWN
+     out of the strip. Releasing outside is impossible when the window is
+     maximized, which is most of the time on a plant PC. Either way the drag
+     must not have been dropped on anything - ambiguity is a no-op, never a
+     surprise window. */
+  var TEAR_DOWN = 60;   /* px below where the drag started */
   bar.addEventListener("dragend", function (e) {
     var item = e.target && e.target.closest ? e.target.closest(".stab") : null;
+    var from = dragFromY; dragFromY = null;
     if (!item) return;
     if (e.dataTransfer && e.dataTransfer.dropEffect !== "none") return;
     var M = 40;
@@ -166,7 +182,10 @@
       || e.screenX > window.screenX + window.outerWidth + M
       || e.screenY < window.screenY - M
       || e.screenY > window.screenY + window.outerHeight + M;
-    if (out && (e.screenX || e.screenY)) BV.session.popOut(item.dataset.sid);
+    /* dragReorder owns horizontal motion inside the strip and accepts those
+       drops, so a reorder never reaches here with dropEffect "none" */
+    var torn = from !== null && (e.screenY - from) > TEAR_DOWN;
+    if ((out || torn) && (e.screenX || e.screenY)) BV.session.popOut(item.dataset.sid);
   });
 
   function render() {

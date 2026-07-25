@@ -507,6 +507,30 @@ class Api:
                 "compare": e["compare"].manifest() if e.get("compare") else None}
 
     @_endpoint
+    def focus_main_workspace(self):
+        """Raise the MAIN window and open the edit workspace there.
+
+        A pop-out has no workspace of its own and never will: the working set
+        spans robots while a pop-out is pinned to exactly one, and two windows
+        editing one set of drafts is a merge problem nobody asked for. So the
+        pop-out's ctrl+e brings you to the workspace instead of bringing a
+        second one to you.
+        """
+        w = self._window
+        if w is None:  # no main window bound (a headless probe)
+            raise ApiError("NO_MAIN_WINDOW", "there is no main window to raise")
+        try:
+            w.restore()
+            w.show()
+        except Exception:  # noqa: BLE001 - window backend without restore
+            log.exception("could not front the main window")
+        try:
+            w.evaluate_js("window.BV && BV.openWorkspace && BV.openWorkspace()")
+        except Exception:  # noqa: BLE001 - main window tearing down
+            log.exception("could not open the workspace in the main window")
+        return True
+
+    @_endpoint
     def close_session(self, sid: str):
         self._entry(sid)  # an unknown sid is an error, never a silent no-op
         self._drop_session(sid)

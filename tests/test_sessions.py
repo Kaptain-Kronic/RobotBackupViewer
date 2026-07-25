@@ -28,9 +28,17 @@ class _Win:
     def __init__(self):
         self.js = []
         self.destroyed = False
+        self.restored = False
+        self.shown = False
 
     def evaluate_js(self, code):
         self.js.append(code)
+
+    def restore(self):
+        self.restored = True
+
+    def show(self):
+        self.shown = True
 
     def destroy(self):
         self.destroyed = True
@@ -151,6 +159,22 @@ def test_popout_entry_drop_destroys_its_window(tmp_path):
     api._drop_session(ma["sid"])
     assert w.destroyed
     assert not api._sessions
+
+
+def test_focus_main_workspace_raises_the_main_window_and_routes_it():
+    """A pop-out has no workspace of its own: ctrl+e there brings you to the
+    MAIN window's, rather than opening a second one over the same drafts."""
+    api = Api()
+    w = _Win()
+    api._window = w
+    assert ok(api.focus_main_workspace()) is True
+    assert w.restored and w.shown
+    assert any("openWorkspace" in code for code in w.js)
+
+
+def test_focus_main_workspace_without_a_main_window_is_honest():
+    api = Api()          # nothing bound (a headless run)
+    assert err(api.focus_main_workspace()) == "NO_MAIN_WINDOW"
 
 
 def test_sid_sits_immediately_before_side_everywhere():

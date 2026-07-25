@@ -161,6 +161,14 @@ def probe(window):
               "(a non-shell tab would have been bounced to #home)")
         check("shell.empty_state", bool(js(window, "!!document.querySelector('.ws-empty')")))
         check("shell.topbar_button", bool(js(window, "!!document.getElementById('cube-edit')")))
+        # ctrl+e reaches the workspace from anywhere in the main window
+        js(window, "location.hash = '#home'")
+        time.sleep(0.6)
+        js(window, """document.dispatchEvent(new KeyboardEvent('keydown',
+            {key:'e',ctrlKey:true,bubbles:true,cancelable:true}))""")
+        time.sleep(0.6)
+        check("shell.ctrl_e_opens_workspace", location_hash(window) == "#edit",
+              f"(got {js(window, 'location.hash')!r})")
         check("shell.cube_active_on_edit",
               bool(js(window, "document.getElementById('cube-edit').classList.contains('active')")),
               "(a cube reads as selected when you are on its screen)")

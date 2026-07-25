@@ -23,10 +23,20 @@ Legend: ✅ shipped · 🔨 being built · 📋 decided, not started · ❓ open
 Each of these is deliberately scoped to land on its own. Good places to start.
 
 - 📋 **Report export** — CSV per table, self-contained HTML report, print-to-PDF.
-- 📋 **Browser-style tabs** — several backups open at once, drag a tab out to a
-  floating window. Architectural note: requires the per-session refactor
-  (`_sessions` dict); the compare `side` parameter is trailing-positional —
-  see CLAUDE.md before touching endpoint signatures.
+- ✅ **Browser-style tabs** — several backups open at once; tear a tab off
+  downward (or out of the window) to float it. Shipped with the per-session
+  refactor (`_sessions` dict); the compare `side` parameter is
+  trailing-positional — see CLAUDE.md before touching endpoint signatures.
+- 📋 **Group pop-out windows** — several backups in ONE external window, and a
+  way to send a floating backup back. Today a pop-out holds exactly one, and
+  once it is out there is nothing to grab. WebView2 has no cross-window DOM
+  drag, so this cannot be a drag: it needs a `#sessionbar` inside the pop-out
+  plus an endpoint that reassigns a session's owner window, driven by a
+  "move to → main window / <other window> / new window" menu on each tab, and
+  a push so both windows repaint. Decided 2026-07-25 to ship the tear-off
+  gesture first and leave this whole shape for its own slice.
+- 📋 **Workspace splash screen** — start the library load while the splash is
+  up, so the wait buys something instead of costing it.
 - 📋 **More scan checks** — simulated-IO-left-on, general override < 100%,
   alarm-frequency summary, controller clock drift, uninitialized PRs
   referenced by programs.

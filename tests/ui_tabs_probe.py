@@ -162,6 +162,30 @@ def probe(window):
         check("released.tab_gone",
               js(window, "document.querySelectorAll('#sessionbar .stab').length") == 1)
 
+        # ---- tear-off: dragging a tab DOWN out of the strip pops it out ----
+        # (releasing outside the window is impossible while maximized, which is
+        # how a plant PC runs). Stub popOut so the gesture is tested without
+        # actually spawning a window - the real path is exercised below.
+        torn = js(window, """(function(){
+            var real=BV.session.popOut, hits=[];
+            BV.session.popOut=function(sid){ hits.push(sid); };
+            var tab=document.querySelector('#sessionbar .stab');
+            function drag(dy){
+              tab.dispatchEvent(new MouseEvent('dragstart',{bubbles:true,
+                  screenX:window.screenX+100, screenY:window.screenY+50}));
+              tab.dispatchEvent(new MouseEvent('dragend',{bubbles:true,
+                  screenX:window.screenX+100, screenY:window.screenY+50+dy}));
+            }
+            drag(10);                     /* a twitch must not spawn a window */
+            var afterSmall=hits.length;
+            drag(100);                    /* a real tear-off */
+            var afterTear=hits.length;
+            BV.session.popOut=real;
+            return JSON.stringify({small:afterSmall, tear:afterTear, sid:hits[0]||''});
+        })()""") or ""
+        check("tearoff.small_drag_is_a_no_op", '"small":0' in torn, f"({torn})")
+        check("tearoff.drag_down_pops_out", '"tear":1' in torn, f"({torn})")
+
         # ---- pop-out: the second-window spike, for real. Through the
         # FRONTEND path (BV.session.popOut) so the tab-transfer runs too. ----
         api = window._bv_api
@@ -203,6 +227,21 @@ def probe(window):
             check("popout.wordmark_instead_of_cubes",
                   w2.evaluate_js("""getComputedStyle(document.getElementById('topbar-cubes')).display === 'none'
                     && getComputedStyle(document.getElementById('logo')).display !== 'none'"""))
+            # ctrl+e here must ask the MAIN window to open the workspace, never
+            # open a second one over the same drafts. The call is stubbed: the
+            # real endpoint raises + shows the main window, which a hidden
+            # probe should not do to the desktop.
+            called = w2.evaluate_js("""(function(){
+                var real=BV.api.call, seen='';
+                BV.api.call=function(m){ seen=m; return Promise.resolve(true); };
+                document.dispatchEvent(new KeyboardEvent('keydown',
+                    {key:'e',ctrlKey:true,bubbles:true,cancelable:true}));
+                BV.api.call=real;
+                return JSON.stringify({m:seen, hash:location.hash});
+            })()""") or ""
+            check("popout.ctrl_e_asks_main_window",
+                  '"m":"focus_main_workspace"' in called and '"hash":"#edit"' not in called,
+                  f"({called})")
             # the SID_POS shim end-to-end: content calls resolve the pinned
             # session even though the MAIN window's active sid is different.
             # (evaluate_js can't await a promise - park the result on window)

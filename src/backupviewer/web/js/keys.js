@@ -23,6 +23,7 @@
     var rows = [
       ["1 – 9 · 0 · - · =", "switch tab (the number row; 0 = 3d view)"],
       ["ctrl+k", "search whole backup"],
+      ["ctrl+e", "the edit workspace (from a pop-out: raises the main window)"],
       ["backspace", "back (previous program / view)"],
       ["/", "focus tab filter"],
       ["esc", "clear filter · back to list · close"],
@@ -47,6 +48,22 @@
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
       e.preventDefault();
       if (BV.focusGlobalSearch) BV.focusGlobalSearch();
+      return;
+    }
+
+    /* Ctrl+E - the edit workspace, also while typing (it is a "take me there",
+       not a text command). In a solo pop-out the workspace belongs to the MAIN
+       window: raise that and open it THERE, rather than opening a second one
+       over the same drafts. */
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "e") {
+      e.preventDefault();
+      if (BV.solo) {
+        BV.api.call("focus_main_workspace").catch(function (err) {
+          BV.toast(err.message);
+        });
+      } else if (BV.openWorkspace) {
+        BV.openWorkspace();
+      }
       return;
     }
 
