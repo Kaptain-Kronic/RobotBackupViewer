@@ -165,6 +165,32 @@ def probe(window):
         })()""") == "DO[1]=ON")
         check("edit.details_hidden_by_default",
               not js(window, "!!document.querySelector('.edattr-row')"))
+        # the editable must be sized to its CONTENT, not to the scroller's
+        # visible box: when it was stretched, every line you had to scroll to
+        # sat outside the element and only its glyphs were clickable (blank
+        # space past the text hit the scroller instead). Fills the editor with
+        # enough lines to scroll, then clicks blank space on a scrolled-to row.
+        check("edit.click_target_covers_scrolled_lines", bool(js(window, """(function(){
+            var code=document.querySelector('.lsed-code');
+            var scroller=document.querySelector('.lsed-scroll');
+            var gut=document.querySelector('.lsed-gutter');
+            if(!code||!scroller||!gut) return false;
+            var saved=code.textContent;
+            var many=[]; for(var i=1;i<=80;i++) many.push('CALL PROG'+i);
+            code.textContent=many.join('\\n');
+            code.dispatchEvent(new Event('input',{bubbles:true}));
+            scroller.scrollTop=600;
+            var s=scroller.getBoundingClientRect(), g=gut.getBoundingClientRect();
+            var el=document.elementFromPoint(g.right+200, s.top+45);
+            var ok=!!(el && (el===code||code.contains(el)));
+            scroller.scrollTop=0;
+            code.textContent=saved;                 /* restore the real program */
+            code.dispatchEvent(new Event('input',{bubbles:true}));
+            return ok;
+        })()""")))
+        # the restore above must leave the buffer exactly as it was, or every
+        # export assertion below would be testing the probe's own scratch text
+        check("edit.probe_restore_clean", not js(window, "BV.edit.anyDirty()"))
 
         # ---- type a body edit through the real editable element ----
         js(window, """(function(){

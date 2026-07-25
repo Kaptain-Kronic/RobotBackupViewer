@@ -418,16 +418,25 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
   background: var(--bg2); border: 1px solid var(--edge); border-radius: var(--radius);
   font-family: var(--font-mono); font-size: 0.83rem; line-height: 1.4;
 }
-.lsed-scroll { flex: 1; min-width: 0; overflow: auto; display: flex; }
+/* align-items:flex-start, NOT the default stretch: a stretched flex item is
+   sized to the scroller's VISIBLE box, so every line you had to scroll to sat
+   OUTSIDE the editable element - only the glyphs themselves stayed clickable
+   and blank space past a line's text hit the scroller instead ("you have to
+   click on the letter"). Sized to content, the editable covers all its text. */
+.lsed-scroll { flex: 1; min-width: 0; overflow: auto; display: flex; align-items: flex-start; }
 .lsed-gutter {
   position: sticky; left: 0; z-index: 2;
-  flex: none; user-select: none;
+  flex: none; user-select: none; min-height: 100%;
   padding: 0.7rem 0; text-align: right; color: var(--sub-alt);
   background: var(--bg2); border-right: 1px solid var(--edge);
 }
 .lsed-nums { padding: 0 0.6em 0 0.9em; white-space: pre; }
 .lsed-code {
-  flex: 1; min-width: 0; margin: 0; border: 0; outline: none;
+  /* 1 0 auto + min-height:100%: as wide/tall as its content (so the whole
+     text is a click target) but never smaller than the pane (so clicking
+     past the last line, or right of a short line, still lands in the
+     editor). Growing only into free space keeps phantom scrollbars away. */
+  flex: 1 0 auto; min-height: 100%; margin: 0; border: 0; outline: none;
   font: inherit; line-height: inherit; letter-spacing: normal; tab-size: 4;
   white-space: pre; overflow-wrap: normal; word-break: normal;
   padding: 0.7rem 0.9rem;
