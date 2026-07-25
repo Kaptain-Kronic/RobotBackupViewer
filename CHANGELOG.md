@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## v1.4 — the edit workspace
+- **The app is called Backup Viewer.** The window title, taskbar entry, crash
+  dialog and `--help` line all used to lead with a robot vendor's name, which
+  was never the app's name. Vendor names now appear where they're a technical
+  fact — which camera protocol a backup uses, which file format a parser reads
+  — and not as branding.
 - **The top-left is three buttons instead of a logo.** A book (the library), a
   camera (the live camera wall) and a hammer-and-anvil (the edit workspace),
   with the count of programs you're editing riding the anvil — tinted amber
