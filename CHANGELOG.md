@@ -1,6 +1,22 @@
 # Changelog
 
 ## Unreleased
+- **The phone button moved to the top bar, where it reaches every screen.**
+  📱 used to live only on the Matrox remote's bar, so mirroring a screen to
+  the phone meant being inside that one overlay. It now sits beside compare
+  and mirrors *this* window — a camera remote, a backup you're reading,
+  whatever is on it — and a popped-out window mirrors itself instead of the
+  main one. The window is named by key, never by title, so only windows this
+  app opened can ever be shared.
+- **The CV-X remote's bar carries the same options as the Matrox one.** It
+  had fullscreen and close; it now also has reload, open in window and phone.
+  - *reload* hangs up and dials the same camera again, in that order and
+    under the same session id — the controller keeps exactly one remote slot,
+    so letting go first is the whole point.
+  - *open in window* moves the remote into its own OS window with the mouse
+    still live: it **adopts** the running session rather than dialling again,
+    so the slot is never asked for twice. Ownership transfers — closing that
+    window is what ends the session, and closing the app takes it along.
 
 ## v1.3.1 — the honesty pass
 - **A disabled DCS zone no longer draws as an enabled one.** The zone parser

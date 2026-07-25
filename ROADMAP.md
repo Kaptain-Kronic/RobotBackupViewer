@@ -95,7 +95,16 @@ one click backs up the robot + all its cameras together.
   and cut — WebView2 can't do transparent or capture-excluded windows on
   Win11 (so no live hollow frame), and even the fullscreen-screenshot picker
   was fiddlier than the plant wants. Mirroring the whole window is what
-  landed: one click, no placing.
+  landed: one click, no placing. Since the `remote-bar-parity` lane the
+  button lives in the **top bar**, so it reaches any screen, and mirrors the
+  window it was pressed in (`viewfinder_start {window}` — a key naming one of
+  our windows, never a raw title).
+
+- ✅ **Both remote bars carry the same options** — reload · open in window ·
+  phone · fullscreen · close, on Matrox and CV-X alike. CV-X reload is a
+  Python-side hang-up-then-redial under the same session id, and its pop-out
+  window boots on a `#cvx=` fragment and *adopts* the live session: the
+  controller's single remote slot is never asked for twice.
 
 - 🔨 **Discovery** — agreed direction: probe the DesignAssistant web portal
   (:80/:443) and EtherNet/IP ListIdentity (UDP 44818, Matrox vendor ID) for

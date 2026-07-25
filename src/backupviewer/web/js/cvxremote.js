@@ -9,7 +9,13 @@
    own TCP protocol and re-streams frames as MJPEG over a localhost HTTP server,
    so the live screen is just an <img> - no JS decoding. Mouse events map from the
    rendered image rect back to 1024x768 controller pixels. Wholly separate from
-   the CV-X anon-FTP backup path. */
+   the CV-X anon-FTP backup path.
+
+   The bar carries the same options as the Matrox remote: reload (reconnect),
+   open in window, phone, fullscreen, close. opts (3rd arg) is how a popped-out
+   window boots: {adopt: sid} takes over a session that is ALREADY connected
+   instead of dialling the controller again - it only has one remote slot -
+   and {owned: true} means this window IS the session, so closing closes it. */
 (function () {
   "use strict";
 
@@ -30,15 +36,22 @@
   var NAV_KEYS = "0123456789-=";
   var open = false;   /* one session at a time */
 
-  BV.openCvxRemote = function (ip, label) {
+  BV.openCvxRemote = function (ip, label, opts) {
     if (open) { BV.toast("a remote session is already open"); return; }
     ip = (ip || "").trim();
-    if (!ip) { BV.toast("this camera has no IP on record"); return; }
+    opts = opts || {};
+    if (!ip && !opts.adopt) { BV.toast("this camera has no IP on record"); return; }
     open = true;
 
     var sid = null, statusTimer = null, lastMove = 0, downBtn = null;
     var pressPt = null, dragging = false, wheelAcc = 0;
     var closed = false;   /* so a connect that resolves AFTER teardown stops the session it made */
+    var adopt = opts.adopt || null;   /* the already-open session to take over */
+    /* what closes THIS window when it owns the session - the id it was popped
+       out under, which survives a reload (Python keeps the id) and a failure */
+    var winKey = opts.adopt || null;
+    var busy = false;                 /* a reconnect is in flight - don't stack them */
+    var errBox = null;                /* the "could not connect" panel, cleared on retry */
 
     /* --- overlay chrome ------------------------------------------------- */
     var overlay = BV.el("div", { class: "cvx-remote" });
@@ -47,9 +60,18 @@
       "CV-X remote · " + BV.esc(label || ip));
     var status = BV.el("span", { class: "cvx-status" }, "connecting…");
     var spacer = BV.el("span", { style: "margin-left:auto" });
+    var rlBtn = BV.el("button", { class: "btn", title: "reconnect to the camera" }, "⟳ reload");
+    var winBtn = BV.el("button", { class: "btn",
+      title: "move this remote into its own window" }, "open in window");
+    var phBtn = BV.el("button", { class: "btn",
+      title: "mirror this window to your phone (QR) — watch the live screen " +
+        "at the camera" }, "📱 phone");
     var fsBtn = BV.el("button", { class: "btn", title: "fullscreen (f)" }, "fullscreen");
     var closeBtn = BV.el("button", { class: "btn", title: "close (esc)" }, "✕ close");
     bar.appendChild(title); bar.appendChild(status); bar.appendChild(spacer);
+    bar.appendChild(rlBtn);
+    if (!opts.owned) bar.appendChild(winBtn);   /* already in its own window */
+    bar.appendChild(phBtn);
     bar.appendChild(fsBtn); bar.appendChild(closeBtn);
 
     var stage = BV.el("div", { class: "cvx-stage" });
@@ -73,7 +95,9 @@
     fit();
 
     /* --- teardown ------------------------------------------------------- */
-    function close() {
+    /* keepSession: the remote lives on elsewhere (it just moved to its own
+       window) - tear the overlay down but leave the controller connected */
+    function close(keepSession) {
       if (closed) return;
       closed = true;
       open = false;
@@ -85,15 +109,33 @@
       img.src = "";                       /* drop the MJPEG connection */
       if (document.fullscreenElement) { try { document.exitFullscreen(); } catch (e) {} }
       overlay.remove();
-      if (sid) BV.api.call("cvx_remote_stop", sid).catch(function () {});
+      if (keepSession === true) return;
+      /* in its own window the session IS the window: closing it closes the
+         window, which is what stops the session (api._close_cvx_window) */
+      if (opts.owned && winKey) BV.api.call("cvx_remote_window_close", winKey).catch(function () {});
+      else if (sid) BV.api.call("cvx_remote_stop", sid).catch(function () {});
     }
-    closeBtn.addEventListener("click", close);
+    closeBtn.addEventListener("click", function () { close(); });
 
     function toggleFs() {
       if (document.fullscreenElement) { try { document.exitFullscreen(); } catch (e) {} }
       else { try { overlay.requestFullscreen(); } catch (e) {} }
     }
     fsBtn.addEventListener("click", toggleFs);
+    rlBtn.addEventListener("click", reconnect);
+    phBtn.addEventListener("click", function () { BV.openViewfinder(); });
+    winBtn.addEventListener("click", function () {
+      if (!sid) { BV.toast("not connected yet"); return; }
+      winBtn.disabled = true;
+      BV.api.call("cvx_remote_window", { session_id: sid, label: label || "" })
+        .then(function () {
+          close(true);          /* the session MOVED - don't stop it on the way out */
+          BV.toast("moved to its own window");
+        }).catch(function (e) {
+          winBtn.disabled = false;
+          BV.toast("could not open window: " + e.message);
+        });
+    });
 
     function onKey(e) {
       if (e.key === "Escape") {
@@ -185,7 +227,10 @@
     /* --- connect + stream ----------------------------------------------- */
     img.addEventListener("load", function () { hint.style.display = "none"; });
 
-    BV.api.call("cvx_remote_start", { ip: ip }).then(function (r) {
+    /* every dial lands here: start, adopt and reload all answer the same shape.
+       The stream URL gets a nonce so re-pointing the <img> at the same session
+       really re-opens the MJPEG connection (the server ignores the query). */
+    function connected(r) {
       if (closed) {
         /* the overlay was torn down while connecting - stop the session it just
            opened so we never strand the camera's one remote slot */
@@ -193,18 +238,53 @@
         return;
       }
       sid = r.session_id;
+      if (r.ip) ip = r.ip;
       if (r.screen) { SCREEN_W = r.screen.w; SCREEN_H = r.screen.h; fit(); }
-      img.src = r.stream_url;
+      img.src = r.stream_url + "?t=" + Date.now();
+      clearInterval(statusTimer);
       statusTimer = setInterval(pollStatus, 1000);
-    }).catch(function (e) {
+    }
+
+    function failed(e) {
       if (closed) return;
-      hint.textContent = "";
+      sid = null;            /* nothing is connected - the next reload dials fresh */
+      hint.style.display = "none";
       status.textContent = "connection failed";
       status.classList.add("err");
-      screen.appendChild(BV.el("div", { class: "cvx-error" },
+      errBox = BV.el("div", { class: "cvx-error" },
         '<div class="big">could not connect</div><div class="hint">' + BV.esc(e.message) +
-        "</div><div class=\"hint\">the camera may be off, or the Terminal / an operator is already on it.</div>"));
-    });
+        "</div><div class=\"hint\">the camera may be off, or the Terminal / an operator is already on it.</div>");
+      screen.appendChild(errBox);
+    }
+
+    /* reload = hang up and dial again. Python does both, in that order and
+       under the SAME session id, so the controller's one remote slot is free
+       before we ask for it back and nothing downstream has to re-key. */
+    function reconnect() {
+      if (busy || closed) return;
+      busy = true;
+      rlBtn.disabled = true;
+      clearInterval(statusTimer);
+      img.src = "";
+      if (errBox) { errBox.remove(); errBox = null; }
+      hint.textContent = "reconnecting…";
+      hint.style.display = "";
+      status.textContent = "reconnecting…";
+      status.classList.remove("err");
+      var call = sid ? BV.api.call("cvx_remote_reload", sid)
+                     : BV.api.call("cvx_remote_start", { ip: ip });
+      call.then(connected).catch(failed).then(function () {
+        busy = false;
+        rlBtn.disabled = false;
+        hint.textContent = "waiting for the first frame…";
+      });
+    }
+
+    /* a popped-out window takes over the session that is already connected;
+       everything else dials the controller */
+    (adopt ? BV.api.call("cvx_remote_info", adopt)
+           : BV.api.call("cvx_remote_start", { ip: ip })
+    ).then(connected).catch(failed);
 
     function pollStatus() {
       if (!sid) return;

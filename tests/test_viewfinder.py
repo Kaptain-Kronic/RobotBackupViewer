@@ -149,3 +149,40 @@ def test_viewfinder_stop(api):
     d = api.viewfinder_start()["data"]
     assert api.phone_view_stop({"token": d["token"]})["data"] == 0
     assert api.phone_view_status()["data"]["running"] is False
+
+
+# -- which window: the button mirrors the window it was pressed in -----------------
+
+class _Win:
+    def __init__(self, title):
+        self.title = title
+
+
+def test_viewfinder_defaults_to_the_app_window(api):
+    assert api.viewfinder_start()["data"]["mirroring"] == api._MAIN_TITLE
+    assert api.viewfinder_start({"window": "main"})["data"]["mirroring"] == api._MAIN_TITLE
+
+
+def test_viewfinder_mirrors_a_popped_out_window(api):
+    api._cvx_windows["sess1"] = _Win("CV-X remote · cell cam")
+    d = api.viewfinder_start({"window": "sess1"})["data"]
+    assert d["mirroring"] == "CV-X remote · cell cam"
+    # the phone page names the window it now shows, not the one we left
+    assert api.phone_view_status()["data"]["sessions"][0]["label"] == "CV-X remote · cell cam"
+
+
+def test_viewfinder_repoints_the_one_window_share(api):
+    a = api.viewfinder_start()["data"]
+    api._cvx_windows["sess1"] = _Win("CV-X remote · cell cam")
+    b = api.viewfinder_start({"window": "sess1"})["data"]
+    assert a["token"] == b["token"]                    # still one window share
+    assert len(api.phone_view_status()["data"]["sessions"]) == 1
+    assert api.phone_view_status()["data"]["sessions"][0]["label"] == "CV-X remote · cell cam"
+
+
+def test_viewfinder_refuses_a_window_we_did_not_open(api):
+    """A key names one of OUR windows - never an arbitrary title, or the phone
+    could be pointed at any window on the desktop."""
+    r = api.viewfinder_start({"window": "Some Other App"})
+    assert r["ok"] is False and r["error"]["code"] == "PHONE_VIEW"
+    assert api.phone_view_status()["data"]["running"] is False

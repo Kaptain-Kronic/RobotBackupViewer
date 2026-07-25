@@ -17,6 +17,25 @@
   BV.soloSid = soloSid;
   if (BV.solo) document.body.classList.add("solo");
 
+  /* cvx-window mode: a CV-X remote popped into its own window (cvx_remote_window
+     stamps #cvx=<session>&label=<label>). It boots straight into the remote
+     overlay and shows no app chrome - deliberately NOT `solo`, which pins a
+     BACKUP session and would inject its sid into content calls. */
+  BV.cvxWin = null;
+  try {
+    var cm = /^#cvx=([^&]+)(?:&label=([^&]*))?$/.exec(location.hash);
+    if (cm) BV.cvxWin = { sid: decodeURIComponent(cm[1]),
+                          label: cm[2] ? decodeURIComponent(cm[2]) : "" };
+  } catch (e2) { /* malformed marker - boot as the main window */ }
+  if (BV.cvxWin) document.body.classList.add("cvxwin");
+
+  /* which window is this? - the key viewfinder_start mirrors (null = the main
+     app window). Every phone button asks THIS, so the phone shows the window
+     the button was pressed in. */
+  BV.windowKey = function () {
+    return (BV.cvxWin && BV.cvxWin.sid) || BV.soloSid || null;
+  };
+
   /* method -> the 0-based argument position of `sid` (the slot IMMEDIATELY
      before a trailing `side`, or last when there is no side). Solo windows
      inject their pinned sid here. Drift between this table and api.py's

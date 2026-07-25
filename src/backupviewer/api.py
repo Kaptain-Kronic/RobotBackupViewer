@@ -230,6 +230,10 @@ class Api:
         self._lib_sig: str | None = None  # tree signature at the last scan (None = never)
         self._cvx: dict[str, cvx_remote.CvxRemoteSession] = {}  # live CV-X remote sessions
         self._cvx_server = None  # lazy MJPEG frame server (one for all sessions)
+        # CV-X remotes popped into their own OS window: sid -> webview.Window.
+        # The session MOVES (the overlay in the sending window closes), so a
+        # controller's single remote slot is never asked for twice.
+        self._cvx_windows: dict[str, object] = {}
         self._phone_share: phoneview.PhoneShare | None = None  # lazy phone-view relay
         # linked-camera photo sessions, keyed camera_id -> (path, sig, session).
         # sig is the latest mirror's backup.json mtime, so a fresh camera backup
@@ -535,13 +539,17 @@ class Api:
         return True
 
     def _destroy_popouts(self):
-        """Main window closed = app closes: take every pop-out with it."""
-        for e in list(self._sessions.values()):
-            if e.get("window") is not None:
-                try:
-                    e["window"].destroy()
-                except Exception:  # noqa: BLE001 - already tearing down
-                    pass
+        """Main window closed = app closes: take every pop-out with it - backups
+        and popped-out CV-X remotes alike (a stranded remote would hold the
+        controller's one remote slot)."""
+        windows = [e["window"] for e in list(self._sessions.values())
+                   if e.get("window") is not None]
+        windows += list(self._cvx_windows.values())
+        for w in windows:
+            try:
+                w.destroy()
+            except Exception:  # noqa: BLE001 - already tearing down
+                pass
 
     @_endpoint
     def list_open_sessions(self):
@@ -1636,6 +1644,95 @@ class Api:
         return True
 
     @_endpoint
+    def cvx_remote_reload(self, session_id: str):
+        """Hang up and dial the same camera again, KEEPING the session id - so
+        the overlay (and a window popped out around it) never has to re-key.
+        Strictly in that order: the controller holds one remote slot, and it
+        only frees when we let go."""
+        old = self._cvx.pop(session_id, None)
+        if old is None:
+            raise ApiError("NO_SESSION", "unknown remote session")
+        ip = old.ip
+        old.stop()
+        time.sleep(0.4)   # let the controller free its one remote slot before redialing
+        sess = cvx_remote.CvxRemoteSession(ip)
+        if not sess.start():
+            raise ApiError("CVX_CONNECT", sess.error or "could not reconnect to the camera")
+        self._cvx[session_id] = sess
+        port = self._cvx_frame_server().server_address[1]
+        return {"session_id": session_id, "ip": ip,
+                "stream_url": f"http://127.0.0.1:{port}/cvx/{session_id}",
+                "screen": {"w": cvx_remote.SCREEN_W, "h": cvx_remote.SCREEN_H}}
+
+    @_endpoint
+    def cvx_remote_info(self, session_id: str):
+        """The connection facts for a session that is ALREADY open - same shape
+        as cvx_remote_start, minus the connecting. A remote popped into its own
+        window adopts the session this way instead of dialling the controller
+        again (it only has one remote slot)."""
+        sess = self._cvx.get(session_id)
+        if sess is None:
+            raise ApiError("NO_SESSION", "unknown remote session")
+        port = self._cvx_frame_server().server_address[1]
+        return {"session_id": session_id, "ip": sess.ip,
+                "stream_url": f"http://127.0.0.1:{port}/cvx/{session_id}",
+                "screen": {"w": cvx_remote.SCREEN_W, "h": cvx_remote.SCREEN_H}}
+
+    @_endpoint
+    def cvx_remote_window(self, spec: dict):
+        """Move a live CV-X remote (spec.session_id) into its own OS window: the
+        app boots there pinned to that session (#cvx= fragment) and adopts it,
+        so the picture and the mouse keep working with no reconnect. The caller
+        closes its own overlay - ownership TRANSFERS, and closing the window is
+        what stops the session."""
+        import webview
+
+        from .app import resource_path
+
+        sid = (spec or {}).get("session_id") or ""
+        if sid not in self._cvx:
+            raise ApiError("NO_SESSION", "unknown remote session")
+        w = self._cvx_windows.get(sid)
+        if w is not None:                      # already out - just front it
+            try:
+                w.restore()
+                w.show()
+            except Exception:  # noqa: BLE001 - window backend without restore
+                log.exception("could not front the CV-X window for %s", sid)
+            return {"title": w.title}
+        label = ((spec or {}).get("label") or "").strip() or self._cvx[sid].ip
+        title = f"CV-X remote · {label}"
+        url = (resource_path("web/index.html").as_uri()
+               + "#cvx=" + urllib.parse.quote(sid, safe="")
+               + "&label=" + urllib.parse.quote(label, safe=""))
+        w = webview.create_window(title, url, js_api=self,
+                                  width=1100, height=880, min_size=(640, 520))
+        self._cvx_windows[sid] = w
+        # closing the window is what really ends the remote session
+        w.events.closed += (lambda: self._close_cvx_window(sid))
+        return {"title": title}
+
+    @_endpoint
+    def cvx_remote_window_close(self, session_id: str):
+        """Close a popped-out CV-X window from inside it (its own ✕). Destroying
+        the window fires _close_cvx_window, which is what stops the session."""
+        w = self._cvx_windows.get(session_id)
+        if w is None:                       # never made it out - just hang up
+            self._close_cvx_window(session_id)
+            return True
+        try:
+            w.destroy()
+        except Exception:  # noqa: BLE001 - already gone
+            self._close_cvx_window(session_id)
+        return True
+
+    def _close_cvx_window(self, sid: str):
+        self._cvx_windows.pop(sid, None)
+        sess = self._cvx.pop(sid, None)
+        if sess is not None:
+            sess.stop()
+
+    @_endpoint
     def cvx_remote_stop(self, session_id: str):
         sess = self._cvx.pop(session_id, None)
         if sess is not None:
@@ -1746,36 +1843,56 @@ class Api:
             return 0
         return self._phone_share.stop_session((spec or {}).get("token"))
 
-    # -- the window viewfinder (mirror the Matrox window to a phone) -------------------
-    # Jake's "window to the phone", simplest form: the phone mirrors whatever
-    # the Matrox remote window shows - which is this app's own window with the
-    # remote overlay up. No rectangle to pick, no extra window: grab the app
-    # window's client area live (it follows if you move or resize it) and the
-    # phone shows exactly that.
+    # -- the window viewfinder (mirror one of our windows to a phone) -----------------
+    # Jake's "window to the phone", simplest form: the phone mirrors whatever a
+    # window of ours shows - the app window with a camera remote up, a popped-out
+    # backup, a popped-out CV-X. No rectangle to pick: grab that window's client
+    # area live (it follows if you move or resize it) and the phone shows exactly
+    # that. The caller names the window it is IN by key, never by title: only
+    # windows this app created can be mirrored, never some other app's.
 
     _MAIN_TITLE = "FANUC Backup Viewer"       # app.py's create_window title
 
+    def _window_title(self, key: str | None) -> str:
+        """Resolve a viewfinder window key to the title screengrab looks up.
+        None/"main" is the app window; anything else must be a session WE popped
+        out (a backup sid or a CV-X session id)."""
+        if not key or key == "main":
+            return self._MAIN_TITLE
+        w = self._cvx_windows.get(key)
+        if w is None:
+            e = self._sessions.get(key)
+            w = e.get("window") if e else None
+        if w is None:
+            raise ApiError("PHONE_VIEW", "that window is not open")
+        try:
+            return w.title
+        except Exception:  # noqa: BLE001 - window backend without .title
+            raise ApiError("PHONE_VIEW", "could not identify that window") from None
+
     @_endpoint
-    def viewfinder_start(self):
-        """Mirror the Matrox window (this app's window) to phones: boots the
-        relay, mints (or rejoins) THE window share pointed at the app window,
-        and returns {token, port, urls} like phone_view_start. No picker - the
-        QR is ready to scan immediately."""
+    def viewfinder_start(self, spec: dict = None):
+        """Mirror one of our windows (spec.window: "main" by default, or the sid
+        of a popped-out backup / CV-X remote) to phones: boots the relay, mints
+        (or rejoins) THE window share pointed at it, and returns {token, port,
+        urls, mirroring} - mirroring names the window the phone now shows. No
+        picker; the QR is ready to scan immediately."""
         if self._phone_share is None:
             self._phone_share = phoneview.PhoneShare()
-        if not screengrab.window_is_open(self._MAIN_TITLE):
-            raise ApiError("PHONE_VIEW", "could not find the app window to mirror")
-        title = self._MAIN_TITLE
+        title = self._window_title((spec or {}).get("window"))
+        if not screengrab.window_is_open(title):
+            raise ApiError("PHONE_VIEW", f"could not find the '{title}' window to mirror")
         try:
             r = self._phone_share.start_window_session(
-                "Matrox", lambda: screengrab.grab_window_png(title))
+                title, lambda: screengrab.grab_window_png(title))
         except OSError as e:
             raise ApiError("PHONE_VIEW", f"could not start the share server: {e}")
         urls = phoneview.lan_urls(None, r["port"], r["token"])
         if not urls:
             raise ApiError("PHONE_VIEW",
                            "this machine has no reachable address - is any network up?")
-        return {"token": r["token"], "port": r["port"], "urls": urls}
+        return {"token": r["token"], "port": r["port"], "urls": urls,
+                "mirroring": title}
 
     @_endpoint
     def phone_view_status(self):

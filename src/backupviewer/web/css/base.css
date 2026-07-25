@@ -199,6 +199,10 @@ body { overflow: hidden; }
    jobstrip - that's all main-window chrome */
 .solo #sessionbar, .solo #btn-compare, .solo #jobstrip { display: none !important; }
 
+/* a popped-out CV-X window IS the remote overlay - the app shell behind it
+   never shows (and must not flash during boot) */
+.cvxwin #app { display: none !important; }
+
 .tab-btn {
   appearance: none;
   background: none;
