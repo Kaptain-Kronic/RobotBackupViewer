@@ -221,7 +221,7 @@ def probe(window):
     try:
         time.sleep(4)  # boot
 
-        check("boot.tabs_registered", js(window, "BV.tabs.length") == 15,
+        check("boot.tabs_registered", js(window, "BV.tabs.length") == 16,
               f"(got {js(window, 'BV.tabs.length')})")
 
         # ---- home library renders the synthetic tree ----
@@ -241,7 +241,8 @@ def probe(window):
         items = js(window, """JSON.stringify([...document.querySelectorAll('.ctx-menu .ctx-item')]
             .map(function(b){return b.textContent;}))""")
         check("menu.items",
-              json.loads(items or "[]") == ["edit", "add note", "hide", "open folder"],
+              json.loads(items or "[]") == ["edit", "add note", "hide", "open folder",
+                                            "add all programs to edit workspace"],
               f"({items})")
         time.sleep(0.4)   # the menu's outside-click listeners attach deferred
         tog = js(window, """(function(){
@@ -1026,9 +1027,16 @@ def probe(window):
                 return r.textContent.indexOf('CELL-01CAM01')>=0;});
             row.click();
         })()""")
+        # a camera-only backup has no overview, so route() falls back - and the
+        # fallback must land on a tab you could have CLICKED, never on one of
+        # the hidden always-on ones (edit/search/compare/pdiff)
         check("photos.route_replaced_to_photos",
               poll(window, "location.hash==='#photos' ? 'y' : ''") == "y",
               f"(hash={js(window, 'location.hash')!r})")
+        check("photos.fallback_skips_hidden_tabs",
+              not js(window, """BV.tabs.filter(function(t){return t.hidden;})
+                  .some(function(t){return location.hash === '#' + t.id;})"""),
+              "(a hidden always-on tab must never be a route fallback)")
         check("photos.hero", bool(poll(window, "!!document.querySelector('#photo-hero img')")))
 
         layout = js(window, """(function(){

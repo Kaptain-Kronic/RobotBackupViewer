@@ -223,7 +223,13 @@
       location.replace("#overview");
       return;
     } else if (!isShell(tab) && (!tab || !BV.tabEnabled(tab))) {
-      tab = BV.tabs.find(BV.tabEnabled) || BV.tabs[BV.tabs.length - 1];
+      /* land on a tab you could have CLICKED. The hidden always-on tabs
+         (search/compare/pdiff/home/edit) are all "enabled", so a plain
+         find(tabEnabled) picks whichever of them registers earliest - which is
+         how a camera-only backup, whose overview is disabled, started opening
+         the edit workspace instead of its photos. */
+      tab = BV.tabs.find(function (t) { return !t.hidden && BV.tabEnabled(t); })
+        || BV.tabs[BV.tabs.length - 1];
       if (("#" + tab.id) !== location.hash) { location.replace("#" + tab.id); return; }
     }
     setActive(tab.id);
