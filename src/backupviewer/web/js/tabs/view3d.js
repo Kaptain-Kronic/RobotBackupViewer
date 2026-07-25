@@ -26,7 +26,11 @@
     var s = BV.tabState("view3d");
     if (!s.init2) {      /* v2 state: the camera is ALWAYS the free orbit */
       s.init2 = true;
-      s.az = -24.8;      /* turntable angles, unbounded */
+      /* the default iso view, turntable angles, unbounded. Deliberately OFF
+         the 45° grid: plant fences love 0/45/90° orientations, and a wall
+         parallel to the eye azimuth degenerates to a sliver (seen on a real
+         -45° fence). Do not "tidy" these to -25/35. */
+      s.az = -24.8;
       s.el = 36.8;
       s.showDisabled = false;
       s.hidden = {};     /* zone n -> true when unchecked */

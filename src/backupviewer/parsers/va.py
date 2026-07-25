@@ -31,7 +31,6 @@ from .common import coerce_scalar
 _RECORD = re.compile(
     r"^\[([^\]]+)\](\S+)\s+Storage:\s+(\w+)(?:\s+Access:\s+(\w+))?\s*:\s*(.*)$"
 )
-_ARRAY_DECL = re.compile(r"^ARRAY\[([\d,\s]+)\]\s+OF\s+(.*?)\s*$")
 _INDEXED = re.compile(r"^\s*\[([\d,\s]+)\]\s*=\s*(.*)$")
 _TRAILING_COMMENT = re.compile(r"^(.*?)\s*'([^']*)'\s*$")
 # '$' optional so KAREL struct fields (plain-named, no $) parse too; the index
@@ -56,26 +55,10 @@ class VaRecord:
     # [*SYSTEM*] records out of ~two dozen SY*.VA chunks and shows the source so
     # a var is traceable back to its file. "" for records read from a lone file.
     source: str = ""
-
-    @property
-    def dims(self) -> tuple[int, ...]:
-        m = _ARRAY_DECL.match(self.typedecl)
-        if not m:
-            return ()
-        return tuple(int(x) for x in m.group(1).replace(" ", "").split(","))
-
-    @property
-    def base_type(self) -> str:
-        m = _ARRAY_DECL.match(self.typedecl)
-        if m:
-            return m.group(2)
-        return self.typedecl.split("=")[0].strip()
-
-    @property
-    def scalar_value(self):
-        if "=" in self.typedecl:
-            return coerce_scalar(self.typedecl.split("=", 1)[1])
-        return None
+    # NOTE: dims/base_type/scalar_value used to live here, parsing the
+    # "ARRAY[n] OF <type>" declaration. Nothing ever read them. If a caller
+    # needs the array shape, it is one re.match on rec.typedecl at the point
+    # of use - it does not have to be a property on the shared record.
 
 
 def iter_records(text: str) -> Iterator[VaRecord]:

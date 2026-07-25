@@ -261,16 +261,6 @@ window.BV = {};
     if (caret) caret.textContent = open ? "▾" : "▸";
   };
 
-  BV.collapseAll = function (root, expand) {
-    var nodes = [];
-    if (root.classList && root.classList.contains("bv-collapsible")) nodes.push(root);
-    root.querySelectorAll(".bv-collapsible").forEach(function (n) { nodes.push(n); });
-    nodes.forEach(function (n) {
-      BV.setOpen(n, expand);
-      if (n._bvOnToggle) n._bvOnToggle(expand);
-    });
-  };
-
   /* right-click on a head: expand/collapse everything UNDER the node. The
      clicked node itself never collapses as a side effect — you right-clicked
      to fold the children, not the folder you're holding — but expanding DOES

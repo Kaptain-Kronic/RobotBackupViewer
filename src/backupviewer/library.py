@@ -234,17 +234,6 @@ def update_robot(robot_id: str, patch: dict, *, sidecar: bool = True) -> dict | 
         return None
 
 
-def remove_robot(robot_id: str) -> bool:
-    with _LOCK:
-        data = load()
-        before = len(data["robots"])
-        data["robots"] = [e for e in data["robots"] if e.get("id") != robot_id]
-        changed = len(data["robots"]) != before
-        if changed:
-            _write(data)
-        return changed
-
-
 def get_robot(robot_id: str) -> dict | None:
     for e in load()["robots"]:
         if e.get("id") == robot_id:
@@ -614,19 +603,6 @@ def _pick_latest(backups: list) -> dict | None:
         if not b.get("partial"):
             return b
     return None
-
-
-def robot_folder_of(snap) -> Path:
-    """The robot folder a snapshot belongs to (up from a <date>/<time> pair)."""
-    p = Path(snap)
-    return p.parent.parent if _is_dated(p) else p
-
-
-def backup_record(snap) -> dict:
-    """One history record for a snapshot folder (reads its backup.json + notes.txt).
-    Used by the add-from-folder flow to attach a robot's full dated history."""
-    p = Path(snap)
-    return _backup_record(p, _read_json(p / "backup.json"))
 
 
 def _path_identity(robot_dir: Path, root: Path) -> tuple[str, str, str]:

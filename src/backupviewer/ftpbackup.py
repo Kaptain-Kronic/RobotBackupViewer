@@ -38,7 +38,6 @@ log = logging.getLogger(__name__)
 
 DEFAULT_DEVICES = ["MD:"]
 SKIP_EXTS = (".IMG", ".IMR")  # image artifacts: not an FTP backup's job
-FR_MAX_DEPTH = 6
 FR_MAX_FILES = 5000
 CONNECT_TIMEOUT = 20
 RETRIES = 2
@@ -422,7 +421,7 @@ class BackupJob(_JobBase):
 
     def __init__(self, host, dest_root, plant, line, robot, *,
                  user="", passwd="", passive=True, port=21,
-                 devices=None, note="", recurse_fr=False, run_id="",
+                 note="", run_id="",
                  ftp_factory=ftplib.FTP, throttle=0.03, on_complete=None):
         super().__init__(host, dest_root, plant, line, robot, note=note,
                          run_id=run_id, throttle=throttle, on_complete=on_complete)
@@ -430,8 +429,11 @@ class BackupJob(_JobBase):
         self.user = user or ""
         self.passwd = passwd or ""
         self.passive = passive
-        self.devices = list(devices) if devices else list(DEFAULT_DEVICES)
-        self.recurse_fr = recurse_fr
+        # MD: only. `devices` and `recurse_fr` were constructor knobs no caller
+        # ever set, so the FR: recursion they gated never ran once against a
+        # real controller. If FR: is wanted, it returns with a checkbox in the
+        # backup dialog on the same commit.
+        self.devices = list(DEFAULT_DEVICES)
         self._ftp_factory = ftp_factory
 
     def _meta_extra(self) -> dict:
@@ -515,8 +517,9 @@ class BackupJob(_JobBase):
                 continue
 
     def _enumerate(self, ftp) -> list:
-        """[(device, relpath)] for every file to pull. MD: is flat; FR: recurses
-        when enabled. Image artifacts are skipped and logged."""
+        """[(device, relpath)] for every file to pull. MD: is flat - one nlst,
+        no per-name CWD probing against a running controller. Image artifacts
+        are skipped and logged."""
         self._set(status="listing")
         out: list = []
         for dev in self.devices:
@@ -531,11 +534,10 @@ class BackupJob(_JobBase):
                 else:
                     log.info("device %s not available on %s", dev, self.host)
                     continue
-            recurse = self.recurse_fr and dev.upper().startswith(("FR", "FRA"))
-            self._list_into(ftp, dev, "", out, recurse, depth=0)
+            self._list_into(ftp, dev, "", out)
         return out
 
-    def _list_into(self, ftp, dev, rel, out, recurse, depth):
+    def _list_into(self, ftp, dev, rel, out):
         try:
             names = ftp.nlst()
         except ftplib.all_errors:
@@ -548,11 +550,6 @@ class BackupJob(_JobBase):
             if base.upper().endswith(SKIP_EXTS):
                 with self._lock:
                     self._p["skipped"].append(child)
-                continue
-            if recurse and depth < FR_MAX_DEPTH and self._is_dir(ftp, base):
-                if len(out) < FR_MAX_FILES:
-                    self._list_into(ftp, dev, child, out, recurse, depth + 1)
-                    self._cwd_up(ftp)
                 continue
             if len(out) >= FR_MAX_FILES:
                 log.warning("file cap %d hit on %s", FR_MAX_FILES, dev)
@@ -580,22 +577,8 @@ class BackupJob(_JobBase):
                 "root), not a FANUC robot - set its device type to 'keyence "
                 "camera' in the library and back it up again")
 
-    def _is_dir(self, ftp, name) -> bool:
-        try:
-            ftp.cwd(name)
-            return True
-        except ftplib.all_errors:
-            return False
-
-    def _cwd_up(self, ftp):
-        try:
-            ftp.cwd("..")
-        except ftplib.all_errors:
-            pass
-
     def _download_one(self, ftp, dev, rel, dated: Path) -> int:
-        # MD: is flat, so CWD is already the device and a bare basename RETRs;
-        # the dest keeps the (possibly nested FR:) relpath.
+        # MD: is flat, so CWD is already the device and a bare basename RETRs.
         return retrieve(ftp, rel.rsplit("/", 1)[-1], dated / rel.replace("/", os.sep))
 
 

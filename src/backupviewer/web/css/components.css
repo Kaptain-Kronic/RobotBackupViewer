@@ -19,7 +19,6 @@
   padding: 0.9rem 1.1rem 1rem;
   min-width: 0;
 }
-.card.span-2 { grid-column: span 2; }
 .card h3 {
   margin: 0 0 0.6rem;
   font-size: 0.78rem;
@@ -81,7 +80,6 @@ table.tbl { border-collapse: collapse; width: 100%; font-size: 0.85rem; font-fam
 .tbl th .arrow { color: var(--accent); margin-left: 0.3em; font-size: 0.7em; }
 .tbl tbody tr { transition: background 0.08s ease; }
 .tbl tbody tr:hover { background: color-mix(in srgb, var(--sub-alt) 22%, transparent); }
-.tbl tbody tr.active-row { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
 .tbl td.num { text-align: right; font-variant-numeric: tabular-nums; }
 .tbl td.dim { color: var(--sub); }
 .tbl td.accent { color: var(--accent); }
@@ -529,8 +527,7 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 }
 
 /* ---- collapsible cards ---- */
-/* only the card's own title (first h3) is the card toggle; inner section
-   headers are .subsec and collapse independently */
+/* the card's own title (first h3) is the card toggle */
 .card.collapsible > h3:first-of-type { cursor: pointer; display: flex; align-items: center; gap: 0.45rem; }
 .card.collapsible > h3:first-of-type::before {
   content: "▾"; font-size: 0.7em; color: var(--sub-alt); transition: transform var(--trans);
@@ -539,22 +536,6 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .card.collapsible.collapsed > h3:first-of-type::before { transform: rotate(-90deg); }
 .card.collapsible.collapsed > :not(h3:first-of-type) { display: none; }
 .card .scrollbody { max-height: 420px; overflow: auto; }
-
-/* collapsible subsection inside a card */
-.subsec { margin-top: 0.8rem; }
-.subsec > .subsec-h {
-  margin: 0 0 0.45rem;
-  font-size: 0.78rem; font-weight: 600; color: var(--sub);
-  text-transform: lowercase; letter-spacing: 0.04em;
-  cursor: pointer; user-select: none;
-  display: flex; align-items: center; gap: 0.45rem;
-}
-.subsec > .subsec-h::before {
-  content: "▾"; font-size: 0.7em; color: var(--sub-alt); transition: transform var(--trans);
-}
-.subsec.collapsed > .subsec-h::before { transform: rotate(-90deg); }
-.subsec.collapsed > .subsec-body { display: none; }
-.subsec > .subsec-h .count { color: var(--sub-alt); margin-left: 0.2em; }
 
 /* wizard q&a rows */
 .qa-row {

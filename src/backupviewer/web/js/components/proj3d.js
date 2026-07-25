@@ -67,28 +67,6 @@
     return fromBasis(turntable(azDeg, elDeg), persp);
   }
 
-  /* the named views are just turntable angles. top/bottom sit at the
-     exact poles, PLAN-oriented for the FANUC world frame (right-handed,
-     X forward / Y left / Z up): X points up-screen; top shows Y to
-     screen-left, bottom (seen from underneath) mirrors it right. iso is
-     deliberately OFF the 45° grid: plant fences love 0/45/90°
-     orientations, and a wall parallel to the eye azimuth degenerates to
-     a sliver (seen on a real -45° fence). */
-  var PRESET_ANGLES = {
-    iso: [-24.8, 36.8],
-    top: [180, 90],
-    bottom: [0, -90],
-    front: [0, 0],
-    back: [180, 0],
-    left: [90, 0],
-    right: [-90, 0],
-  };
-
-  function projector(viewId, persp) {
-    var a = PRESET_ANGLES[viewId] || PRESET_ANGLES.iso;
-    return orbitProjector(a[0], a[1], persp);
-  }
-
   /* FANUC xyzwpr frame: R = Rz(r) * Ry(p) * Rx(w), world = R*local + t.
      null/undefined frame -> identity (zone numbers are already world). */
   function frameTransform(f) {
@@ -137,8 +115,6 @@
   }
 
   BV.proj3d = {
-    PRESET_ANGLES: PRESET_ANGLES,
-    projector: projector,
     orbitProjector: orbitProjector,
     frameTransform: frameTransform,
     prism: prism,

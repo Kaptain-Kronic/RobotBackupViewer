@@ -105,5 +105,6 @@
   }
 
   window.BV = window.BV || {};
-  BV.fk = { chain: chain, frame: frame, mul: mul, apply: apply };
+  /* frame/mul stay file-local - chain() uses them, nothing outside does */
+  BV.fk = { chain: chain, apply: apply };
 })();
