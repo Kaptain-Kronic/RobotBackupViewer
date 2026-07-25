@@ -1,6 +1,51 @@
 # Changelog
 
 ## Unreleased
+
+## v1.3.1 — the honesty pass
+- **A disabled DCS zone no longer draws as an enabled one.** The zone parser
+  carried its own copy of the value reader instead of the shared one, and it
+  handed back the raw text — so `FALSE` and `Uninitialized`, both of which are
+  "true" to a plain truth test, made the 3D view show a switched-off or
+  never-taught safety zone as a live fence. A zone with an untaught user frame
+  crashed the tab outright. Wrong data about a safety zone is the worst thing
+  this app can do, so the fix is pinned by four tests.
+- **Remarked-out CALLs are no longer treated as real calls.** The scan counted
+  `//CALL` — a line the robot skips, and a deliberate fleet standard — as a
+  live call. So *broken calls* flagged calls that can never run, while
+  *orphan programs* called a dead program reachable. Two checks in the same
+  report disagreed about the same line; now neither counts a remark.
+- **A backup that skipped files says so.** Files a pull couldn't read were
+  recorded in the run and then thrown away: a camera station that lost a whole
+  lens finished with the same green tick as a clean pull. The skip list now
+  lands in `backup.json` — the backup's own honesty record — and a finished
+  job that lost anything shows a warning mark with what it lost, not a tick.
+- **"Show hidden" stopped re-scanning the library.** It flips a display
+  filter, but it was re-reading the whole folder tree — and during a mass
+  backup the tree changes every second, so one click mid-run re-scanned and
+  pilled every in-flight robot "partial". Same fix the sort button already had.
+- **One status colour for DCS.** The 3D view kept its own copy of the
+  status→colour map and disagreed with the DCS tab: the same zone read green
+  on one screen and red on the other. It also tested for a status no
+  controller has ever emitted. `PEND` and `WARN` now read as warnings rather
+  than errors — a status literally named WARN wearing an error pill is a
+  false alarm.
+- **Themes with alpha in their colours paint correctly again.** The background
+  effects and the glass slider each parsed hex their own way and quietly fell
+  back to a hardcoded colour, so an 8-digit theme colour painted the stock
+  yellow over your actual theme.
+- **The full-width tabs are full width.** Files, io, registers, macros,
+  photos and programs all asked for edge-to-edge and had been silently given a
+  gutter since the view was restructured — 18 lines of code that had quietly
+  stopped doing anything.
+- **Housekeeping.** The test suite runs from a fresh clone again (it needed a
+  file that was excluded from the repo, so anyone else cloning it got zero
+  tests). Removed a pile of code nothing reached: an unreachable FTP
+  directory-walker that had never once run against a real controller, a
+  "remove robot" action that couldn't actually remove anything (the folder is
+  the truth, so the next scan just brought it back — hide is the real one),
+  and several dead helpers, exports and stylesheet rules.
+
 - **Phone view firewall helper.** If a phone reaches the laptop but the page
   times out with *"server stopped responding,"* that's the Windows Firewall
   dropping the port on that network profile (a rule scoped to Public while
