@@ -117,6 +117,24 @@ _DRAG_JS = """(function(){
 })()"""
 
 
+def close_menu(window):
+    """Dismiss an open BV.menu. Must be a SEPARATE evaluate_js call: wireDismiss
+    attaches its Escape/outside-click listeners on a deferred tick, so a key
+    dispatched in the same call as the open is simply not heard - and the stale
+    menu then shadows the next one under document.querySelector('.ctx-menu')."""
+    js(window, """window.dispatchEvent(new KeyboardEvent('keydown',
+        {key:'Escape',bubbles:true,cancelable:true}))""")
+    time.sleep(0.25)
+
+
+def menu_text(window):
+    return js(window, """(function(){
+        var m=document.querySelector('.ctx-menu');
+        return m ? [...m.querySelectorAll('.ctx-item')]
+            .map(function(b){return b.textContent;}).join(' | ') : '';
+    })()""") or ""
+
+
 def drag_prog(window, row_idx, frac):
     """Drag working-set row `row_idx` onto the pane area at `frac` of its width."""
     return js(window, _DRAG_JS % {
@@ -194,6 +212,60 @@ def probe(window):
         time.sleep(0.25)
         check("rail.caret_expands",
               js(window, "document.querySelectorAll('.ws-prog').length") == 2)
+
+        # ---- the working set: highlight-selection, no checkboxes ----
+        # removeEntries() asks native confirm for dirty entries, which would
+        # hang a hidden window
+        js(window, "window.confirm = function(){ return true; };")
+        js(window, """document.querySelectorAll('.ws-prog')[0]
+            .dispatchEvent(new MouseEvent('click',{bubbles:true}))""")
+        time.sleep(0.3)
+        check("rail.no_checkboxes",
+              js(window, "document.querySelectorAll('.ws-prog input').length") == 0,
+              "(selection is highlight, never a checkbox column)")
+        check("rail.click_selects_one",
+              js(window, "document.querySelectorAll('.ws-prog.sel').length") == 1
+              and js(window, "document.querySelectorAll('.ws-prog.anchor').length") == 1)
+        js(window, """document.querySelectorAll('.ws-prog')[1].dispatchEvent(
+            new MouseEvent('click',{bubbles:true,ctrlKey:true}))""")
+        time.sleep(0.3)
+        check("rail.ctrl_click_adds",
+              js(window, "document.querySelectorAll('.ws-prog.sel').length") == 2)
+        head_txt = js(window, "document.querySelector('.ws-railhead').textContent") or ""
+        check("rail.head_reports_selection", "2 of 2 selected" in head_txt, f"({head_txt!r})")
+        js(window, """document.querySelectorAll('.ws-prog')[1].dispatchEvent(
+            new MouseEvent('click',{bubbles:true,ctrlKey:true}))""")
+        time.sleep(0.3)
+        check("rail.ctrl_click_toggles_off",
+              js(window, "document.querySelectorAll('.ws-prog.sel').length") == 1)
+        # shift extends from the anchor, over the VISIBLE rows only. A plain
+        # click first: ctrl+click moves the anchor too, so a range measured
+        # after one would be a range of length 1.
+        js(window, """(function(){
+            var r=document.querySelectorAll('.ws-prog');
+            r[0].dispatchEvent(new MouseEvent('click',{bubbles:true}));
+            r[1].dispatchEvent(new MouseEvent('click',{bubbles:true,shiftKey:true}));
+        })()""")
+        time.sleep(0.3)
+        check("rail.shift_range",
+              js(window, "document.querySelectorAll('.ws-prog.sel').length") == 2)
+        # a folded group contributes no rows to a range, but keeps its selection
+        js(window, "document.querySelectorAll('.ws-robot-h')[0].click()")
+        time.sleep(0.3)
+        check("rail.folded_group_keeps_selection",
+              "2 of 2 selected" in (js(window, "document.querySelector('.ws-railhead').textContent") or ""),
+              "(hidden rows stay lit, and the head says so)")
+        js(window, "document.querySelectorAll('.ws-robot-h')[0].click()")
+        time.sleep(0.3)
+        # clicking a row must NOT rebuild the rail, or the dblclick that opens
+        # the program is eaten with the node it fired on
+        js(window, """(function(){
+            var r=document.querySelectorAll('.ws-prog')[0];
+            r.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+            window._sameNode = (document.querySelectorAll('.ws-prog')[0] === r);
+        })()""")
+        check("rail.click_keeps_the_row_node", bool(js(window, "window._sameNode")),
+              "(a rebuilt row eats the dblclick that opens the program)")
 
         # ---- the split is DERIVED: one pane until a program is dropped right ----
         check("panes.single_by_default",
@@ -288,14 +360,11 @@ def probe(window):
                              ".querySelectorAll('.ws-tab').length") == 2)
 
         # ---- one menu from the ⋯ button AND from right-click on the row ----
-        menu_txt = js(window, """(function(){
-            document.querySelectorAll('.ws-prog')[0].dispatchEvent(
-                new MouseEvent('contextmenu',
-                    {bubbles:true,cancelable:true,clientX:60,clientY:120}));
-            var m=document.querySelector('.ctx-menu');
-            return m ? [...m.querySelectorAll('.ctx-item')]
-                .map(function(b){return b.textContent;}).join(' | ') : '';
-        })()""") or ""
+        js(window, """document.querySelectorAll('.ws-prog')[0].dispatchEvent(
+            new MouseEvent('contextmenu',
+                {bubbles:true,cancelable:true,clientX:60,clientY:120}))""")
+        time.sleep(0.3)
+        menu_txt = menu_text(window)
         check("menu.right_click_opens_row_menu", "rename" in menu_txt, f"({menu_txt[:90]!r})")
         check("menu.has_open_in_split", "open in split view" in menu_txt, f"({menu_txt[:90]!r})")
         js(window, """[...document.querySelectorAll('.ctx-menu .ctx-item')]
@@ -545,21 +614,15 @@ def probe(window):
         # disabled state)
         js(window, "document.querySelectorAll('.ws-pane')[0].querySelector('.ws-tab .x').click()")
         time.sleep(0.4)
-        lone_menu = js(window, """(function(){
-            document.querySelectorAll('.ws-prog')[0].dispatchEvent(
-                new MouseEvent('contextmenu',
-                    {bubbles:true,cancelable:true,clientX:60,clientY:120}));
-            var m=document.querySelector('.ctx-menu');
-            var t = m ? [...m.querySelectorAll('.ctx-item')]
-                .map(function(b){return b.textContent;}).join(' | ') : '';
-            if(m) window.dispatchEvent(new KeyboardEvent('keydown',
-                {key:'Escape',bubbles:true,cancelable:true}));
-            return t;
-        })()""") or ""
+        js(window, """document.querySelectorAll('.ws-prog')[0].dispatchEvent(
+            new MouseEvent('contextmenu',
+                {bubbles:true,cancelable:true,clientX:60,clientY:120}))""")
+        time.sleep(0.3)
+        lone_menu = menu_text(window)
         check("menu.no_split_item_with_nothing_open",
               "rename" in lone_menu and "open in split view" not in lone_menu,
               f"({lone_menu[:90]!r})")
-        time.sleep(0.3)
+        close_menu(window)
 
         # ---- the workspace survives a route away and back ----
         js(window, "location.hash = '#home'")
@@ -647,6 +710,70 @@ def probe(window):
         # and the duplicate landed under its own name alongside the original
         check("dup.exported_beside_original",
               bool(list((_TMP / "export2").rglob("MAIN_COPY.LS"))))
+
+        # ---- acting on a SELECTION: the multi menu and the Delete key ----
+        js(window, """[...document.querySelectorAll('.ws-railtab')]
+            .find(function(t){return t.textContent.indexOf('working')>=0;}).click()""")
+        time.sleep(0.4)
+        n_rows = js(window, "document.querySelectorAll('.ws-prog').length")
+        check("sel.rows_to_work_with", n_rows >= 3, f"(got {n_rows})")
+        # right-clicking OUTSIDE the selection means "I mean this one"
+        js(window, """(function(){
+            var r=document.querySelectorAll('.ws-prog');
+            r[0].dispatchEvent(new MouseEvent('click',{bubbles:true}));
+            r[1].dispatchEvent(new MouseEvent('click',{bubbles:true,ctrlKey:true}));
+            r[2].dispatchEvent(new MouseEvent('contextmenu',
+                {bubbles:true,cancelable:true,clientX:60,clientY:200}));
+        })()""")
+        time.sleep(0.3)
+        out_menu = menu_text(window)
+        out_sel = js(window, "document.querySelectorAll('.ws-prog.sel').length")
+        check("sel.right_click_outside_reselects",
+              out_sel == 1 and "rename" in out_menu,
+              f"({out_sel} lit, {out_menu[:70]!r})")
+        close_menu(window)
+        # right-clicking INSIDE a multi-selection offers the set's own menu
+        js(window, """(function(){
+            var r=document.querySelectorAll('.ws-prog');
+            r[0].dispatchEvent(new MouseEvent('click',{bubbles:true}));
+            r[1].dispatchEvent(new MouseEvent('click',{bubbles:true,ctrlKey:true}));
+            r[0].dispatchEvent(new MouseEvent('contextmenu',
+                {bubbles:true,cancelable:true,clientX:60,clientY:120}));
+        })()""")
+        time.sleep(0.3)
+        multi_menu = menu_text(window)
+        check("sel.multi_menu_counts", "remove 2 programs" in multi_menu, f"({multi_menu[:90]!r})")
+        check("sel.multi_menu_has_no_single_items", "rename" not in multi_menu,
+              "(rename and duplicate have no sane bulk form)")
+        close_menu(window)
+        # Delete belongs to whatever is being typed in first
+        js(window, """document.querySelectorAll('.ws-prog')[0]
+            .dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))""")
+        poll(window, "!!document.querySelector('.lsed-code')")
+        n_before = js(window, "BV.workspace.count()")
+        js(window, """(function(){
+            document.querySelectorAll('.ws-prog')[2]
+                .dispatchEvent(new MouseEvent('click',{bubbles:true}));
+            document.querySelector('.lsed-code').focus();
+            document.dispatchEvent(new KeyboardEvent('keydown',
+                {key:'Delete',bubbles:true,cancelable:true}));
+        })()""")
+        time.sleep(0.4)
+        check("sel.delete_ignored_while_typing",
+              js(window, "BV.workspace.count()") == n_before,
+              "(Delete in the editor must never reach the rail)")
+        js(window, """(function(){
+            document.activeElement.blur();
+            document.dispatchEvent(new KeyboardEvent('keydown',
+                {key:'Delete',bubbles:true,cancelable:true}));
+        })()""")
+        time.sleep(0.5)
+        check("sel.delete_removes_selection",
+              js(window, "BV.workspace.count()") == n_before - 1,
+              f"({n_before} -> {js(window, 'BV.workspace.count()')})")
+        check("sel.head_back_to_plain_count",
+              "programs" in (js(window, "document.querySelector('.ws-railhead').textContent") or ""),
+              "(nothing selected: the head stops reporting a selection)")
 
         # ---- the programs list: pick programs one at a time or in chunks ----
         # needs a backup OPEN (the list is session-backed), so this runs last

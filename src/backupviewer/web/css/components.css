@@ -531,6 +531,9 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 }
 .ws-prog:hover { background: color-mix(in srgb, var(--sub-alt) 20%, transparent); }
 .ws-prog.sel { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+/* the anchor is where a shift-range measures FROM - with several rows lit,
+   nothing else says which one that is (same inset bar as .vt-row.selected) */
+.ws-prog.anchor { box-shadow: inset 2px 0 0 var(--accent); }
 .ws-prog .dot { width: 0.45rem; height: 0.45rem; border-radius: 50%; flex: none; }
 .ws-prog .dot.dirty { background: var(--warn); }
 .ws-prog .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }

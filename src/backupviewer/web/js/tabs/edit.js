@@ -32,7 +32,10 @@
     frFolds: {},             /* find-result folds */
     details: [false, false], /* per-pane attrs/positions panel */
     navSeg: "calls",         /* calls | labels */
-    selRow: null,
+    /* the rail's selection: a set of ENTRY IDS (stable across renames, unlike
+       a row index or a name), plus the row a shift-range measures from. Ids,
+       not nodes: renderWorkingSet() re-runs on every keystroke in an editor. */
+    sel: {}, selAnchor: null,
   };
   var fr = {
     find: "", repl: "",
@@ -52,6 +55,39 @@
      it holds tabs. Nothing to toggle, nothing to remember, and no stored flag
      that can disagree with what is on screen. */
   function visiblePanes() { return st.panes[1].tabs.length ? 2 : 1; }
+
+  /* ---- the working set's selection ---- */
+  function selIds() { return Object.keys(st.sel); }
+  function selCount() { return selIds().length; }
+  function selEntries() {
+    return selIds().map(function (id) { return BV.workspace.byId(id); }).filter(Boolean);
+  }
+  function setSel(ids) {
+    st.sel = {};
+    (ids || []).forEach(function (id) { st.sel[id] = true; });
+  }
+  /* an id can outlive its entry (removed here, renamed away by find/replace, a
+     workspace cleared elsewhere, a set restored from settings). Prune on every
+     paint so a stale id can never inflate the count or resurrect a row. */
+  function pruneSel() {
+    var live = {};
+    BV.workspace.entries().forEach(function (e) { live[e.id] = true; });
+    selIds().forEach(function (id) { if (!live[id]) delete st.sel[id]; });
+    if (st.selAnchor && !live[st.selAnchor]) st.selAnchor = null;
+  }
+  /* the rail top to bottom, a folded group contributing nothing. A shift-range
+     runs over THIS list, so one shift-click can never sweep up forty programs
+     you cannot see. Folding does not clear the selection (find/replace keeps
+     its ticks across a fold too) - the rail head says "N of M selected", so
+     nothing is ever armed and invisible at the same time. */
+  function visibleEntries() {
+    var out = [];
+    BV.workspace.byRobot().forEach(function (g) {
+      if (st.setFolds[g.root]) return;
+      g.programs.forEach(function (e) { out.push(e); });
+    });
+    return out;
+  }
 
   /* ------------------------------------------------------------------ *
    * render
@@ -236,9 +272,16 @@
     else renderWorkingSet();
   }
 
+  function headText() {
+    var n = BV.workspace.count(), s = selCount();
+    return s ? s + " of " + n + " selected" : n + " programs";
+  }
+
   function renderWorkingSet() {
+    pruneSel();
     el.railHead.innerHTML = "";
-    el.railHead.appendChild(BV.el("span", null, BV.workspace.count() + " programs"));
+    el.headCount = BV.el("span", null, headText());
+    el.railHead.appendChild(el.headCount);
     if (BV.workspace.count()) {
       var clr = BV.el("button", { class: "btn",
         style: "margin-left:auto;padding:.1rem .4rem;font-size:.7rem",
@@ -248,6 +291,8 @@
             !window.confirm("There are unsaved edits. Discard them?")) return;
         BV.workspace.entries().forEach(function (e) { dropEditor(e); });
         BV.workspace.clear();
+        setSel([]);
+        st.selAnchor = null;
         st.panes.forEach(function (p) { p.tabs = []; p.active = 0; });
         normalizePanes();
         renderPanes();
@@ -257,6 +302,7 @@
     }
 
     el.railBody.innerHTML = "";
+    el.progRows = [];
     var groups = BV.workspace.byRobot();
     if (!groups.length) {
       el.railBody.appendChild(BV.el("div", { class: "ws-empty" },
@@ -289,7 +335,8 @@
       g.programs.forEach(function (e) {
         var dirty = BV.workspace.dirty(e);
         var row = BV.el("div", { class: "ws-prog", draggable: "true", title: e.file });
-        if (st.selRow === keyOf(e)) row.classList.add("sel");
+        if (st.sel[keyOf(e)]) row.classList.add("sel");
+        if (st.selAnchor === keyOf(e)) row.classList.add("anchor");
         row.innerHTML = '<span class="dot' + (dirty ? " dirty" : "") + '"></span>' +
           '<span class="nm">' + BV.esc(BV.workspace.displayName(e)) + "</span>";
         var more = BV.el("span", { class: "rm",
@@ -306,12 +353,18 @@
         row.addEventListener("contextmenu", function (ev) {
           ev.preventDefault();
           ev.stopPropagation();
-          rowMenu({ x: ev.clientX, y: ev.clientY }, e, dirty);
+          /* right-clicking OUTSIDE the selection means "I mean this one": it
+             re-selects that row first, so a menu can never act on rows you had
+             forgotten were lit. */
+          if (!st.sel[keyOf(e)]) {
+            setSel([keyOf(e)]);
+            st.selAnchor = keyOf(e);
+            paintSelection();
+          }
+          if (selCount() > 1) multiMenu({ x: ev.clientX, y: ev.clientY });
+          else rowMenu({ x: ev.clientX, y: ev.clientY }, e, dirty);
         });
-        row.addEventListener("click", function () {
-          st.selRow = keyOf(e);
-          renderWorkingSet();
-        });
+        row.addEventListener("click", function (ev) { clickRow(e, ev); });
         row.addEventListener("dblclick", function () { openTab(e, st.activePane); });
         row.addEventListener("dragstart", function (ev) {
           drag = { kind: "prog", entry: e };
@@ -319,6 +372,9 @@
         });
         row.addEventListener("dragend", function () { drag = null; hideDrop(); });
         el.railBody.appendChild(row);
+        /* node <-> id pairs live HERE, never in a data attribute: an entry id
+           contains BV.KEYSEP, which is a NUL. */
+        el.progRows.push({ el: row, id: keyOf(e) });
       });
     });
   }
@@ -369,6 +425,77 @@
 
   function baseName(e) {
     return (e.saveAs || e.name).replace(/\.[Ll][Ss]$/, "");
+  }
+
+  /* plain = only this - ctrl = toggle - shift = range from the anchor -
+     ctrl+shift = add the range.
+
+     This repaints CLASSES rather than calling renderWorkingSet(): replacing
+     the row node between the two halves of a double-click eats the dblclick
+     that opens the program, which is exactly what the old single-selection
+     click did. */
+  function clickRow(e, ev) {
+    var id = keyOf(e);
+    if (ev.shiftKey && st.selAnchor) {
+      var list = visibleEntries().map(keyOf);
+      var a = list.indexOf(st.selAnchor), b = list.indexOf(id);
+      if (a >= 0 && b >= 0) {
+        if (!(ev.ctrlKey || ev.metaKey)) st.sel = {};
+        for (var i = Math.min(a, b); i <= Math.max(a, b); i++) st.sel[list[i]] = true;
+        /* the anchor STAYS: shift again re-measures from the same origin, the
+           way every file list behaves */
+        paintSelection();
+        return;
+      }
+      /* the anchor sits inside a folded group - fall through to a plain click */
+    }
+    if (ev.ctrlKey || ev.metaKey) {
+      if (st.sel[id]) delete st.sel[id]; else st.sel[id] = true;
+    } else {
+      setSel([id]);
+    }
+    st.selAnchor = id;
+    paintSelection();
+  }
+
+  function paintSelection() {
+    (el.progRows || []).forEach(function (r) {
+      r.el.classList.toggle("sel", !!st.sel[r.id]);
+      r.el.classList.toggle("anchor", st.selAnchor === r.id);
+    });
+    if (el.headCount) el.headCount.textContent = headText();
+  }
+
+  /* THE way a program leaves the workspace: the ⋯ item, the multi-select menu
+     and the Delete key all land here, so the unsaved-work guard and the
+     editor/tab teardown can never drift apart. */
+  function removeEntries(list) {
+    list = (list || []).filter(Boolean);
+    if (!list.length) return false;
+    var dirty = list.filter(function (e) { return BV.workspace.dirty(e); });
+    if (dirty.length && !window.confirm(dirty.length === 1
+        ? "Discard unsaved edits to " + BV.workspace.displayName(dirty[0]) + "?"
+        : "Discard unsaved edits to " + dirty.length + " programs?")) return false;
+    list.forEach(function (e) {
+      dropEditor(e);
+      closeEverywhere(e);
+      BV.workspace.remove(e.id);
+      delete st.sel[keyOf(e)];
+    });
+    st.selAnchor = null;
+    renderPanes();
+    afterChange();
+    return true;
+  }
+
+  /* the menu for a SET. Deliberately one item: rename and duplicate have no
+     sane bulk form, and everything else here acts on one program. */
+  function multiMenu(at) {
+    var list = selEntries(), n = list.length;
+    BV.menu(at, [
+      { label: "remove " + n + " programs from workspace (del)", danger: true,
+        onClick: function () { removeEntries(list); } },
+    ]);
   }
 
   function otherPane() { return st.activePane === 0 ? 1 : 0; }
@@ -442,15 +569,7 @@
             });
         } },
       { label: "remove from workspace", danger: true,
-        onClick: function () {
-          if (dirty && !window.confirm("Discard unsaved edits to " +
-              BV.workspace.displayName(e) + "?")) return;
-          dropEditor(e);
-          closeEverywhere(e);
-          BV.workspace.remove(e.id);
-          renderPanes();
-          afterChange();
-        } });
+        onClick: function () { removeEntries([e]); } });
     BV.menu(anchor, items);
   }
 
@@ -1429,6 +1548,19 @@
       if (!st.railOpen) { st.railOpen = true; persistPanels(); renderShell(); }
       st.railTab = "find";
       renderRail(sel || undefined);
+      return;
+    }
+    if (e.key === "Delete" && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      /* Delete belongs to whatever is being typed in first - an editor, a find
+         box, a rename field. It only reaches the rail when nothing is, the
+         working set is the rail tab on show, and rows are actually lit (the
+         head says how many, so this can never fire blind). */
+      var a = document.activeElement;
+      if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)) return;
+      if (st.railTab !== "set" || !st.railOpen || !selCount()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      removeEntries(selEntries());
       return;
     }
     if (e.key === "Escape" && st.railTab === "find") {
