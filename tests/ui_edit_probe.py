@@ -453,6 +453,85 @@ def probe(window):
         check("persist.set_survives_navigation",
               js(window, "document.querySelectorAll('.ws-prog').length") == 2)
 
+        # ---- rename / duplicate / new-empty, and rename-by-replace ----
+        js(window, """[...document.querySelectorAll('.ws-railtab')]
+            .find(function(t){return t.textContent.indexOf('working')>=0;}).click()""")
+        time.sleep(0.35)
+        n_entries = js(window, "BV.workspace.count()")
+        # duplicate the first entry under a new name (via the state API - the
+        # row menu path is exercised by the rename below)
+        made = js(window, """(function(){
+            var e=BV.workspace.entries()[0];
+            var d=BV.workspace.duplicate(e.id,'MAIN_COPY',false);
+            return d ? d.id !== e.id && d.saveAs==='MAIN_COPY' : false;
+        })()""")
+        check("dup.creates_independent_entry", bool(made))
+        check("dup.count_grew", js(window, "BV.workspace.count()") == n_entries + 1)
+        check("dup.same_source_allowed", bool(js(window, """(function(){
+            var es=BV.workspace.entries();
+            return es[0].file === es[es.length-1].file &&
+                   es[0].root === es[es.length-1].root;
+        })()""")), "(a duplicate shares the source, differing only by name)")
+        check("dup.refuses_taken_name", not js(window, """(function(){
+            var e=BV.workspace.entries()[0];
+            return !!BV.workspace.duplicate(e.id,'MAIN_COPY',false);
+        })()""")),
+        check("dup.refuses_bad_name", not js(window, """(function(){
+            var e=BV.workspace.entries()[0];
+            return !!BV.workspace.duplicate(e.id,'9bad',false);
+        })()"""))
+        # a new EMPTY program keeps a real header but starts blank
+        js(window, """window._new='';
+            (function(){
+              var e=BV.workspace.entries()[0];
+              var d=BV.workspace.duplicate(e.id,'BRANDNEW',true);
+              window._new = d ? d.id : 'no';
+            })()""")
+        newid = poll(window, "window._new")
+        check("new.empty_entry_made", isinstance(newid, str) and newid != "no")
+
+        # rename via find/replace: a ticked name match renames on export
+        js(window, """[...document.querySelectorAll('.ws-railtab')]
+            .find(function(t){return t.textContent.indexOf('find')>=0;}).click()""")
+        time.sleep(0.4)
+        js(window, """(function(){
+            var ins=document.querySelectorAll('.fp-inputs input');
+            ins[0].value='BRANDNEW'; ins[0].dispatchEvent(new Event('input',{bubbles:true}));
+            ins[1].value='RENAMEDBYFR'; ins[1].dispatchEvent(new Event('input',{bubbles:true}));
+        })()""")
+        time.sleep(0.6)
+        check("rename_fr.name_hit_has_box", bool(js(window, """(function(){
+            var rows=[...document.querySelectorAll('.fp-pg')];
+            return rows.some(function(r){
+              return r.querySelector('.pill') && r.querySelector('input[type=checkbox]');
+            });
+        })()""")), "(a name match is actionable, so it must be tickable)")
+        js(window, """(function(){
+            var b=[...document.querySelectorAll('.fp-foot .btn')].pop();
+            if (b && !b.disabled) b.click();
+        })()""")
+        time.sleep(0.6)
+        check("rename_fr.applied", bool(js(window, """(function(){
+            return BV.workspace.entries().some(function(e){ return e.saveAs==='RENAMEDBYFR'; });
+        })()""")), "(replacing a name match sets the export rename)")
+
+        # exporting a renamed program writes the new file with a patched /PROG
+        js(window, """window._exp2='';
+            BV.api.call('ws_export', BV.workspace.edits(), %s).then(function(r){
+                window._exp2 = JSON.stringify(r);
+            }, function(e){ window._exp2 = 'err:' + (e.code||e.message); });""" %
+           json.dumps(str(_TMP / "export2")))
+        exp2 = poll(window, "window._exp2")
+        check("rename_fr.export_ok", isinstance(exp2, str) and exp2.startswith("{"), f"({exp2!r})")
+        renamed_out = list((_TMP / "export2").rglob("RENAMEDBYFR.LS"))
+        check("rename_fr.file_written", bool(renamed_out))
+        if renamed_out:
+            check("rename_fr.prog_header_patched",
+                  b"/PROG  RENAMEDBYFR" in renamed_out[0].read_bytes())
+        # and the duplicate landed under its own name alongside the original
+        check("dup.exported_beside_original",
+              bool(list((_TMP / "export2").rglob("MAIN_COPY.LS"))))
+
         # ---- the programs list: pick programs one at a time or in chunks ----
         # needs a backup OPEN (the list is session-backed), so this runs last
         js(window, """window._ob='';
@@ -466,6 +545,7 @@ def probe(window):
         check("list.pick_column", bool(boxes) and boxes >= 1, f"({boxes} checkboxes)")
         # a real click toggles the box itself - pre-setting .checked then
         # clicking would toggle it straight back off
+        count_before_add = js(window, "BV.workspace.count()")
         js(window, "document.querySelectorAll('.vt-pick')[0].click()")
         time.sleep(0.35)
         label = js(window, """(function(){
@@ -487,8 +567,8 @@ def probe(window):
         })()""")
         check("list.add_clears_ticks", after == "+ workspace", f"({after!r})")
         check("list.no_duplicate_entry",
-              js(window, "BV.workspace.count()") == 2,
-              "(MAIN.LS was already in the working set - added once, not twice)")
+              js(window, "BV.workspace.count()") == count_before_add,
+              "(that source was already in the working set - a second add is a no-op)")
 
         print()
         print("FAILURES:", FAILURES if FAILURES else "none")

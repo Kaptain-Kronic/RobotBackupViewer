@@ -1009,10 +1009,17 @@ class Api:
 
         `edits` = [{"root": <backup folder>, "file": <path relative to root>,
                     "label": <robot name hint, optional>,
+                    "save_as": <new program name, optional>,
                     "body": tokens|None, "attrs": {...}|None,
                     "positions": [...]|None}] - each edit part None when
         unchanged. Body tokens: {"ref": i} keeps pristine record i byte-exact
         (renumbered), {"text": s} emits canonically; engine in parsers/ls_edit.py.
+
+        save_as renames: the output file becomes <save_as>.LS and its /PROG
+        header is repointed to match, because a header that disagrees with its
+        file name is a real defect (tools/restyle.py warns about exactly that).
+        Two edits may share a source with different save_as values - that is how
+        a duplicate is exported.
         """
         if not edits:
             raise ApiError("NO_EDITS", "nothing to export")
@@ -1048,12 +1055,25 @@ class Api:
                 tokens = e.get("body")
                 if tokens is None:
                     tokens = [{"ref": i} for i in range(len(sections["records"]))]
-                data = ls_edit.encode_ls(ls_edit.emit(sections, tokens))
+                out_text = ls_edit.emit(sections, tokens)
+                out_name = p.name
+                save_as = (e.get("save_as") or "").strip()
+                if save_as:
+                    out_text = ls_edit.rename_program(out_text, save_as)
+                    stem = save_as[:-3] if save_as.lower().endswith(".ls") else save_as
+                    out_name = stem + p.suffix          # keep the source's .ls/.LS case
+                data = ls_edit.encode_ls(out_text)
             except ls_edit.LsEncodeError as ex:
                 raise ApiError("BAD_CHAR", f"{p.name}: {ex}")
             except ls_edit.LsEditError as ex:
                 raise ApiError("BAD_EDIT", f"{p.name}: {ex}")
-            outputs.append((d / self._ws_label(r, e.get("label", "")) / p.name, data))
+            target = d / self._ws_label(r, e.get("label", "")) / out_name
+            if any(t == target for t, _ in outputs):
+                raise ApiError(
+                    "NAME_CLASH",
+                    f"two programs would both export as {out_name} in "
+                    f"{target.parent.name}/ - rename one first")
+            outputs.append((target, data))
         written: list[str] = []
         for target, data in outputs:
             os.makedirs(ftpbackup.long_path(str(target.parent)), exist_ok=True)

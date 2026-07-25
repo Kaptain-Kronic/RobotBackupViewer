@@ -180,6 +180,37 @@ def emit(sections: dict, tokens: list[dict]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# renaming a program
+
+_PROG_LINE = re.compile(r"(?m)^(/PROG[ \t]+)(\S+)(.*)$")
+_PROG_NAME_OK = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def rename_program(text: str, new_name: str) -> str:
+    """Point a program's /PROG header at `new_name`, preserving the spacing and
+    anything after the name (the program type, e.g. '/PROG  FOO  Macro').
+
+    Only /PROG is rewritten. FILE_NAME is deliberately left alone: it is
+    vestigial and already disagrees with its own file in the wild (90 of 400
+    sampled programs, e.g. a BODYHMIO.LS whose FILE_NAME says HOME_IO), so
+    "fixing" it would invent a claim rather than record one. Callers rename the
+    FILE itself; CALL/RUN references in OTHER programs are a separate,
+    deliberate find/replace - tools/restyle.py works the same way and then
+    verifies the header matches the new file name."""
+    base = (new_name or "").strip()
+    if base.lower().endswith(".ls"):
+        base = base[:-3]
+    if not _PROG_NAME_OK.match(base):
+        raise LsEditError(
+            f"{new_name!r} is not a valid program name (letters, digits and "
+            "underscore, not starting with a digit)")
+    out, n = _PROG_LINE.subn(lambda m: m.group(1) + base + m.group(3), text, count=1)
+    if n != 1:
+        raise LsEditError("no /PROG header to rename")
+    return out
+
+
+# ---------------------------------------------------------------------------
 # /ATTR: value splices on the verbatim prefix
 
 _ATTR_EDITABLE = {"owner", "comment", "protect"}

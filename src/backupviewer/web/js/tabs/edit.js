@@ -45,7 +45,7 @@
   var el = {};
   var drag = null;
 
-  function keyOf(t) { return t.root + BV.KEYSEP + t.file; }
+  function keyOf(t) { return t.id; }   /* stable: a rename must not orphan a tab */
   function paneOf(idx) { return st.panes[idx] || st.panes[0]; }
   function visiblePanes() { return st.split ? 2 : 1; }
 
@@ -219,7 +219,7 @@
       paneOf(i).tabs.forEach(function (t, ti) {
         var tab = tabs[ti];
         if (!tab) return;
-        var dirty = BV.workspace.dirty(t.root, t.file);
+        var dirty = BV.workspace.dirty(t);
         var dot = tab.querySelector(".dot");
         if (dirty && !dot) tab.insertBefore(BV.el("span", { class: "dot" }), tab.querySelector(".x"));
         else if (!dirty && dot) dot.parentNode.removeChild(dot);
@@ -282,7 +282,7 @@
     groups.forEach(function (g) {
       var folded = !!st.setFolds[g.root];
       var dirtyN = g.programs.filter(function (e) {
-        return BV.workspace.dirty(e.root, e.file);
+        return BV.workspace.dirty(e);
       }).length;
       var h = BV.el("div", { class: "ws-robot-h", title: g.root });
       h.appendChild(BV.el("span", { class: "caret" }, folded ? "▸" : "▾"));
@@ -301,22 +301,17 @@
       if (folded) return;
 
       g.programs.forEach(function (e) {
-        var dirty = BV.workspace.dirty(e.root, e.file);
+        var dirty = BV.workspace.dirty(e);
         var row = BV.el("div", { class: "ws-prog", draggable: "true", title: e.file });
         if (st.selRow === keyOf(e)) row.classList.add("sel");
         row.innerHTML = '<span class="dot' + (dirty ? " dirty" : "") + '"></span>' +
-          '<span class="nm">' + BV.esc(e.name) + "</span>";
-        var x = BV.el("span", { class: "rm", title: "remove from the workspace" }, "✕");
-        x.addEventListener("click", function (ev) {
+          '<span class="nm">' + BV.esc(BV.workspace.displayName(e)) + "</span>";
+        var more = BV.el("span", { class: "rm", title: "rename, duplicate, remove" }, "⋯");
+        more.addEventListener("click", function (ev) {
           ev.stopPropagation();
-          if (dirty && !window.confirm("Discard unsaved edits to " + e.name + "?")) return;
-          dropEditor(e);
-          closeEverywhere(e);
-          BV.workspace.remove(e.root, e.file);
-          renderPanes();
-          afterChange();
+          rowMenu(more, e, dirty);
         });
-        row.appendChild(x);
+        row.appendChild(more);
         row.addEventListener("click", function () {
           st.selRow = keyOf(e);
           renderWorkingSet();
@@ -330,6 +325,113 @@
         el.railBody.appendChild(row);
       });
     });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * rename / duplicate / create
+   *
+   * A rename is export-time only: the source stays untouched (as everything
+   * here does) and the export writes <newname>.LS with its /PROG header
+   * repointed to match. A duplicate is a SECOND entry on the same source with
+   * its own name and its own buffer - and a duplicate with an empty body is
+   * the honest "new program", because the header it inherits is one this
+   * controller already accepted.
+   * ------------------------------------------------------------------ */
+  function askName(title, initial, hint, onOk) {
+    var body = BV.el("div");
+    if (hint) body.appendChild(BV.el("div", { class: "dim", style: "font-size:.8rem;margin-bottom:.5rem" }, hint));
+    var inp = BV.el("input", { type: "text", spellcheck: "false",
+      style: "width:100%;box-sizing:border-box;font-family:var(--font-mono);" +
+             "background:var(--bg);color:var(--text);border:1px solid var(--edge);" +
+             "border-radius:4px;padding:.3rem .5rem" });
+    inp.value = initial || "";
+    body.appendChild(inp);
+    var err = BV.el("div", { style: "color:var(--error);font-size:.76rem;min-height:1.1em;margin-top:.3rem" });
+    body.appendChild(err);
+    var acts = BV.el("div", { style: "display:flex;gap:.5rem;justify-content:flex-end;margin-top:.6rem" });
+    var cancel = BV.el("button", { class: "btn" }, "cancel");
+    var ok = BV.el("button", { class: "btn primary" }, "ok");
+    acts.appendChild(cancel);
+    acts.appendChild(ok);
+    body.appendChild(acts);
+    var m = BV.modal(title, body, {
+      onKey: function (e, close) {
+        if (e.key === "Enter") { submit(); return true; }
+        return false;
+      },
+    });
+    function submit() {
+      var v = inp.value.trim();
+      var why = onOk(v);
+      if (why) { err.textContent = why; return; }
+      m.close(true);
+    }
+    cancel.addEventListener("click", function () { m.close(true); });
+    ok.addEventListener("click", submit);
+    setTimeout(function () { try { inp.focus(); inp.select(); } catch (e) {} }, 0);
+  }
+
+  function baseName(e) {
+    return (e.saveAs || e.name).replace(/\.[Ll][Ss]$/, "");
+  }
+
+  function rowMenu(anchor, e, dirty) {
+    BV.menu(anchor, [
+      { label: e.saveAs ? "rename (now " + e.saveAs + ")" : "rename…",
+        onClick: function () {
+          askName("rename program", baseName(e),
+            "exports as <name>.LS with its /PROG header repointed. The backup " +
+            "is never touched, and CALLs to it elsewhere are a separate " +
+            "find/replace.",
+            function (v) {
+              if (!v) return "a name is required";
+              if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(v.replace(/\.[Ll][Ss]$/, ""))) {
+                return "letters, digits and underscore only, not starting with a digit";
+              }
+              if (!BV.workspace.rename(e.id, v)) return "that name is already used for this robot";
+              afterChange();
+              renderPanes();
+              return "";
+            });
+        } },
+      { label: "duplicate…",
+        onClick: function () {
+          askName("duplicate program", baseName(e) + "_COPY",
+            "a second program from the same source, with its own edits.",
+            function (v) {
+              if (!v) return "a name is required";
+              var made = BV.workspace.duplicate(e.id, v, false);
+              if (!made) return "invalid name, or already used for this robot";
+              afterChange();
+              openTab(made, st.activePane);
+              return "";
+            });
+        } },
+      { label: "new empty program from this…",
+        onClick: function () {
+          askName("new program", "NEWPROG",
+            "clones this program's header (one the controller already accepted) " +
+            "with an empty body.",
+            function (v) {
+              if (!v) return "a name is required";
+              var made = BV.workspace.duplicate(e.id, v, true);
+              if (!made) return "invalid name, or already used for this robot";
+              afterChange();
+              openTab(made, st.activePane);
+              return "";
+            });
+        } },
+      { label: "remove from workspace", danger: true,
+        onClick: function () {
+          if (dirty && !window.confirm("Discard unsaved edits to " +
+              BV.workspace.displayName(e) + "?")) return;
+          dropEditor(e);
+          closeEverywhere(e);
+          BV.workspace.remove(e.id);
+          renderPanes();
+          afterChange();
+        } },
+    ]);
   }
 
   /* ------------------------------------------------------------------ *
@@ -353,7 +455,7 @@
     var at = -1;
     pane.tabs.forEach(function (t, i) { if (keyOf(t) === keyOf(entry)) at = i; });
     if (at < 0) {
-      pane.tabs.push({ root: entry.root, file: entry.file, name: entry.name });
+      pane.tabs.push(entry);
       at = pane.tabs.length - 1;
     }
     pane.active = at;
@@ -478,11 +580,11 @@
       ev.preventDefault();
     }, { passive: false });
     pane.tabs.forEach(function (t, ti) {
-      var dirty = BV.workspace.dirty(t.root, t.file);
+      var dirty = BV.workspace.dirty(t);
       var tab = BV.el("div", { class: "ws-tab" + (pane.active === ti ? " active" : ""),
                                draggable: "true", title: t.root + "\n" + t.file });
       tab.innerHTML = '<span class="rb">' + BV.esc(labelFor(t.root)) + "</span>" +
-        "<span>" + BV.esc(t.name) + "</span>" + (dirty ? '<span class="dot"></span>' : "");
+        "<span>" + BV.esc(BV.workspace.displayName(t)) + "</span>" + (dirty ? '<span class="dot"></span>' : "");
       var x = BV.el("span", { class: "x" }, "✕");
       x.addEventListener("click", function (ev) { ev.stopPropagation(); closeTab(i, ti); });
       tab.appendChild(x);
@@ -533,20 +635,20 @@
     if (cached) {
       host.appendChild(cached.el);
       if (st.details[paneIdx]) {
-        var buf = BV.workspace.peek(t.root, t.file);
+        var buf = BV.workspace.peek(t);
         if (buf) paneEl.appendChild(detailsPanel(t, buf, paneIdx));
       }
       renderNav();
       return;
     }
     host.innerHTML = '<div class="dim" style="padding:1rem">loading…</div>';
-    BV.workspace.buffer(t.root, t.file).then(function (buf) {
+    BV.workspace.buffer(t).then(function (buf) {
       if (!document.body.contains(host)) return;      /* routed away mid-load */
       host.innerHTML = "";
       editors[k] = BV.lsEditor(host, {
         text: buf.text,
         onChange: function (txt) {
-          BV.workspace.setBody(t.root, t.file, txt);
+          BV.workspace.setBody(t, txt);
           updateCounts();
           refreshDirtyMarks();
           if (st.railTab === "set" && st.railOpen) renderWorkingSet();
@@ -653,7 +755,7 @@
         "no program open</div>";
       return;
     }
-    var buf = BV.workspace.peek(t.root, t.file);
+    var buf = BV.workspace.peek(t);
     if (!buf) {
       body.innerHTML = '<div class="dim" style="padding:.7rem;font-size:.78rem">loading…</div>';
       return;
@@ -717,7 +819,7 @@
       var inp = BV.el("input", { type: "text", style: "flex:1" });
       inp.value = buf.attrs[name] || "";
       inp.addEventListener("input", function () {
-        BV.workspace.setAttr(t.root, t.file, name, inp.value);
+        BV.workspace.setAttr(t, name, inp.value);
         updateCounts();
         refreshDirtyMarks();
       });
@@ -733,7 +835,7 @@
       prow.appendChild(BV.segmented(
         [{ id: "READ_WRITE", label: "read_write" }, { id: "READ", label: "read" }],
         { value: buf.attrs.protect, onChange: function (id) {
-            BV.workspace.setAttr(t.root, t.file, "protect", id);
+            BV.workspace.setAttr(t, "protect", id);
             updateCounts();
             refreshDirtyMarks();
           } }).el);
@@ -759,7 +861,7 @@
       var cell = BV.el("div", { class: "cell" });
       cell.appendChild(BV.el("span", null, BV.esc(name)));
       var inp = BV.el("input", { type: "text" });
-      var edited = BV.workspace.getPos(t.root, t.file, id, gp, name);
+      var edited = BV.workspace.getPos(t, id, gp, name);
       inp.value = edited !== null ? edited
         : (masked ? "" : (current === null || current === undefined ? "" : current));
       if (masked) inp.placeholder = "********";
@@ -767,14 +869,14 @@
         var v = inp.value.trim();
         if (v === "" || (!masked && String(current) === v)) {
           inp.classList.remove("err");
-          BV.workspace.setPos(t.root, t.file, { id: id, gp: gp, field: name, value: null });
+          BV.workspace.setPos(t, { id: id, gp: gp, field: name, value: null });
           if (!masked && v === "") inp.value = current === null ? "" : current;
         } else if (check(v)) {
           inp.classList.remove("err");
-          BV.workspace.setPos(t.root, t.file, { id: id, gp: gp, field: name, value: v });
+          BV.workspace.setPos(t, { id: id, gp: gp, field: name, value: v });
         } else {
           inp.classList.add("err");
-          BV.workspace.setPos(t.root, t.file, { id: id, gp: gp, field: name, value: null });
+          BV.workspace.setPos(t, { id: id, gp: gp, field: name, value: null });
         }
         updateCounts();
         refreshDirtyMarks();
@@ -786,10 +888,10 @@
       var head = BV.el("div", { class: "edpos-p" });
       head.appendChild(BV.el("span", { class: "pid" }, "P[" + pos.id + "]"));
       var cmt = BV.el("input", { type: "text", placeholder: "comment" });
-      var ce = BV.workspace.getPos(t.root, t.file, pos.id, 1, "comment");
+      var ce = BV.workspace.getPos(t, pos.id, 1, "comment");
       cmt.value = ce !== null ? ce : (pos.comment || "");
       cmt.addEventListener("change", function () {
-        BV.workspace.setPos(t.root, t.file, { id: pos.id, gp: 1, field: "comment",
+        BV.workspace.setPos(t, { id: pos.id, gp: 1, field: "comment",
           value: cmt.value === (pos.comment || "") ? null : cmt.value });
         updateCounts();
       });
@@ -817,12 +919,12 @@
         var cfg = BV.el("div", { class: "cell", style: "grid-column:1/-1" });
         cfg.appendChild(BV.el("span", null, "cfg"));
         var cin = BV.el("input", { type: "text" });
-        var cfe = BV.workspace.getPos(t.root, t.file, pos.id, g.gp, "config");
+        var cfe = BV.workspace.getPos(t, pos.id, g.gp, "config");
         cin.value = cfe !== null ? cfe : (g.config || "");
         cin.addEventListener("change", function () {
           if (cin.value.indexOf("'") >= 0) { cin.classList.add("err"); return; }
           cin.classList.remove("err");
-          BV.workspace.setPos(t.root, t.file, { id: pos.id, gp: g.gp, field: "config",
+          BV.workspace.setPos(t, { id: pos.id, gp: g.gp, field: "config",
             value: cin.value === (g.config || "") ? null : cin.value });
           updateCounts();
         });
@@ -943,14 +1045,14 @@
 
     function ensureBuffers() {
       var missing = BV.workspace.entries().filter(function (e) {
-        var b = BV.workspace.peek(e.root, e.file);
+        var b = BV.workspace.peek(e);
         return !b || b.base === null;
       });
       if (!missing.length) return Promise.resolve();
       results.innerHTML = '<div class="dim" style="padding:1rem;font-size:.78rem">reading ' +
         missing.length + " program" + (missing.length === 1 ? "" : "s") + "…</div>";
       return Promise.all(missing.map(function (e) {
-        return BV.workspace.buffer(e.root, e.file).catch(function () { return null; });
+        return BV.workspace.buffer(e).catch(function () { return null; });
       }));
     }
 
@@ -973,12 +1075,12 @@
       BV.workspace.byRobot().forEach(function (g) {
         var per = [];
         g.programs.forEach(function (e) {
-          var b = BV.workspace.peek(e.root, e.file);
+          var b = BV.workspace.peek(e);
           if (!b || b.base === null) return;
           var hits = findHits(b.text, fr.find);
-          /* a program NAME match is navigational, never replaceable - it gets
-             no checkbox and does not count toward the replace set */
-          var named = nameMatches(e.name, fr.find);
+          /* a NAME match is replaceable too: applying it renames the program on
+             export (renaming is a real job - style kits are exactly this) */
+          var named = nameMatches(baseName(e), fr.find);
           if (hits.length || named) per.push({ e: e, hits: hits, named: named });
         });
         var n = per.reduce(function (a, x) { return a + x.hits.length; }, 0);
@@ -988,6 +1090,7 @@
 
         var rbKeys = [];
         per.forEach(function (rec) {
+          if (rec.named) rbKeys.push(keyOf(rec.e) + "|name");
           rec.hits.forEach(function (h) { rbKeys.push(keyOf(rec.e) + "|" + h.line); });
         });
         rbKeys.forEach(function (k) { fresh.push(k); });
@@ -1017,17 +1120,25 @@
         per.forEach(function (rec) {
           var pgKey = keyOf(rec.e);
           var pgKeys = rec.hits.map(function (h) { return pgKey + "|" + h.line; });
+          if (rec.named) pgKeys.unshift(pgKey + "|name");
           var pgFolded = !!st.frFolds[pgKey];
           var ph = BV.el("div", { class: "fp-pg" });
           if (pgKeys.length > 1) {
             ph.appendChild(picks.group(BV.el("input", { type: "checkbox" }),
               function () { return pgKeys; }, "pg:" + pgKey));
+          } else if (rec.named && !rec.hits.length) {
+            /* a name-only match is the single actionable thing here, so it gets
+               the one checkbox - ticking it renames the program on export */
+            var ncb = picks.bind(BV.el("input", { type: "checkbox" }), pgKey + "|name");
+            ncb.addEventListener("click", function (ev) { ev.stopPropagation(); });
+            ph.appendChild(ncb);
           }
           ph.appendChild(BV.el("span", { class: "caret" }, pgFolded ? "▸" : "▾"));
-          ph.appendChild(BV.el("span", { class: "nm" }, BV.esc(rec.e.name)));
+          ph.appendChild(BV.el("span", { class: "nm" },
+            BV.esc(BV.workspace.displayName(rec.e))));
           if (rec.named) {
-            ph.appendChild(BV.el("span", { class: "pill acc", title: "the program NAME matches" },
-              "name"));
+            ph.appendChild(BV.el("span", { class: "pill acc",
+              title: "the program NAME matches - replacing renames it on export" }, "name"));
           }
           ph.appendChild(BV.el("span", { class: "dim", style: "font-size:.7rem;margin-left:auto" },
             String(rec.hits.length)));
@@ -1081,9 +1192,18 @@
     function doReplace() {
       var chosen = {};
       picks.selected().forEach(function (k) { chosen[k] = true; });
-      var changed = 0, touched = [];
+      var changed = 0, renamed = 0, refused = [], touched = [];
       BV.workspace.entries().forEach(function (e) {
-        var b = BV.workspace.peek(e.root, e.file);
+        /* a ticked NAME match renames the program (export-time; the backup is
+           never touched). Done first so the rail/tab label updates once. */
+        if (chosen[keyOf(e) + "|name"]) {
+          var want = baseName(e).replace(buildRx(fr.find), fr.repl);
+          if (want && want !== baseName(e)) {
+            if (BV.workspace.rename(e.id, want)) { renamed++; changed++; }
+            else refused.push(BV.workspace.displayName(e) + " → " + want);
+          }
+        }
+        var b = BV.workspace.peek(e);
         if (!b || b.base === null) return;
         var lines = b.text.split("\n"), hit = false;
         findHits(b.text, fr.find).forEach(function (h) {
@@ -1092,15 +1212,19 @@
           hit = true; changed++;
         });
         if (hit) {
-          BV.workspace.setBody(e.root, e.file, lines.join("\n"));
+          BV.workspace.setBody(e, lines.join("\n"));
           touched.push(e);
         }
       });
+      if (refused.length) {
+        /* say which renames could not happen rather than silently skip them */
+        BV.toast("could not rename (name already used): " + refused.join(", "), 5000);
+      }
       /* an open editor holds its own DOM copy of the text - push the new text
          into it (and reset its undo baseline) rather than leave it stale */
       touched.forEach(function (e) {
         var ed = editors[keyOf(e)];
-        var b = BV.workspace.peek(e.root, e.file);
+        var b = BV.workspace.peek(e);
         if (ed && b) ed.setText(b.text);
       });
       BV.toast("replaced " + changed + " occurrence" + (changed === 1 ? "" : "s"));

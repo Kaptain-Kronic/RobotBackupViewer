@@ -210,6 +210,43 @@ def test_body_text():
 
 
 # ---------------------------------------------------------------------------
+# renaming
+
+def test_rename_patches_prog_header_only():
+    from backupviewer.parsers.ls_edit import rename_program
+    out = rename_program(FULL_LS, "NEWNAME")
+    assert "/PROG  NEWNAME\r\n" in out
+    assert "EDITME" not in out.split("/MN")[0]      # header no longer claims the old name
+    # FILE_NAME is vestigial and left exactly as found
+    assert out.count("\r\n") == FULL_LS.count("\r\n")
+
+
+def test_rename_keeps_the_program_type():
+    from backupviewer.parsers.ls_edit import rename_program
+    src = "/PROG  OLDMACRO\t  Macro\r\n/ATTR\r\n/MN\r\n/POS\r\n/END\r\n"
+    out = rename_program(src, "NEWMACRO")
+    assert out.startswith("/PROG  NEWMACRO\t  Macro\r\n")
+
+
+def test_rename_accepts_a_dot_ls_name():
+    from backupviewer.parsers.ls_edit import rename_program
+    assert "/PROG  FOO\r\n" in rename_program(FULL_LS, "foo.LS".upper())
+
+
+def test_rename_rejects_bad_names():
+    from backupviewer.parsers.ls_edit import rename_program
+    for bad in ("", "  ", "9LIVES", "has space", "has-dash", "semi;colon"):
+        with pytest.raises(LsEditError):
+            rename_program(FULL_LS, bad)
+
+
+def test_rename_needs_a_prog_header():
+    from backupviewer.parsers.ls_edit import rename_program
+    with pytest.raises(LsEditError):
+        rename_program("/ATTR\r\n/MN\r\n/END\r\n", "FOO")
+
+
+# ---------------------------------------------------------------------------
 # /ATTR splices
 
 def test_attr_edits_preserve_shape():

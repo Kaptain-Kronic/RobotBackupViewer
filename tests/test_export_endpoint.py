@@ -167,6 +167,52 @@ def test_export_applies_edits(api, two_robots, tmp_path):
     assert b"Y = ********  mm," in out                  # neighbours untouched
 
 
+def test_export_rename_writes_new_name_and_patches_prog(api, two_robots, tmp_path):
+    a, _ = two_robots
+    dest = tmp_path / "export"
+    _ok(api.ws_export([{"root": str(a), "file": PROG, "save_as": "RENAMED"}], str(dest)))
+    out = dest / "RB010R01B01" / "RENAMED.LS"
+    assert out.is_file()
+    assert not (dest / "RB010R01B01" / PROG).exists()
+    data = out.read_bytes()
+    assert b"/PROG  RENAMED\r\n" in data       # header follows the file name
+    assert b"   1:  !setup ;\r\n" in data      # body still byte-exact
+
+
+def test_export_duplicate_same_source_two_names(api, two_robots, tmp_path):
+    """A duplicate is two edits on one source with different save_as values."""
+    a, _ = two_robots
+    dest = tmp_path / "export"
+    data = _ok(api.ws_export([
+        {"root": str(a), "file": PROG},
+        {"root": str(a), "file": PROG, "save_as": "MAIN_COPY",
+         "body": [{"text": "!a copy"}]},
+    ], str(dest)))
+    assert data["count"] == 2
+    assert (dest / "RB010R01B01" / PROG).read_bytes() == PROG_BYTES
+    copy = (dest / "RB010R01B01" / "MAIN_COPY.LS").read_bytes()
+    assert b"/PROG  MAIN_COPY\r\n" in copy and b"!a copy" in copy
+
+
+def test_export_refuses_two_programs_landing_on_one_name(api, two_robots, tmp_path):
+    a, _ = two_robots
+    dest = tmp_path / "export"
+    code = _err(api.ws_export([
+        {"root": str(a), "file": PROG},
+        {"root": str(a), "file": PROG, "save_as": "MAIN"},   # collides with itself
+    ], str(dest)))
+    assert code == "NAME_CLASH"
+    assert not dest.exists()
+
+
+def test_export_rejects_a_bad_rename(api, two_robots, tmp_path):
+    a, _ = two_robots
+    dest = tmp_path / "export"
+    assert _err(api.ws_export(
+        [{"root": str(a), "file": PROG, "save_as": "9bad name"}], str(dest))) == "BAD_EDIT"
+    assert not dest.exists()
+
+
 def test_export_refuses_dest_at_or_inside_any_backup(api, two_robots, tmp_path):
     a, b = two_robots
     edits = [{"root": str(a), "file": PROG}, {"root": str(b), "file": PROG}]
