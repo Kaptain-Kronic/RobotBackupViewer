@@ -777,6 +777,23 @@
     if (r.history_root) {
       items.push({ label: "open folder", onClick: function () { openLocation(r.history_root); } });
     }
+    /* the quick bulk route into the edit workspace: every .LS this robot has.
+       Resolved server-side (a stale Latest mirror must not decide it) and
+       without opening a session - a workspace spans more robots than the
+       session cap allows. */
+    items.push({
+      label: "add all programs to edit workspace",
+      onClick: function () {
+        BV.api.call("ws_robot_programs", r.id).then(function (res) {
+          var added = BV.workspace.addMany((res.programs || []).map(function (p) {
+            return { root: res.root, label: res.label, file: p.file, name: p.name };
+          }));
+          if (!added) { BV.toast("already in the workspace"); return; }
+          BV.toast(added + " program" + (added === 1 ? "" : "s") + " added");
+          BV.openWorkspace();
+        }).catch(function (e) { BV.toast(e.message || "could not read that robot"); });
+      },
+    });
     return items;
   }
 

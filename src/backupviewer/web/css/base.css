@@ -197,7 +197,9 @@ body { overflow: hidden; }
 
 /* a solo pop-out window shows one backup: no tab strip, no compare, no
    jobstrip - that's all main-window chrome */
-.solo #sessionbar, .solo #btn-compare, .solo #jobstrip { display: none !important; }
+/* #btn-edit joins these: route() bounces every shell hash to #overview in a
+   pop-out, so a workspace button there could never reach its screen. */
+.solo #sessionbar, .solo #btn-compare, .solo #btn-edit, .solo #jobstrip { display: none !important; }
 
 .tab-btn {
   appearance: none;

@@ -49,6 +49,20 @@
       if (BV.focusGlobalSearch) BV.focusGlobalSearch();
       return;
     }
+
+    /* Ctrl+Tab cycles OPEN BACKUPS, browser-style - also while typing, since
+       that is what a browser does. Inside the edit workspace the screen's own
+       handler claims it first (there it cycles that pane's program tabs) and
+       stops propagation, so this never double-fires. */
+    if (e.ctrlKey && e.key === "Tab" && BV.session && BV.session.list.length > 1) {
+      e.preventDefault();
+      var list = BV.session.list;
+      var at = -1;
+      list.forEach(function (t, i) { if (t.sid === BV.session.currentSid) at = i; });
+      var next = list[((at < 0 ? 0 : at) + (e.shiftKey ? -1 : 1) + list.length) % list.length];
+      if (next && next.sid !== BV.session.currentSid) BV.session.switchTo(next.sid);
+      return;
+    }
     if (typing()) return;
 
     /* positional tabs follow the number row past 9: 1-9, then - and = (the

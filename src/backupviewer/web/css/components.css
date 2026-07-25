@@ -455,6 +455,131 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .lsed-code ::selection,
 .lsed-code::selection { background: color-mix(in srgb, var(--accent) 30%, var(--bg2)); }
 
+/* ---------------- edit workspace (#edit shell screen) ---------------- */
+/* rail | resizer | two panes (separated by a second resizer). Sizes in rem so
+   they grow with the text-size setting; the resizers write px inline. */
+.ws { display: flex; height: 100%; min-height: 0; }
+.ws-rail {
+  width: 17rem; flex: none; display: flex; flex-direction: column;
+  background: var(--bg2); min-height: 0; min-width: 11rem; max-width: 46rem;
+}
+.ws-railtabs { display: flex; gap: 0.2rem; padding: 0.35rem 0.4rem 0; flex: none; }
+.ws-railtab {
+  flex: 1; text-align: center; cursor: pointer; user-select: none;
+  font-size: 0.74rem; padding: 0.25rem 0.3rem; border-radius: 4px 4px 0 0;
+  color: var(--sub); border: 1px solid transparent; border-bottom: none;
+}
+.ws-railtab:hover { color: var(--text); }
+.ws-railtab.active { color: var(--text); background: var(--bg); border-color: var(--edge); }
+.ws-railhead {
+  padding: 0.35rem 0.6rem; font-size: 0.72rem; color: var(--sub); flex: none;
+  border-top: 1px solid var(--edge); border-bottom: 1px solid var(--edge);
+  display: flex; align-items: center; gap: 0.4rem;
+}
+.ws-railbody { overflow: auto; flex: 1; padding-bottom: 0.5rem; min-height: 0; }
+.ws-resizer { width: 5px; flex: none; cursor: col-resize; background: var(--edge); opacity: 0.5; }
+.ws-resizer:hover, .ws-resizer.dragging { opacity: 1; background: var(--accent); }
+.ws-work { flex: 1; display: flex; min-width: 0; min-height: 0; }
+.ws-empty { padding: 1.2rem 0.8rem; text-align: center; color: var(--sub); font-size: 0.8rem; }
+.ws-empty .big { color: var(--text); margin-bottom: 0.3rem; }
+
+.ws-robot-h {
+  display: flex; align-items: center; gap: 0.4rem; cursor: pointer;
+  padding: 0.25rem 0.6rem; font-size: 0.78rem; color: var(--accent);
+  font-family: var(--font-mono); user-select: none; margin-top: 0.3rem;
+}
+.ws-robot-h:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.ws-robot-h .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-prog {
+  display: flex; align-items: center; gap: 0.4rem; cursor: grab;
+  padding: 0.18rem 0.5rem 0.18rem 1.5rem; font-size: 0.78rem;
+  font-family: var(--font-mono); color: var(--text); user-select: none;
+}
+.ws-prog:hover { background: color-mix(in srgb, var(--sub-alt) 20%, transparent); }
+.ws-prog.sel { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.ws-prog .dot { width: 0.45rem; height: 0.45rem; border-radius: 50%; flex: none; }
+.ws-prog .dot.dirty { background: var(--warn); }
+.ws-prog .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ws-prog .rm { opacity: 0; padding: 0 0.15rem; border-radius: 3px; color: var(--sub); }
+.ws-prog:hover .rm { opacity: 0.6; }
+.ws-prog .rm:hover { opacity: 1; background: color-mix(in srgb, var(--error) 35%, transparent); }
+
+.ws-panes { flex: 1; display: flex; min-width: 0; position: relative; padding: 0.4rem; gap: 0; }
+.ws-pane {
+  flex: 1; min-width: 0; display: flex; flex-direction: column;
+  border: 1px solid transparent; border-radius: var(--radius); margin: 0 0.2rem;
+}
+.ws-pane.active { border-color: color-mix(in srgb, var(--accent) 45%, var(--edge)); }
+.ws-tabs {
+  display: flex; gap: 0.15rem; overflow-x: auto; overflow-y: hidden;
+  padding: 0.15rem 0.15rem 0.3rem; flex: none; min-height: 1.9rem; scrollbar-width: thin;
+}
+.ws-tab {
+  display: flex; align-items: center; gap: 0.35rem; cursor: grab;
+  padding: 0.18rem 0.4rem 0.18rem 0.55rem; font-size: 0.75rem;
+  font-family: var(--font-mono); white-space: nowrap; user-select: none;
+  background: var(--bg2); border: 1px solid var(--edge); border-radius: 4px; color: var(--sub);
+}
+.ws-tab.active { background: var(--bg); color: var(--text); border-color: color-mix(in srgb, var(--accent) 55%, var(--edge)); }
+.ws-tab .rb { color: var(--accent); opacity: 0.75; }
+.ws-tab .x { opacity: 0.5; padding: 0 0.15rem; border-radius: 3px; }
+.ws-tab .x:hover { opacity: 1; background: color-mix(in srgb, var(--error) 35%, transparent); }
+.ws-tab .dot { width: 0.4rem; height: 0.4rem; border-radius: 50%; background: var(--warn); flex: none; }
+.ws-detbtn { margin-left: auto; flex: none; padding: 0.1rem 0.45rem; font-size: 0.7rem; }
+.ws-pane-host { flex: 1; min-height: 0; position: relative; }
+.ws-pane-host .lsed-scroll { position: relative; }   /* anchor for the flash bar */
+.ws-details { flex: none; max-height: 45%; overflow: auto; margin-top: 0.4rem; }
+.ws-details .card { margin-bottom: 0.5rem; }
+.flashbar {
+  position: absolute; left: 0; right: 0; pointer-events: none;
+  background: color-mix(in srgb, var(--warn) 34%, transparent);
+  animation: wsflash 1.5s ease-out forwards;
+}
+@keyframes wsflash { from { opacity: 1; } to { opacity: 0; } }
+.dropzone {
+  position: absolute; top: 0; bottom: 0; width: 50%;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border: 2px dashed var(--accent); border-radius: var(--radius);
+  pointer-events: none; z-index: 5; display: none;
+}
+.dropzone.show { display: block; }
+
+/* find/replace panel (lives in the rail so the code stays visible) */
+.fp { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.fp-inputs { padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--edge); flex: none; }
+.fp-inputs input[type=text] {
+  width: 100%; box-sizing: border-box; background: var(--bg); color: var(--text);
+  border: 1px solid var(--edge); border-radius: 4px; padding: 0.22rem 0.45rem;
+  font-family: var(--font-mono); font-size: 0.8rem; margin-bottom: 0.3rem;
+}
+.fp-inputs input[type=text]:focus { border-color: var(--accent); outline: none; }
+.fp-opt { display: flex; align-items: center; gap: 0.35rem; font-size: 0.72rem; color: var(--sub); margin-top: 0.15rem; }
+.fp-opt code { color: var(--text); font-size: 0.7rem; }
+.fp-scope {
+  display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.4rem;
+  padding-top: 0.35rem; border-top: 1px dashed var(--edge);
+}
+.fp-scope label { display: flex; align-items: center; gap: 0.25rem; font-size: 0.72rem; font-family: var(--font-mono); }
+.fp-results { flex: 1; overflow: auto; min-height: 0; }
+.fp-rb, .fp-pg, .fp-ln { display: flex; align-items: center; gap: 0.35rem; font-family: var(--font-mono); }
+.fp-rb { padding: 0.3rem 0.5rem 0.15rem; font-size: 0.76rem; color: var(--accent); }
+.fp-rb.excluded { color: var(--sub-alt); }
+.fp-pg { padding: 0.12rem 0.5rem 0.12rem 1.1rem; font-size: 0.74rem; color: var(--sub); }
+.fp-ln { padding: 0.1rem 0.5rem 0.1rem 2.3rem; font-size: 0.74rem; color: var(--text); cursor: pointer; }
+.fp-ln:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.fp-ln .n { color: var(--sub-alt); min-width: 2.2rem; text-align: right; flex: none; }
+.fp-ln .snip { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--sub); }
+.fp-ln mark { background: color-mix(in srgb, var(--warn) 45%, transparent); color: var(--text); border-radius: 2px; }
+.fp-foot { border-top: 1px solid var(--edge); padding: 0.45rem 0.6rem; display: flex; align-items: center; gap: 0.5rem; flex: none; }
+.caret { cursor: pointer; width: 0.8em; display: inline-block; user-select: none; flex: none; }
+
+/* the workspace entry button in the topbar carries a count badge */
+#btn-edit { position: relative; }
+#btn-edit .wsbadge {
+  margin-left: 0.35rem; background: var(--accent); color: var(--bg);
+  border-radius: 999px; padding: 0 0.35em; font-size: 0.7rem; font-weight: 600;
+}
+
 /* edit-mode side panel: compact editable attr/position fields */
 .edattr-row { display: flex; align-items: center; gap: 0.6rem; margin: 0.3rem 0; }
 .edattr-row label { color: var(--sub); font-size: 0.78rem; min-width: 4.5em; }

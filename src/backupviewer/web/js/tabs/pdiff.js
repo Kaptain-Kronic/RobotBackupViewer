@@ -42,6 +42,28 @@
       toolbar.appendChild(prevBtn);
       toolbar.appendChild(nextBtn);
 
+      /* each side goes to the edit workspace on its own: the two sides are
+         different robots, so they are two separate entries. diff_program
+         returns no path - the roots come from state, like compare.js does. */
+      var rootA = (BV.state.manifest && BV.state.manifest.path) || "";
+      var rootB = (BV.state.compare && BV.state.compare.path) || "";
+      if (rootA) {
+        toolbar.appendChild(BV.workspace.button({
+          label: "+ left", title: "add " + d.a.robot + " · " + d.a.name + " to the edit workspace",
+          entries: function () {
+            return [{ root: rootA, label: d.a.robot, file: d.a.rel || fileA, name: fileA }];
+          },
+        }));
+      }
+      if (rootB) {
+        toolbar.appendChild(BV.workspace.button({
+          label: "+ right", title: "add " + d.b.robot + " · " + d.b.name + " to the edit workspace",
+          entries: function () {
+            return [{ root: rootB, label: d.b.robot, file: d.b.rel || fileB, name: fileB }];
+          },
+        }));
+      }
+
       var wrap = BV.el("div", { class: "viewer pd-viewer", style: "height:calc(100% - 2.4rem)" });
       view.appendChild(wrap);
 

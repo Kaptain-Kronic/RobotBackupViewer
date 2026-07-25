@@ -283,6 +283,25 @@
     if (BV.state.compare) location.hash = "#compare";
     else BV.compareFlow();
   });
+  /* the edit workspace: a shell screen that spans robots, so its entry point
+     lives in the topbar (NOT in setTopbarChrome - membership there is exactly
+     what would hide it on shell screens) and carries a live count badge. */
+  var editBtn = document.getElementById("btn-edit");
+  if (editBtn) {
+    editBtn.addEventListener("click", function () { BV.openWorkspace(); });
+    var paintBadge = function () {
+      var n = BV.workspace ? BV.workspace.count() : 0;
+      var d = BV.workspace ? BV.workspace.dirtyCount() : 0;
+      editBtn.innerHTML = "edit" + (n ? '<span class="wsbadge">' + n + "</span>" : "");
+      editBtn.title = n
+        ? n + " program" + (n === 1 ? "" : "s") + " in the edit workspace" +
+          (d ? ", " + d + " edited" : "")
+        : "the edit workspace — programs you are editing across robots";
+    };
+    BV.state.on("workspace", paintBadge);
+    paintBadge();
+  }
+
   document.getElementById("btn-cog").addEventListener("click", function () { BV.uiPrefs.modal(); });
   document.getElementById("btn-help").addEventListener("click", function () { BV.helpOverlay(); });
 
@@ -331,6 +350,9 @@
     }).then(function (settings) {
       BV.state.settings = settings || {};
       BV.uiPrefs.apply(BV.state.settings);
+      /* the working set + any unsaved drafts persist in settings, so restore
+         them before anything paints the badge or opens #edit */
+      if (BV.workspace) BV.workspace.load();
       /* a solo pop-out boots pinned to its sid; the main window asks for
          whatever is active (or nothing) */
       return BV.solo ? BV.api.call("get_state", BV.soloSid) : BV.api.call("get_state");

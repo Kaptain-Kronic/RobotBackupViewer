@@ -49,8 +49,22 @@ log = logging.getLogger(__name__)
 MAX_TEXT_BYTES = 2_000_000
 HEX_PREVIEW_BYTES = 4096
 MAX_IMAGE_BYTES = 12_000_000
+MAX_WS_SCAN_FILES = 20_000   # same bound the session walk uses
 _IMAGE_MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                ".png": "image/png", ".bmp": "image/bmp"}
+
+
+def _is_ls_program(p: Path) -> bool:
+    """A TP program is a .LS whose FIRST bytes are /PROG - the same content
+    test session._classify_ls uses. Extension alone is not enough: report dumps
+    (ERRALL.LS, LOGBOOK.LS) are .LS too."""
+    if p.suffix.lower() != ".ls":
+        return False
+    try:
+        with open(p, "rb") as f:
+            return f.read(120).decode("cp1252", errors="replace").startswith("/PROG")
+    except OSError:
+        return False
 
 
 class ApiError(Exception):
@@ -723,6 +737,10 @@ class Api:
                 out.append({
                     "name": name,
                     "file": p.name,
+                    # path relative to the backup root: the edit workspace keys
+                    # on it, because a basename collides across robots and a
+                    # program may live in a dump subfolder (md_ls/, mdb/)
+                    "rel": s.rel(p),
                     "prog_type": h["prog_type"] or "TP",
                     "comment": a.get("comment", ""),
                     "owner": a.get("owner", ""),
@@ -786,14 +804,18 @@ class Api:
             p = s.find(name)
             if p is None or p not in s.program_files:
                 raise ApiError("NOT_FOUND", f"Program not found in {s.root.name}: {name}")
-            return ls_program.parse_ls_program(read_text(p))
+            prog = ls_program.parse_ls_program(read_text(p))
+            prog["rel"] = s.rel(p)      # workspace identity for this side
+            return prog
 
         pa = load(a, file_a)
         pb = load(b, file_b)
         out = compare.align_program_lines(pa["body"], pb["body"])
-        out["a"] = {"name": pa["name"], "file": file_a, "robot": a.robot_name or a.root.name,
+        out["a"] = {"name": pa["name"], "file": file_a, "rel": pa["rel"],
+                    "robot": a.robot_name or a.root.name,
                     "comment": pa["attrs"].get("comment", ""), "modified": pa["attrs"].get("modified", "")}
-        out["b"] = {"name": pb["name"], "file": file_b, "robot": b.robot_name or b.root.name,
+        out["b"] = {"name": pb["name"], "file": file_b, "rel": pb["rel"],
+                    "robot": b.robot_name or b.root.name,
                     "comment": pb["attrs"].get("comment", ""), "modified": pb["attrs"].get("modified", "")}
         return out
 
@@ -807,6 +829,7 @@ class Api:
         def build():
             text = read_text(p)
             prog = ls_program.parse_ls_program(text)
+            prog["rel"] = s.rel(p)      # workspace identity (see _build_programs)
             graph = self._build_call_graph()
             key = prog["name"].upper() if prog["name"] else p.stem.upper()
             prog["calls"] = graph["calls"].get(key, [])
@@ -825,34 +848,140 @@ class Api:
 
         return s.cached(f"program:{p.name.upper()}", build)
 
-    # -- edit / export ---------------------------------------------------------
-    # The viewer is read-only evidence; editing exports a modified COPY to a new
-    # folder the user picks and never touches the backup (enforced below).
+    # -- edit workspace (path-addressed) ---------------------------------------
+    # The viewer is read-only evidence; editing exports modified COPIES to a new
+    # folder the user picks and never touches a backup (enforced below).
+    #
+    # These endpoints address a program by {root, file-relative-to-root} and
+    # NEVER touch the session registry: an edit workspace routinely spans more
+    # robots than MAX_OPEN_SESSIONS allows, and session parse caches are never
+    # evicted. The relative path (not the basename) is the identity, because
+    # every robot has a MAIN.LS and a basename would silently edit the wrong
+    # robot's program.
 
-    def _need_program(self, s: BackupSession, file_name: str) -> Path:
-        p = s.find(file_name)
-        if p is None or p not in s.program_files:
-            raise ApiError("NOT_FOUND", f"Program not found: {file_name}")
+    def _ws_root(self, root: str) -> Path:
+        try:
+            p = Path(root or "").resolve()
+        except OSError:
+            raise ApiError("BAD_ROOT", "could not resolve that backup folder")
+        if not p.is_dir():
+            raise ApiError("BAD_ROOT", f"not a folder: {root}")
+        if not looks_like_backup(p):
+            raise ApiError("BAD_ROOT", f"{p.name} does not look like a backup folder")
         return p
 
+    def _ws_program(self, root: Path, rel: str) -> Path:
+        """Resolve a program inside `root`, refusing traversal and anything that
+        is not a /PROG-headed .LS (classification is by CONTENT - a bare *.LS
+        sweep would drag alarm reports like ERRALL.LS into the workspace)."""
+        r = (rel or "").replace("\\", "/").strip("/")
+        if not r or ".." in r.split("/"):
+            raise ApiError("BAD_FILE", "bad program path")
+        try:
+            p = (root / r).resolve()
+        except OSError:
+            raise ApiError("BAD_FILE", "could not resolve that program")
+        if not library._within(p, root) or not p.is_file():
+            raise ApiError("NOT_FOUND", f"program not found: {rel}")
+        if not _is_ls_program(p):
+            raise ApiError("BAD_FILE", f"{p.name} is not a TP program (.LS with /PROG)")
+        return p
+
+    def _ws_label(self, root: Path, hint: str = "") -> str:
+        """An honest robot folder name for the export tree. backup.json is the
+        app's own sidecar and the most reliable; then the caller's hint; then
+        the folder name (which for a dated snapshot is a timestamp, hence last)."""
+        try:
+            meta = json.loads((root / "backup.json").read_text(encoding="utf-8"))
+            if meta.get("robot"):
+                return ftpbackup._safe_name(str(meta["robot"]))
+        except (OSError, ValueError):
+            pass
+        if hint:
+            return ftpbackup._safe_name(hint)
+        return ftpbackup._safe_name(root.name)
+
     @_endpoint
-    def get_program_editable(self, file_name: str, sid: str | None = None):
-        """The editor's seed: the body as display text (no numbers, no ';',
-        wrapped statements joined) plus the three editable attributes. Derived
-        from pristine bytes via ls_edit.split_sections - the SAME code save
-        uses, so what you edit is exactly what re-emits. Byte-exact latin-1,
-        NOT get_program's lossy cp1252 `source`."""
-        s = self._need_session(sid)
-        p = self._need_program(s, file_name)
+    def ws_list_programs(self, root: str):
+        """Every TP program in a backup folder, WITHOUT opening a session.
+        Duplicate basenames across dump subfolders (md_ls/ vs mdb/ vs root) are
+        the same program - the shallowest copy wins, matching the session's own
+        priority rule. Returns [{file (relative), name, comment}]."""
+        r = self._ws_root(root)
+        # walk the \\?\-prefixed form so deep plant trees are reachable, but
+        # keep every RELATIVE path measured against that same walk root - the
+        # prefix is not in `r`, so relative_to(r) would raise.
+        walk = Path(ftpbackup.long_path(str(r)))
+        best: dict[str, tuple[int, str, Path]] = {}
+        seen = 0
+        for p in walk.rglob("*"):
+            seen += 1
+            if seen > MAX_WS_SCAN_FILES:
+                break
+            if not p.is_file() or not _is_ls_program(p):
+                continue
+            rel = p.relative_to(walk).as_posix()
+            depth = len(rel.split("/"))
+            cur = best.get(p.name.upper())
+            if cur is None or depth < cur[0]:
+                best[p.name.upper()] = (depth, rel, p)
+        out = []
+        for key in sorted(best):
+            _depth, rel, p = best[key]
+            try:
+                head = ls_program.parse_ls_header(read_text(p))
+            except OSError:
+                continue
+            out.append({
+                "file": rel,
+                "name": p.name,
+                "comment": head["attrs"].get("comment", ""),
+                "prog_type": head.get("prog_type", ""),
+            })
+        return out
+
+    @_endpoint
+    def ws_robot_programs(self, robot_id: str, which: str = "latest"):
+        """Every TP program in a library robot's backup, ready to drop into the
+        edit workspace: {root, label, programs:[...]}. Resolves the folder with
+        library.resolve_open_path (a stale Latest mirror must not make a robot
+        unopenable) and opens NO session."""
+        e = library.get_robot(robot_id)
+        if e is None:
+            raise ApiError("NOT_FOUND", "robot not in library")
+        path = library.resolve_open_path(e, which)
+        if not path or not Path(path).is_dir():
+            raise ApiError("NOT_FOUND",
+                           f"backup folder missing: {path or '(no backup on disk)'}")
+        r = self._ws_root(path)
+        return {
+            "root": str(r),
+            "label": e.get("robot", "") or r.name,
+            "programs": self.ws_list_programs(str(r))["data"],
+        }
+
+    @_endpoint
+    def ws_get_program(self, root: str, file: str):
+        """The editor's seed for one program: the body as display text (no line
+        numbers, no ';', wrapped statements joined) plus the editable
+        attributes. Derived from pristine bytes via ls_edit.split_sections - the
+        SAME code the export uses, so what you edit is exactly what re-emits.
+        Byte-exact latin-1, NOT get_program's lossy cp1252 `source`."""
+        r = self._ws_root(root)
+        p = self._ws_program(r, file)
         text = ls_edit.decode_ls(p.read_bytes())
         sections = ls_edit.split_sections(text)
-        attrs = ls_program.parse_ls_header(text)["attrs"]
+        prog = ls_program.parse_ls_program(text)
+        attrs = prog["attrs"]
         return {
             "name": p.name,
+            "file": (p.relative_to(r).as_posix()
+                     if library._within(p, r) else p.name),
             "body": ls_edit.body_text(sections),
             "attrs": {"owner": attrs.get("owner", ""),
                       "comment": attrs.get("comment", ""),
                       "protect": attrs.get("protect", "")},
+            "positions": prog["positions"],
         }
 
     @_endpoint
@@ -868,43 +997,46 @@ class Api:
         return result[0] if isinstance(result, (list, tuple)) else result
 
     @_endpoint
-    def export_edited_programs(self, edits, dest, sid: str | None = None):
-        """Write edited .LS programs to a NEW folder chosen by the user.
+    def ws_export(self, edits, dest):
+        """Write edited .LS programs to a NEW folder chosen by the user, ONE
+        SUBFOLDER PER ROBOT (program names repeat across robots, so a flat drop
+        would silently overwrite one robot's work with another's).
 
-        The backup is never touched: the destination must be OUTSIDE the open
-        backup and must not itself already look like a backup. All-or-nothing
-        (every output is built in memory first, then written .part -> os.replace
-        so a partial export never appears), flat layout, byte-faithful latin-1.
+        No backup is ever touched: the destination must not be, sit inside, or
+        look like ANY of the backups being edited. All-or-nothing - every output
+        is built in memory first, then written .part -> os.replace, so a
+        half-finished export never appears on disk.
 
-        `edits` = [{"file": <basename>, "body": tokens|None,
-                    "attrs": {owner|comment|protect}|None,
-                    "positions": [{id,gp,field,value}]|None}] - each part None
-        when unchanged. Body tokens: {"ref": i} keeps pristine record i
-        byte-exact (renumbered), {"text": s} emits canonically; the split/emit
-        engine lives in parsers/ls_edit.py.
+        `edits` = [{"root": <backup folder>, "file": <path relative to root>,
+                    "label": <robot name hint, optional>,
+                    "body": tokens|None, "attrs": {...}|None,
+                    "positions": [...]|None}] - each edit part None when
+        unchanged. Body tokens: {"ref": i} keeps pristine record i byte-exact
+        (renumbered), {"text": s} emits canonically; engine in parsers/ls_edit.py.
         """
-        s = self._need_session(sid)
         if not edits:
             raise ApiError("NO_EDITS", "nothing to export")
         if not dest:
             raise ApiError("BAD_DEST", "an export folder is required")
         try:
             d = Path(dest).resolve()
-            root = Path(s.root).resolve()
         except OSError:
             raise ApiError("BAD_DEST", "could not resolve the export folder")
-        if d == root or library._within(d, root) or looks_like_backup(d):
+        if looks_like_backup(d):
             raise ApiError(
                 "BAD_DEST",
-                "choose a folder outside the backup - the viewer never writes "
-                "into a backup")
-        outputs: list[tuple[str, bytes]] = []
+                "that folder looks like a backup - the viewer never writes into "
+                "a backup")
+        outputs: list[tuple[Path, bytes]] = []
         for e in edits:
             e = e or {}
-            name = e.get("file")
-            p = self._need_program(s, name) if name else None
-            if p is None:
-                raise ApiError("NOT_FOUND", "an edit is missing its file name")
+            r = self._ws_root(e.get("root", ""))
+            if d == r or library._within(d, r):
+                raise ApiError(
+                    "BAD_DEST",
+                    "choose a folder outside the backups you are editing - the "
+                    "viewer never writes into a backup")
+            p = self._ws_program(r, e.get("file", ""))
             text = ls_edit.decode_ls(p.read_bytes())
             try:
                 sections = ls_edit.split_sections(text)
@@ -921,16 +1053,15 @@ class Api:
                 raise ApiError("BAD_CHAR", f"{p.name}: {ex}")
             except ls_edit.LsEditError as ex:
                 raise ApiError("BAD_EDIT", f"{p.name}: {ex}")
-            outputs.append((p.name, data))
-        os.makedirs(ftpbackup.long_path(str(d)), exist_ok=True)
+            outputs.append((d / self._ws_label(r, e.get("label", "")) / p.name, data))
         written: list[str] = []
-        for name, data in outputs:
-            target = str(d / name)
-            part = ftpbackup.long_path(target + ".part")
+        for target, data in outputs:
+            os.makedirs(ftpbackup.long_path(str(target.parent)), exist_ok=True)
+            part = ftpbackup.long_path(str(target) + ".part")
             with open(part, "wb") as f:
                 f.write(data)
-            os.replace(part, ftpbackup.long_path(target))
-            written.append(name)
+            os.replace(part, ftpbackup.long_path(str(target)))
+            written.append(target.parent.name + "/" + target.name)
         self._last_export_dest = str(d)
         settings.set_value("last_export_folder", str(d))
         return {"dest": str(d), "files": written, "count": len(written)}
