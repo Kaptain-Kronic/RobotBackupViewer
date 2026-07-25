@@ -48,13 +48,21 @@ def test_png_rejects_wrong_length():
         screengrab.png_encode(2, 2, b"\x00" * 15)
 
 
+def _capture_rect_png(x, y, w, h) -> bytes:
+    """The composition grab_window_png uses (screengrab.py) once its client
+    rect is known. There is no public rect-capture entry point - the app only
+    ever captures a WINDOW - so the shared GDI+PNG machinery is exercised
+    here the same way the live path composes it."""
+    return screengrab.png_encode(w, h, screengrab._grab_rect_rgba(x, y, w, h))
+
+
 def _desktop_capturable() -> bool:
     """GDI can't capture a locked/disconnected session - that's the machine's
     state, not a code bug, so the live-capture smoke test skips honestly."""
     if sys.platform != "win32":
         return False
     try:
-        screengrab.grab_rect_png(0, 0, 2, 2)
+        _capture_rect_png(0, 0, 2, 2)
         return True
     except OSError:
         return False
@@ -65,17 +73,11 @@ needs_desktop = pytest.mark.skipif(
 
 
 @needs_desktop
-def test_grab_rect_png_speaks_png():
-    png = screengrab.grab_rect_png(0, 0, 6, 4)
+def test_captured_rect_speaks_png():
+    png = _capture_rect_png(0, 0, 6, 4)
     w, h, rgba = _decode_png(png)
     assert (w, h) == (6, 4)
     assert all(rgba[i] == 255 for i in range(3, len(rgba), 4)), "alpha forced opaque"
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="GDI capture is Windows-only")
-def test_grab_rejects_empty_rect():
-    with pytest.raises(OSError):
-        screengrab.grab_rect_png(0, 0, 0, 10)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="window query is Windows-only")

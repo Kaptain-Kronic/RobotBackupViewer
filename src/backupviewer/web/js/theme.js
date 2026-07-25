@@ -31,6 +31,23 @@
     return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
   }
 
+  /* The ONE hex reader for everything that paints from a theme variable.
+     bgfx and the glass slider each carried their own 3-or-6-digit regex, so an
+     8-digit (alpha) theme color missed and they painted a HARDCODED default -
+     the app's own rule is that colors derive from the variables, never a
+     literal. Returns [r,g,b], or null when the text really is not a hex so the
+     caller can skip painting instead of inventing a color. */
+  BV.hexRgb = function (str) {
+    var h = String(str == null ? "" : str).trim().toLowerCase();
+    if (!/^#?([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/.test(h)) return null;
+    return hexToRgb(h);
+  };
+
+  /* the computed value of a CSS custom property, as [r,g,b] or null */
+  BV.varRgb = function (name) {
+    return BV.hexRgb(getComputedStyle(document.documentElement).getPropertyValue(name));
+  };
+
   /* linear per-channel blend; t is the fraction of b mixed into a */
   function mixHex(a, b, t) {
     var ra = hexToRgb(a), rb = hexToRgb(b);

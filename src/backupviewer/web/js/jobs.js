@@ -265,8 +265,19 @@
     groups.cancelled.forEach(function (p) {
       html += panelRow(p, "–", "dim", "cancelled", false);
     });
+    /* a job can finish "done" and still have lost files — a camera station
+       keeps going when one lens fails, and the pull skips what it cannot
+       read. That is a partial, and it must not wear the same clean ✓ as a
+       whole backup: flag it, the tech decides. */
     groups.done.forEach(function (p) {
-      html += panelRow(p, "✓", "ok", (p.done || 0) + " files", false);
+      var lost = (p.error || "") ||
+        ((p.skipped && p.skipped.length) ? p.skipped.length + " skipped" : "");
+      if (lost) {
+        html += panelRow(p, "!", "warn",
+          (p.done || 0) + " files · " + lost, false);
+      } else {
+        html += panelRow(p, "✓", "ok", (p.done || 0) + " files", false);
+      }
     });
     var keep = panel.scrollTop;
     panel.innerHTML = html;

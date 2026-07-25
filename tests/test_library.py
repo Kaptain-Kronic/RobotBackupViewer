@@ -7,7 +7,7 @@ def _iso(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "app_dir", lambda: tmp_path)
 
 
-def test_add_list_remove(monkeypatch, tmp_path):
+def test_add_and_list(monkeypatch, tmp_path):
     _iso(monkeypatch, tmp_path)
     assert library.list_robots()["robots"] == []
 
@@ -19,10 +19,9 @@ def test_add_list_remove(monkeypatch, tmp_path):
     assert len(data["robots"]) == 1
     assert data["robots"][0]["robot"] == "R1"
     assert data["robots"][0]["ips"] == ["10.0.0.1"]
-
-    assert library.remove_robot(e["id"]) is True
-    assert library.list_robots()["robots"] == []
-    assert library.remove_robot("nope") is False
+    # NOTE: there is deliberately no remove_robot. Files are law - dropping the
+    # overlay entry does nothing durable because the next scan rebuilds it from
+    # the folder. set_hidden is the real, honest mechanism (and is wired).
 
 
 def test_robot_name_alias_and_scalar_ip(monkeypatch, tmp_path):

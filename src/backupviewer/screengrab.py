@@ -109,13 +109,6 @@ def _dpi_aware(fn, *args):
                 pass
 
 
-def grab_rect_png(x: int, y: int, w: int, h: int) -> bytes:
-    """A physical screen rect as PNG bytes."""
-    if w <= 0 or h <= 0:
-        raise OSError("empty capture rect")
-    return png_encode(w, h, _dpi_aware(_grab_rect_rgba, x, y, w, h))
-
-
 # Window prototypes on an ISOLATED user32 handle (never mutating the shared
 # ctypes.windll cache app.py also uses). Without restype/argtypes, ctypes
 # treats every handle as a 32-bit C int - and a top-level HWND on Win64 can

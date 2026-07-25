@@ -35,7 +35,7 @@ _LOCK = threading.Lock()
 # what a job record remembers of its start spec - enough to re-fire it, never
 # a password
 _SPEC_KEYS = ("host", "robot", "line", "plant", "robot_id", "user", "passive",
-              "port", "devices", "recurse_fr", "note")
+              "port", "note")
 
 
 def _file():
@@ -128,11 +128,6 @@ def finish_job(run_id: str, job_id: str, snap: dict) -> None:
         if all(j.get("status") != "running" for j in run["jobs"]):
             run["finished"] = _now()
         _write(data)
-
-
-def last_run() -> dict | None:
-    runs = load()["runs"]
-    return runs[0] if runs else None
 
 
 def failed_specs(run_id: str | None = None) -> list[dict]:

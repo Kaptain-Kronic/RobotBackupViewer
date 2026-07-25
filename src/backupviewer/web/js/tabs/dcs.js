@@ -27,13 +27,22 @@
 
   /* ---- helpers ---- */
 
-  /* dcs reserves bright colors for changed/NG; a screen of OK stays muted */
+  /* dcs reserves bright colors for changed/NG; a screen of OK stays muted.
+     The vocabulary is dcs.py's _STATUS_TOKENS: OK CHGD NG PEND WARN UNAV INIT.
+     PEND and WARN are not failures — a token literally named WARN wearing an
+     error pill is a false alarm — so they take the warn variant. NG and the
+     rest keep err. This is the ONE map: the 3D tab used to carry its own,
+     which disagreed here and also tested for a "SAFE" status that no parser
+     has ever emitted. */
   function statusVariant(st) {
-    return st === "OK" ? "ok-soft" : (st === "CHGD" ? "warn" : "err");
+    if (st === "OK") return "ok-soft";
+    return (st === "CHGD" || st === "PEND" || st === "WARN") ? "warn" : "err";
   }
 
   function statusPill(st) {
-    return st ? BV.pill(st.toLowerCase(), statusVariant(st)) : "";
+    /* verify reports write dashes where there is no status yet */
+    if (!st || /^-+$/.test(st)) return "";
+    return BV.pill(st.toLowerCase(), statusVariant(st));
   }
 
   function menuBadge(sum) {
@@ -160,8 +169,10 @@
     });
     return dl;
   }
-  /* the 3D view's side panel shows the same pendant-style detail blocks */
+  /* the 3D view's side panel shows the same pendant-style detail blocks, and
+     must read a status the same way this tab does — one map, both screens */
   BV.dcsDetail = detailList;
+  BV.dcsStatusPill = statusPill;
 
   /* user model: each model drops down to its elements as nested collapsible
      headers, and each element drops down to its own fields (headers on headers) */

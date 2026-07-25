@@ -155,7 +155,8 @@ def probe(window):
         time.sleep(0.3)
 
         # ---- ⚙ settings: the check-on-startup switch round-trips ----
-        js(window, "BV.uiPrefs.modal()")
+        # one dialog, two tabs now: app behavior lives on "preferences"
+        js(window, "BV.uiPrefs.modal('preferences')")
         rows = poll(window, """(function () {
             var rows = [...document.querySelectorAll('.modal .set-row')]
                 .map(function (x) { return x.querySelector('.name').textContent; });

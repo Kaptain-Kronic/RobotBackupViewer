@@ -1,13 +1,14 @@
-"""Hidden-window probe for the background effects (bgfx.js) + the 🎨 theme
-window (theme_ui.js).
+"""Hidden-window probe for the background effects (bgfx.js) + the ⚙ settings
+dialog (settings_ui.js) and its theme picker (theme_ui.js).
 
 Exercises the part the probe environment is uniquely good at: this window
 has NO requestAnimationFrame, which is exactly the environment bgfx must
 survive (build every effect, never throw, settle for a static frame). Also
 checks the layer lifecycle (canvas/css created and torn down per effect),
-the theme window's tabs/sliders/effect menu, the themes tab's
-restore-on-close contract, that tuning and effect choices land in
-settings.json, and that ⚙ settings kept only behavior rows.
+the ONE dialog's two tabs and their row sets, the theme picker panel
+(flat list, Custom first, hover-off ends the preview, Esc closes the panel
+and not the dialog), that the two scale sliders commit on RELEASE, and that
+tuning and effect choices land in settings.json.
 
 Fully synthetic and identifier-clean: empty library in a temp folder,
 APPDATA redirected there BEFORE importing the app.
@@ -109,23 +110,71 @@ def probe(window):
         check("teardown.layers_gone",
               not js(window, "!!document.getElementById('bgfx-canvas') || !!document.getElementById('bgfx-css')"))
 
-        # ---- theme window: themes tab = background block on top + colors ----
-        check("theme.btn_present", js(window, "!!document.getElementById('btn-theme')"))
+        # ---- ONE dialog, two tabs; 🎨 is gone ----
+        check("settings.one_button",
+              js(window, "!!document.getElementById('btn-cog') && !document.getElementById('btn-theme')"))
         js(window, "BV.bgfx.set('rain', false)")
-        js(window, "BV.themeUI.open('themes')")
-        nsliders = poll(window, "document.querySelectorAll('.modal.theme-win input[type=range]').length")
-        check("theme.bg_sliders_on_themes_tab", nsliders == 4, f"(got {nsliders})")
-        check("theme.fx_button_names_current",
+        js(window, "BV.uiPrefs.modal()")
+        got = poll(window, """(function(){
+            var m = document.querySelector('#modal-root .modal');
+            if (!m) return '';
+            return JSON.stringify({
+                win: m.classList.contains('settings-win'),
+                tabs: [...m.querySelectorAll('.set-tabs button')].map(function(b){return b.textContent;}),
+                heads: [...m.querySelectorAll('.set-head')].map(function(h){return h.textContent;}),
+                rows: [...m.querySelectorAll('.set-row .name')].map(function(n){return n.textContent;}),
+            });
+        })()""")
+        disp = json.loads(got or "{}")
+        check("settings.win_class", disp.get("win") is True)
+        check("settings.tabs", disp.get("tabs") == ["display", "preferences"], f"({disp.get('tabs')})")
+        check("settings.display_sections",
+              disp.get("heads") == ["theme", "interface", "background"], f"({disp.get('heads')})")
+        # opacity + frost belong with the interface knobs, not the effect sliders
+        check("settings.display_rows",
+              disp.get("rows") == ["theme", "font", "borders", "text size", "toolbar size",
+                                   "panel opacity", "frost", "effect", "intensity", "size"],
+              f"({disp.get('rows')})")
+        # the theme row: ＋ FIRST, then the picker, tight and right-aligned with
+        # the control column above it
+        got = js(window, """(function(){
+            var m = document.querySelector('#modal-root .modal');
+            var g = m.querySelector('.set-theme');
+            var k = [...g.children];
+            var seg = [...m.querySelectorAll('.set-row')].find(function(r){
+                return r.querySelector('.name').textContent === 'font'; }).querySelector('.seg');
+            return JSON.stringify({
+                order: k.map(function(e){ return e.classList.contains('theme-new') ? '+' : 'pick'; }),
+                gap: Math.round(k[1].getBoundingClientRect().left - k[0].getBoundingClientRect().right),
+                flush: Math.abs(k[1].getBoundingClientRect().right - seg.getBoundingClientRect().right) <= 1,
+            });
+        })()""")
+        trow = json.loads(got or "{}")
+        check("settings.theme_row_order", trow.get("order") == ["+", "pick"], f"({trow.get('order')})")
+        check("settings.theme_row_tight", 0 <= (trow.get("gap") or 99) <= 8, f"({trow.get('gap')})")
+        check("settings.theme_row_flush", trow.get("flush") is True)
+
+        check("settings.fx_button_names_current",
               (js(window, "document.querySelector('.modal .btn.fx-pick').textContent") or "").startswith("rain"))
-        check("theme.credit_line",
+        check("settings.credit_line",
               js(window, "[...document.querySelectorAll('.modal .acc-credit')].some(function(c){return c.textContent.indexOf('odysseus') >= 0;})"))
 
-        # the intensity slider (first) drives the live value and persists (debounced)
-        js(window, """(function(){
-            var r = document.querySelectorAll('.modal.theme-win input[type=range]')[0];
-            r.value = '40';
-            r.dispatchEvent(new Event('input', {bubbles: true}));
-        })()""")
+        # find a slider by its ROW LABEL, not its index — the display tab has six
+        # and a reordering must not silently retarget these checks
+        def slider(label, value, event="input"):
+            js(window, f"""(function(){{
+                var r = [...document.querySelectorAll('#modal-root .set-row')].find(function(x){{
+                    return x.querySelector('.name').textContent === '{label}'; }});
+                var i = r.querySelector('input[type=range]');
+                i.value = '{value}';
+                i.dispatchEvent(new Event('{event}', {{bubbles: true}}));
+            }})()""")
+
+        nsliders = js(window, "document.querySelectorAll('.modal.settings-win input[type=range]').length")
+        check("settings.display_sliders", nsliders == 6, f"(got {nsliders})")
+
+        # the intensity slider drives the live value and persists (debounced)
+        slider("intensity", 40)
         got_i = js(window, "BV.bgfx.intensity")
         check("theme.intensity_live", abs((got_i or 0) - 0.4) < 1e-6, f"(got {got_i})")
         deadline = time.time() + 4
@@ -137,12 +186,8 @@ def probe(window):
             time.sleep(0.25)
         check("theme.intensity_persists", saved_i == 0.4, f"(got {saved_i})")
 
-        # the opacity slider (third) drives the --panel fill and persists
-        js(window, """(function(){
-            var r = document.querySelectorAll('.modal.theme-win input[type=range]')[2];
-            r.value = '40';
-            r.dispatchEvent(new Event('input', {bubbles: true}));
-        })()""")
+        # the opacity slider drives the --panel fill and persists
+        slider("panel opacity", 40)
         check("theme.opacity_live",
               "0.760" in (js(window, "document.documentElement.style.getPropertyValue('--panel')") or ""))
         deadline = time.time() + 4
@@ -154,12 +199,8 @@ def probe(window):
             time.sleep(0.25)
         check("theme.opacity_persists", saved_o == 0.4, f"(got {saved_o})")
 
-        # the frost slider (fourth) drives --frost (blur) and persists
-        js(window, """(function(){
-            var r = document.querySelectorAll('.modal.theme-win input[type=range]')[3];
-            r.value = '40';
-            r.dispatchEvent(new Event('input', {bubbles: true}));
-        })()""")
+        # the frost slider drives --frost (blur) and persists
+        slider("frost", 40)
         check("theme.frost_live",
               js(window, "document.documentElement.style.getPropertyValue('--frost')") == "0.4")
         deadline = time.time() + 4
@@ -175,11 +216,7 @@ def probe(window):
         # background - the effect picked via the menu has to survive any
         # pref re-apply (the settings mirror in bgfx.set/tune)
         js(window, "BV.bgfx.set('petals', true)")
-        js(window, """(function(){
-            var r = document.querySelectorAll('.modal.theme-win input[type=range]')[2];
-            r.value = '60';
-            r.dispatchEvent(new Event('input', {bubbles: true}));
-        })()""")
+        slider("panel opacity", 60)
         time.sleep(0.3)
         check("theme.glass_slider_keeps_effect",
               js(window, "BV.bgfx.activeId") == "petals",
@@ -189,36 +226,161 @@ def probe(window):
         js(window, "document.querySelector('.modal .btn.fx-pick').click()")
         nitems = poll(window, "document.querySelectorAll('.ctx-menu .ctx-item').length")
         check("theme.fx_menu_items", nitems == 13, f"(got {nitems})")
-        js(window, """document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))""")
+        # Esc dismisses the MENU and leaves the dialog standing. It used to take
+        # the dialog with it: BV.menu's Esc was a document-capture listener and
+        # the dialog's, registered first, won.
+        js(window, """document.querySelector('.ctx-menu .ctx-item')
+            .dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true, cancelable:true}))""")
         time.sleep(0.3)
+        check("theme.fx_menu_esc_keeps_dialog",
+              not js(window, "!!document.querySelector('.ctx-menu')") and js(window, "BV.modalOpen()"))
 
-        # ---- customize tab: text & scale are sliders now ----
-        js(window, "BV.themeUI.open('customize')")
-        ncust = poll(window, "document.querySelectorAll('.modal.theme-win input[type=range]').length")
-        check("theme.customize_sliders", ncust == 2, f"(got {ncust})")
-        js(window, """(function(){
-            var r = document.querySelectorAll('.modal.theme-win input[type=range]')[0];
-            r.value = '18';
-            r.dispatchEvent(new Event('input', {bubbles: true}));
+        # ---- the two SCALE sliders commit on RELEASE ----
+        # They are the only controls whose own geometry is a function of the value
+        # they set (rem dialog, centred): applying per tick grew the track ~170px
+        # and walked it ~120px left mid-drag, so the value fought the pointer.
+        # Dragging must move the READOUT only; `change` (let-go) commits.
+        before = js(window, "document.documentElement.style.fontSize")
+        slider("text size", 18)                      # input only == a drag in progress
+        time.sleep(0.2)
+        check("scale.drag_does_not_apply",
+              js(window, "document.documentElement.style.fontSize") == before,
+              f"(got {js(window, 'document.documentElement.style.fontSize')}, was {before})")
+        check("scale.readout_follows_drag",
+              (js(window, """(function(){
+                  var r = [...document.querySelectorAll('#modal-root .set-row')].find(function(x){
+                      return x.querySelector('.name').textContent === 'text size'; });
+                  return r.querySelector('.range-val').textContent;
+              })()""") or "") == "18px")
+        slider("text size", 18, event="change")      # let go
+        time.sleep(0.2)
+        check("scale.release_applies",
+              js(window, "document.documentElement.style.fontSize") == "18px",
+              f"(got {js(window, 'document.documentElement.style.fontSize')})")
+        slider("text size", 15, event="change")      # back to the default
+        time.sleep(0.2)
+
+        # ---- the theme picker panel ----
+        js(window, "document.querySelector('#modal-root .theme-pick').click()")
+        got = poll(window, """(function(){
+            var p = document.querySelector('.bv-drop');
+            if (!p) return '';
+            var pick = document.querySelector('#modal-root .theme-pick');
+            return JSON.stringify({
+                rows: p.querySelectorAll('.opt-row[data-theme-id]').length,
+                folds: p.querySelectorAll('.bv-collapsible').length,
+                cats: [...p.querySelectorAll('.acc-name')].map(function(n){return n.textContent;}),
+                filter: !!p.querySelector('.search-box input'),
+                rightAligned: Math.abs(p.getBoundingClientRect().right -
+                                       pick.getBoundingClientRect().right) <= 2,
+            });
         })()""")
-        check("theme.text_size_live",
-              js(window, "document.documentElement.style.fontSize") == "18px")
-        js(window, """document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))""")
-        time.sleep(0.3)
+        pick = json.loads(got or "{}")
+        check("picker.rows", (pick.get("rows") or 0) >= 20, f"(got {pick.get('rows')})")
+        # nothing in the picker folds: a category is a divider, not a control
+        check("picker.no_folds", pick.get("folds") == 0, f"(got {pick.get('folds')})")
+        check("picker.custom_first", (pick.get("cats") or [""])[0] == "Custom", f"({pick.get('cats')})")
+        check("picker.has_filter", pick.get("filter") is True)
+        check("picker.right_aligned", pick.get("rightAligned") is True)
 
-        # ---- themes tab: rows render; a hover preview un-does itself on close ----
-        js(window, "BV.themeUI.open('themes')")
-        nrows = poll(window, "document.querySelectorAll('.opt-row[data-theme-id]').length")
-        check("theme.rows", (nrows or 0) >= 20, f"(got {nrows})")
+        # the filter narrows across packs and every hit stays visible.
+        # BV.searchBox debounces 150ms, and THIS window throttles timers to ~1s
+        # because it is hidden — poll, never sleep a fixed 400ms.
+        def filter_to(text):
+            js(window, f"""(function(){{
+                var i = document.querySelector('.bv-drop .search-box input');
+                i.value = '{text}';
+                i.dispatchEvent(new Event('input', {{bubbles: true}}));
+            }})()""")
+
+        total = js(window, "document.querySelectorAll('.bv-drop .opt-row[data-theme-id]').length")
+        filter_to("cyber")
+        nhits = poll(window, f"""(function(){{
+            var n = document.querySelectorAll('.bv-drop .opt-row[data-theme-id]').length;
+            return n < {total} ? n : 0;
+        }})()""")
+        check("picker.filter_narrows", 0 < (nhits or 0) < 6, f"(got {nhits}, of {total})")
+        filter_to("")
+        back = poll(window, f"""(function(){{
+            var n = document.querySelectorAll('.bv-drop .opt-row[data-theme-id]').length;
+            return n === {total} ? n : 0;
+        }})()""")
+        check("picker.filter_clears", back == total, f"(got {back}, wanted {total})")
+
+        # hover previews live, and LEAVING the list ends the preview
         committed = js(window, "BV.theme.activeId")
         js(window, """(function(){
-            var other = BV.theme.themes.find(function(t){ return t.id !== BV.theme.activeId; });
-            BV.theme.applyById(other.id, false);   /* hover-preview equivalent */
+            var r = [...document.querySelectorAll('.bv-drop .opt-row[data-theme-id]')].find(function(x){
+                return x.dataset.themeId !== BV.theme.activeId; });
+            r.dispatchEvent(new MouseEvent('mouseenter'));
         })()""")
-        js(window, """document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))""")
-        time.sleep(0.3)
-        check("theme.esc_restores", js(window, "BV.theme.activeId") == committed,
+        time.sleep(0.2)
+        check("picker.hover_previews", js(window, "BV.theme.activeId") != committed)
+        js(window, """document.querySelector('.bv-drop .theme-pick-list')
+            .dispatchEvent(new MouseEvent('mouseleave'))""")
+        time.sleep(0.2)
+        check("picker.hover_off_ends_preview", js(window, "BV.theme.activeId") == committed,
               f"(got {js(window, 'BV.theme.activeId')})")
+
+        # Esc closes the PANEL, not the dialog under it (window-capture keydown:
+        # the dialog's own Esc handler is a document-capture listener registered
+        # first, so it would otherwise win and take the whole dialog down)
+        js(window, """document.querySelector('.bv-drop .search-box input')
+            .dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true, cancelable:true}))""")
+        time.sleep(0.3)
+        check("picker.esc_closes_panel_only",
+              not js(window, "!!document.querySelector('.bv-drop')") and js(window, "BV.modalOpen()"))
+
+        # a click commits, and the picker button repaints to the new theme
+        js(window, "document.querySelector('#modal-root .theme-pick').click()")
+        time.sleep(0.4)
+        picked = js(window, """(function(){
+            var r = [...document.querySelectorAll('.bv-drop .opt-row[data-theme-id]')].find(function(x){
+                return x.dataset.themeId !== BV.theme.activeId; });
+            var id = r.dataset.themeId;
+            r.click();
+            return id;
+        })()""")
+        time.sleep(0.3)
+        check("picker.click_commits", js(window, "BV.theme.activeId") == picked,
+              f"(got {js(window, 'BV.theme.activeId')}, wanted {picked})")
+        check("picker.closes_on_pick", not js(window, "!!document.querySelector('.bv-drop')"))
+        want = js(window, f"""(function(){{
+            var t = BV.theme.themes.find(function(x){{ return x.id === '{picked}'; }});
+            return t ? (t.name || t.id) : '';
+        }})()""")
+        got_nm = js(window, "document.querySelector('#modal-root .theme-pick .nm').textContent")
+        check("picker.button_repaints", got_nm == want, f"(got {got_nm!r}, wanted {want!r})")
+
+        # The panel lives on <html> so nothing can clip it — which also means it
+        # OUTLIVES the dialog unless every teardown path takes it down. Two paths
+        # reach it without a click landing outside the panel:
+
+        # 1. switching tabs tears down the row that owns it
+        js(window, "document.querySelector('#modal-root .theme-pick').click()")
+        time.sleep(0.4)
+        check("picker.panel_open_before_switch", js(window, "!!document.querySelector('.bv-drop')"))
+        js(window, """document.querySelector('#modal-root .set-tabs button[data-tab=preferences]').click()""")
+        time.sleep(0.3)
+        check("picker.tab_switch_closes_panel",
+              not js(window, "!!document.querySelector('.bv-drop')") and js(window, "BV.modalOpen()"))
+
+        # 2. the ＋ hops to the color editor: BV.modal does not stack, so the
+        #    dialog steps aside — and the panel must not be left floating
+        js(window, """document.querySelector('#modal-root .set-tabs button[data-tab=display]').click()""")
+        time.sleep(0.3)
+        js(window, "document.querySelector('#modal-root .theme-pick').click()")
+        time.sleep(0.4)
+        js(window, "document.querySelector('#modal-root .theme-new').click()")
+        time.sleep(0.4)
+        check("picker.editor_hop_closes_panel",
+              not js(window, "!!document.querySelector('.bv-drop')"))
+        check("picker.editor_hop_opens_editor",
+              js(window, "BV.modalOpen()")
+              and not js(window, "!!document.querySelector('#modal-root .modal.settings-win')")
+              and js(window, "!!document.querySelector('#modal-root .editor-row')"))
+        js(window, """document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))""")
+        time.sleep(0.4)
 
         # ---- a committed choice persists through the settings round-trip ----
         js(window, "BV.bgfx.set('constellations', true)")
@@ -231,18 +393,37 @@ def probe(window):
             time.sleep(0.25)
         check("persist.settings_json", saved == "constellations", f"(got {saved})")
 
-        # ---- ⚙ settings kept behavior-only; appearance moved to the window ----
-        js(window, "BV.bgfx.set('none', false); BV.uiPrefs.modal()")
+        # ---- the preferences tab holds app behavior, and only that ----
+        js(window, "BV.bgfx.set('none', false); BV.uiPrefs.modal('preferences')")
         got = poll(window, """(function(){
-            var rows = [...document.querySelectorAll('.modal .set-row')]
-                .map(function(x){ return x.querySelector('.name').textContent; });
-            return rows.length ? JSON.stringify(rows) : '';
+            var m = document.querySelector('#modal-root .modal');
+            if (!m) return '';
+            return JSON.stringify({
+                heads: [...m.querySelectorAll('.set-head')].map(function(h){return h.textContent;}),
+                rows: [...m.querySelectorAll('.set-row .name')].map(function(n){return n.textContent;}),
+            });
         })()""")
-        rows = json.loads(got or "[]")
-        check("settings.behavior_only",
-              "library folder" in rows and "invert rotate x" in rows
-              and not any(r in rows for r in ("theme", "background", "font", "text size", "chrome scale")),
-              f"({rows})")
+        prefs = json.loads(got or "{}")
+        check("prefs.sections", prefs.get("heads") == ["3d view", "library", "updates"],
+              f"({prefs.get('heads')})")
+        check("prefs.rows",
+              prefs.get("rows") == ["invert rotate x", "invert rotate y",
+                                    "library folder", "check on startup"],
+              f"({prefs.get('rows')})")
+        # every one of the 14 controls has exactly one home
+        check("prefs.no_display_rows",
+              not any(r in (prefs.get("rows") or [])
+                      for r in ("theme", "font", "text size", "frost", "effect")),
+              f"({prefs.get('rows')})")
+        # `t` opens the dialog now that the 🎨 window is gone
+        js(window, """document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))""")
+        time.sleep(0.3)
+        js(window, """document.dispatchEvent(new KeyboardEvent('keydown', {key:'t', bubbles:true}))""")
+        opened = poll(window, """(function(){
+            var m = document.querySelector('#modal-root .modal.settings-win');
+            return m ? (m.querySelector('.set-tabs button.active') || {}).textContent || '' : '';
+        })()""")
+        check("keys.t_opens_display", opened == "display", f"(got {opened!r})")
         js(window, """document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))""")
 
         print()

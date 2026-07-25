@@ -198,8 +198,6 @@ _DEVICE_REGISTRY = {
         "job_kw": lambda spec: {
             "user": spec.get("user", ""), "passwd": spec.get("passwd", ""),
             "passive": spec.get("passive", True), "port": spec.get("port", 21),
-            "devices": spec.get("devices"),
-            "recurse_fr": spec.get("recurse_fr", False),
         },
     },
 }
@@ -702,10 +700,6 @@ class Api:
     @_endpoint
     def get_styles(self, sid: str | None = None):
         return self._build_styles(self._need_session(sid))
-
-    @_endpoint
-    def get_call_graph(self, sid: str | None = None):
-        return self._build_call_graph(sid)
 
     def _build_programs(self, s: BackupSession | None = None):
         s = s or self._need_session()
@@ -1261,12 +1255,12 @@ class Api:
                     row["diffable"] = True
                     row["summary"] = f"{n} difference{'s' if n != 1 else ''} detected"
                     kept.append(row)
-                result["rows"] = kept
-                counts = {"added": 0, "removed": 0, "changed": 0}
-                for r in kept:
-                    counts[r["kind"]] += 1
-                result["counts"] = counts
-                return result
+                # re-finish over the kept rows so counts/rows/truncated agree with
+                # each other. diff_programs already capped once, so carry its
+                # truncation forward - rows were dropped even if kept is short.
+                out = compare.finish(kept)
+                out["truncated"] = out["truncated"] or bool(result.get("truncated"))
+                return out
 
             def mastering_audit():
                 result = compare.audit_mastering(
@@ -1995,35 +1989,6 @@ class Api:
     # The saved set of robots (PLANT/LINE/ROBOT) + per-robot backup history.
     # Persists to %APPDATA%\BackupViewer\library.json (see library.py).
 
-    def _draft_from_session(self, s: BackupSession, path: str) -> dict:
-        """A library-entry draft prefilled from a parsed backup: robot name,
-        model, F-number from the manifest/summary, and IPs from the SUMMARY.DG
-        ethernet host table. Best-effort - a sparse backup just yields blanks."""
-        m = s.manifest()
-        ips: list[str] = []
-        model = ""
-        ident: dict = {}
-        try:
-            ov = self._build_summary(s)
-            ident = ov.get("identity") or {}
-            for h in (ov.get("ethernet") or {}).get("hosts", []):
-                addr = h.get("addr")
-                if addr and addr not in ips:
-                    ips.append(addr)
-            model = ident.get("robot_model", "") or ""
-        except ApiError:
-            pass
-        # name/F-number: the .LS report header, then the SUMMARY identity
-        # ($HOSTNAME), and only as a last resort the folder name.
-        return {
-            "robot": m["robot_name"] or ident.get("robot_name", "") or Path(path).name,
-            "model": model,
-            "f_number": m["f_number"] or ident.get("f_number", "") or "",
-            "ips": ips,
-            "latest_path": path,
-            "backup_type": m["backup_type"],
-        }
-
     @_endpoint
     def get_library_root(self):
         """The configured library folder (FTP destination + scanned source)."""
@@ -2167,10 +2132,6 @@ class Api:
         if e is None:
             raise ApiError("NOT_FOUND", "robot not in library")
         return e
-
-    @_endpoint
-    def lib_remove(self, robot_id: str):
-        return library.remove_robot(robot_id)
 
     @_endpoint
     def lib_set_hidden(self, robot_id: str, hidden: bool = True):
@@ -2655,13 +2616,6 @@ class Api:
             fired.append({"robot_id": sp.get("robot_id", ""), "robot": sp.get("robot", ""),
                           "job_id": res["job_id"]})
         return {"run_id": actual_run, "jobs": fired}
-
-    @_endpoint
-    def get_backup_progress(self, job_id: str):
-        job = self._jobs.get(job_id)
-        if job is None:
-            raise ApiError("NO_JOB", "unknown backup job")
-        return job.snapshot()
 
     @_endpoint
     def list_backup_jobs(self):

@@ -27,10 +27,11 @@
     var raw = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
     var hit = _varCache[varName];
     if (hit && hit.raw === raw) return hit.rgb;
-    var m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(raw);
-    var h = m ? m[1] : fallback;
-    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
-    var rgb = [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+    /* one shared hex reader (theme.js) so an 8-digit theme color resolves the
+       same here as in the editor. The literal is a last resort, not a default:
+       the private regex here rejected 8-digit hex and painted the app's
+       stock yellow over the user's theme. */
+    var rgb = BV.hexRgb(raw) || BV.hexRgb(fallback);
     _varCache[varName] = { raw: raw, rgb: rgb };
     return rgb;
   }

@@ -304,7 +304,13 @@
     cancelAll.addEventListener("click", cancelAllBackups);
     _showHiddenBtn = BV.el("button", { class: "btn lib-show-hidden hidden",
       title: "show robots you've hidden" }, "show hidden");
-    _showHiddenBtn.addEventListener("click", function () { _showHidden = !_showHidden; refresh(); });
+    /* client-side display filter, same rule as sort above: repaint the cached
+       listing. refresh() here re-hit lib_list, which rescans a tree that a
+       running backup is writing to. */
+    _showHiddenBtn.addEventListener("click", function () {
+      _showHidden = !_showHidden;
+      rerenderFromCache();
+    });
     /* "refresh library", not "rescan" - "scan" is the health-scan button now,
        and this one re-reads folders, it doesn't scan backup contents */
     var rescanBtn = BV.el("button", { class: "btn lib-rescan",
