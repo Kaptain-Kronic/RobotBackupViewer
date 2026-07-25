@@ -160,7 +160,22 @@ def probe(window):
         check("shell.renders_with_zero_backups", bool(js(window, "!!document.querySelector('.ws')")),
               "(a non-shell tab would have been bounced to #home)")
         check("shell.empty_state", bool(js(window, "!!document.querySelector('.ws-empty')")))
-        check("shell.topbar_button", bool(js(window, "!!document.getElementById('btn-edit')")))
+        check("shell.topbar_button", bool(js(window, "!!document.getElementById('cube-edit')")))
+        check("shell.cube_active_on_edit",
+              bool(js(window, "document.getElementById('cube-edit').classList.contains('active')")),
+              "(a cube reads as selected when you are on its screen)")
+        check("shell.logo_hidden_in_main_window",
+              js(window, "getComputedStyle(document.getElementById('logo')).display") == "none",
+              "(the wordmark is the pop-out's tell)")
+        cubes_box = js(window, """JSON.stringify(['cube-lib','cube-cam','cube-edit'].map(function(id){
+            var b=document.getElementById(id), s=b && b.querySelector('svg');
+            if(!s) return 0;
+            var r=s.getBoundingClientRect();
+            return Math.round(Math.min(r.width, r.height));
+        }))""")
+        check("shell.cubes_render",
+              all(v >= 12 for v in json.loads(cubes_box or "[0]")),
+              f"(icon boxes {cubes_box} px — a malformed path collapses to 0)")
         check("shell.chrome_hidden",
               bool(js(window, "document.getElementById('btn-compare').classList.contains('hidden')")))
 
@@ -201,7 +216,11 @@ def probe(window):
         check("rail.two_programs",
               js(window, "document.querySelectorAll('.ws-prog').length") == 2)
         check("topbar.badge_counts",
-              (js(window, "(document.querySelector('#btn-edit .wsbadge')||{}).textContent") or "") == "2")
+              (js(window, "(document.querySelector('#cube-edit .cube-badge')||{}).textContent") or "") == "2")
+        # the badge used to be written as the button's whole innerHTML, which
+        # with an icon inside erases it on the first paint
+        check("topbar.cube_icon_survives_badge",
+              bool(js(window, "!!document.querySelector('#cube-edit svg')")))
 
         # ---- the sandbox bug: the working-set caret must COLLAPSE ----
         js(window, "document.querySelectorAll('.ws-robot-h')[0].click()")
@@ -459,6 +478,9 @@ def probe(window):
         time.sleep(0.4)
         check("edit.workspace_dirty", bool(js(window, "BV.workspace.anyDirty()")))
         check("edit.rail_dot", bool(js(window, "!!document.querySelector('.ws-prog .dot.dirty')")))
+        check("topbar.badge_dirty_tint",
+              bool(js(window, "document.querySelector('#cube-edit .cube-badge').classList.contains('dirty')")),
+              "(unsaved work is visible from every screen)")
         check("edit.export_btn_enabled",
               not js(window, "document.querySelector('.toolbar-slot .btn.primary').disabled"))
 

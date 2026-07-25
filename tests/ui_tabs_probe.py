@@ -198,6 +198,11 @@ def probe(window):
             check("popout.chrome_hidden",
                   w2.evaluate_js("""getComputedStyle(document.getElementById('sessionbar')).display === 'none'
                     && getComputedStyle(document.getElementById('btn-compare')).display === 'none'"""))
+            # a pop-out shows the WORDMARK where the main window shows cubes -
+            # the swap is the deliberate "which window is the main one?" tell
+            check("popout.wordmark_instead_of_cubes",
+                  w2.evaluate_js("""getComputedStyle(document.getElementById('topbar-cubes')).display === 'none'
+                    && getComputedStyle(document.getElementById('logo')).display !== 'none'"""))
             # the SID_POS shim end-to-end: content calls resolve the pinned
             # session even though the MAIN window's active sid is different.
             # (evaluate_js can't await a promise - park the result on window)

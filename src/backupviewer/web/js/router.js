@@ -234,6 +234,8 @@
     }
     setActive(tab.id);
     setTopbarChrome(isShell(tab));
+    /* every redirect path above returns, so the hash and tab.id agree by here */
+    syncCubes();
     /* remember where this backup's tab is, so switching back lands there */
     if (!isShell(tab) && BV.session) BV.session.noteHash(location.hash);
     view.classList.remove("no-pad");
@@ -275,31 +277,62 @@
     else location.hash = "#home";
   };
 
-  /* the logo doubles as the home button (browser convention) - except in a
-     solo pop-out, which has no home: it shows exactly one backup */
-  var logo = document.getElementById("logo");
-  if (logo && !BV.solo) {
-    logo.classList.add("clickable");
-    logo.title = "home";
-    logo.addEventListener("click", BV.goHome);
-  }
-
   document.getElementById("btn-compare").addEventListener("click", function () {
     if (!BV.state.manifest) { BV.toast("open a backup first"); return; }
     if (BV.state.compare) location.hash = "#compare";
     else BV.compareFlow();
   });
-  /* the edit workspace: a shell screen that spans robots, so its entry point
-     lives in the topbar (NOT in setTopbarChrome - membership there is exactly
-     what would hide it on shell screens) and carries a live count badge. */
-  var editBtn = document.getElementById("btn-edit");
-  if (editBtn) {
-    editBtn.addEventListener("click", function () { BV.openWorkspace(); });
+
+  /* ---- the three cubes: library · multi-cam · workspace ----
+     These are the app's navigation, in the slot the wordmark used to hold (it
+     doubled as the home button). Book and camera are two LENSES on one screen,
+     not two screens. The workspace spans robots, so its entry point belongs
+     here and NOT in #topbar-right, where sitting between search and compare
+     made a screen that outlives every backup read as backup chrome. */
+  var cubes = {
+    lib: document.getElementById("cube-lib"),
+    cam: document.getElementById("cube-cam"),
+    edit: document.getElementById("cube-edit"),
+  };
+
+  function syncCubes() {
+    var hash = location.hash.slice(1).split("/")[0] || "";
+    var onHome = !hash || hash === "home";
+    var cam = !!(BV.home && BV.home.viewMode() === "multicam");
+    if (cubes.lib) cubes.lib.classList.toggle("active", onHome && !cam);
+    if (cubes.cam) cubes.cam.classList.toggle("active", onHome && cam);
+    if (cubes.edit) cubes.edit.classList.toggle("active", hash === "edit");
+  }
+  BV.syncCubes = syncCubes;
+
+  /* set the lens FIRST, then route: buildLibraryHead() and renderTree() both
+     read viewMode() live as they paint, so the other order gives a backup-lens
+     paint followed by a multicam repaint. Already on home, setViewMode
+     repaints in place (the cheap path) and no route is needed at all. */
+  function goLibrary(mode) {
+    var onHome = !location.hash || location.hash === "#" || location.hash === "#home";
+    if (BV.home) BV.home.setViewMode(mode);
+    if (!onHome) BV.goHome();
+    syncCubes();
+  }
+  if (cubes.lib) cubes.lib.addEventListener("click", function () { goLibrary("backup"); });
+  if (cubes.cam) cubes.cam.addEventListener("click", function () { goLibrary("multicam"); });
+  if (cubes.edit) cubes.edit.addEventListener("click", function () { BV.openWorkspace(); });
+
+  /* the workspace count rides the anvil. This used to write the button's
+     innerHTML wholesale, which with an icon inside would erase it on the first
+     paint - so it writes into its own span and touches nothing else. */
+  if (cubes.edit) {
+    var badge = cubes.edit.querySelector(".cube-badge");
     var paintBadge = function () {
       var n = BV.workspace ? BV.workspace.count() : 0;
       var d = BV.workspace ? BV.workspace.dirtyCount() : 0;
-      editBtn.innerHTML = "edit" + (n ? '<span class="wsbadge">' + n + "</span>" : "");
-      editBtn.title = n
+      if (badge) {
+        badge.textContent = n ? String(n) : "";
+        badge.classList.toggle("hidden", !n);
+        badge.classList.toggle("dirty", !!d);
+      }
+      cubes.edit.title = n
         ? n + " program" + (n === 1 ? "" : "s") + " in the edit workspace" +
           (d ? ", " + d + " edited" : "")
         : "the edit workspace — programs you are editing across robots";

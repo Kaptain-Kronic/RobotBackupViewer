@@ -73,13 +73,16 @@
     if (BV.state.settings) BV.state.settings.home_view = mode;
     BV.api.call("set_setting", "home_view", mode).catch(function () {});
     syncHeadMode();
+    /* the cubes own this flip, so they must follow it even when the library is
+       off screen (syncHeadMode returns early there, the cubes still need it) */
+    if (BV.syncCubes) BV.syncCubes();
     rerenderFromCache();   /* same cached listing, different lens — no rescan */
   }
 
   /* the head is built once per mount: a mode flip retints it in place (the
      backup-selection actions and the sort make no sense over live tiles) */
   function syncHeadMode() {
-    if (!_libWrap) return;
+    if (!_libWrap || !document.body.contains(_libWrap)) return;
     var cam = viewMode() === "multicam";
     _libWrap.classList.toggle("cam-mode", cam);
     if (_filterBox) _filterBox.input.placeholder = cam ? "filter cameras…" : "filter robots…";
@@ -251,14 +254,9 @@
     _filterBox.input.value = _filter;    /* a remount keeps the active filter */
     head.appendChild(_filterBox.el);
 
-    /* the two lenses on the same library: backup rows, or live camera tiles
-       (the in-app version of the all-cameras wall page) */
-    var seg = BV.segmented([
-      { id: "backup", label: "backup" },
-      { id: "multicam", label: "multi-cam" },
-    ], { value: viewMode(), onChange: setViewMode });
-    seg.el.classList.add("home-view-seg");
-    head.appendChild(seg.el);
+    /* (the two lenses on the same library - backup rows vs live camera tiles -
+       are flipped by the topbar's book/camera cubes now, not by a control
+       inside the screen they change) */
 
     var selActs = BV.el("div", { class: "home-lib-selacts" });
     selActs.appendChild(BV.el("span", { class: "lib-sel-count dim" }, ""));
@@ -414,7 +412,14 @@
      and sort both live here: they change how the same data is shown, and a
      refetch mid-backup would rescan a tree that is being written to. */
   function rerenderFromCache() {
-    var body = _libWrap && _libWrap.querySelector(".home-lib-body");
+    /* off screen (routed away, or a stale _libWrap from a previous mount):
+       nothing to repaint - the next mount reads the current lens, sort and
+       filter as it builds. refresh() has always guarded this; this one had
+       not, and the lens can now be set from OUTSIDE home (the topbar cubes),
+       which would rebuild a detached tree and reach into a #view that belongs
+       to another tab by then. */
+    if (!_libWrap || !document.body.contains(_libWrap)) return;
+    var body = _libWrap.querySelector(".home-lib-body");
     if (!body || !_lastData) { refresh(); return; }
     saveLensScroll();
     renderTree(body, _lastData);
@@ -2259,6 +2264,10 @@
       addStepTwo(drafts);
     });
   }
+
+  /* the lens is API now rather than a control living inside the screen: the
+     topbar cubes are the only thing that flips it */
+  BV.home = { viewMode: viewMode, setViewMode: setViewMode };
 
   BV.tabs = BV.tabs || [];
   BV.tabs.push({ id: "home", label: "home", render: render, hidden: true, always: true, shell: true });

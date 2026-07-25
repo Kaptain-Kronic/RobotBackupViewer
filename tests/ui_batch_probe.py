@@ -693,14 +693,21 @@ def probe(window):
 
         # flip to multi-cam (first flip this session)
         js(window, """(function(){
-            [...document.querySelectorAll('.home-view-seg button')].find(function(b){
-                return b.textContent.trim()==='multi-cam';}).click();
+            document.getElementById('cube-cam').click();
         })()""")
         check("cam.lens_flips", bool(poll(window,
               "!!document.querySelector('.home-library.cam-mode')")))
         check("cam.filter_placeholder", js(window,
               "document.querySelector('.home-lib-head .search-box input').placeholder")
               == "filter cameras…")
+        # the lens toggle lives in the TOPBAR now, not inside the screen it changes
+        check("cam.no_head_seg",
+              not js(window, "!!document.querySelector('.home-view-seg')"),
+              "(the cubes own the flip)")
+        check("cam.cube_active_tracks_lens", bool(js(window, """(function(){
+            return document.getElementById('cube-cam').classList.contains('active')
+                && !document.getElementById('cube-lib').classList.contains('active');
+        })()""")))
 
         # fix 1: the selection row hides, but manage backups stays reachable
         # (it moved in with the library actions — auto-link lives inside it)
@@ -777,8 +784,7 @@ def probe(window):
 
         # …and flipping back restores the tree exactly: same first-visible row
         js(window, """(function(){
-            [...document.querySelectorAll('.home-view-seg button')].find(function(b){
-                return b.textContent.trim()==='backup';}).click();
+            document.getElementById('cube-lib').click();
         })()""")
         back = poll(window, """(function(){
             if(document.querySelector('.home-library.cam-mode')) return null;
@@ -805,8 +811,7 @@ def probe(window):
         # fix 4: the cam filter matches the "↳ robot" name printed on the tile
         # (CELL-01CAM01 is linked to RB010R01B01 from the picker test above)
         js(window, """(function(){
-            [...document.querySelectorAll('.home-view-seg button')].find(function(b){
-                return b.textContent.trim()==='multi-cam';}).click();
+            document.getElementById('cube-cam').click();
             var inp=document.querySelector('.home-lib-head .search-box input');
             inp.value='RB010R01B01';
             inp.dispatchEvent(new Event('input',{bubbles:true}));
@@ -876,8 +881,7 @@ def probe(window):
 
         # the backup lens counts BOTH hidden entries (1 robot + 1 camera)
         js(window, """(function(){
-            [...document.querySelectorAll('.home-view-seg button')].find(function(b){
-                return b.textContent.trim()==='backup';}).click();
+            document.getElementById('cube-lib').click();
         })()""")
         tog = poll(window, """(function(){
             var t=document.querySelector('.lib-show-hidden');
@@ -887,8 +891,7 @@ def probe(window):
 
         # show hidden in the cam lens reveals the tile again
         js(window, """(function(){
-            [...document.querySelectorAll('.home-view-seg button')].find(function(b){
-                return b.textContent.trim()==='multi-cam';}).click();
+            document.getElementById('cube-cam').click();
         })()""")
         poll(window, "!!document.querySelector('.home-library.cam-mode')")
         js(window, "document.querySelector('.lib-show-hidden').click()")
@@ -941,10 +944,25 @@ def probe(window):
         check("cam.remount_manage_reachable",
               remount.get("manage") not in ("none", "missing", None), f"({remount})")
 
+        # ---- a cube reaches its lens from ANOTHER screen in one click ----
+        # the lens has to be set BEFORE the route: buildLibraryHead() and
+        # renderTree() read viewMode() live as they paint, so the other order
+        # gives a backup-lens paint followed by a multicam repaint
+        js(window, "location.hash = '#edit'")
+        time.sleep(0.8)
+        check("cam.cube_leaves_for_workspace",
+              js(window, "location.hash") == "#edit"
+              and bool(js(window, "document.getElementById('cube-edit').classList.contains('active')")))
+        js(window, "document.getElementById('cube-cam').click()")
+        time.sleep(1.0)
+        check("cam.cube_from_another_screen",
+              (js(window, "location.hash") in ("#home", "", "#"))
+              and bool(poll(window, "!!document.querySelector('.home-library.cam-mode')")),
+              f"(hash={js(window, 'location.hash')!r})")
+
         # leave the library in the backup lens for the sections below
         js(window, """(function(){
-            [...document.querySelectorAll('.home-view-seg button')].find(function(b){
-                return b.textContent.trim()==='backup';}).click();
+            document.getElementById('cube-lib').click();
         })()""")
         check("cam.back_to_backup_lens", bool(poll(window,
               "document.querySelectorAll('.lib-robot').length===44 ? 'y' : ''")))
