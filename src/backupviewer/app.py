@@ -106,7 +106,7 @@ def _next_boot_action(failed: bool, mode: str, rescued: bool) -> str:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(prog="backupviewer", description="FANUC robot backup viewer")
+    parser = argparse.ArgumentParser(prog="backupviewer", description="robot backup viewer")
     parser.add_argument("--backup", help="backup folder to open at startup")
     parser.add_argument("--debug", action="store_true", help="enable devtools")
     parser.add_argument("--diagnose", metavar="HOST",
@@ -146,7 +146,7 @@ def main(argv=None) -> int:
 
     api = Api()
     window = webview.create_window(
-        f"FANUC Backup Viewer",
+        "Backup Viewer",
         url=str(resource_path("web/index.html")),
         js_api=api,
         width=1280,
@@ -246,6 +246,6 @@ def _webview2_help(err: Exception, runtime_missing: bool = False) -> None:
     try:
         import ctypes
 
-        ctypes.windll.user32.MessageBoxW(None, msg, "FANUC Backup Viewer", 0x10)
+        ctypes.windll.user32.MessageBoxW(None, msg, "Backup Viewer", 0x10)
     except Exception:
         print(msg)

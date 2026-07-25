@@ -1,5 +1,5 @@
 """PLC style table: style code -> TP program, from $STYLE_NAME / $STYLE_COMNT /
-$STYLE_ENAB arrays (found in CELLIO.VA on GM cells; some loadouts keep them in
+$STYLE_ENAB arrays (found in CELLIO.VA on some cells; some loadouts keep them in
 SYSTEM.VA). Unused slots hold '********...'.
 """
 from __future__ import annotations

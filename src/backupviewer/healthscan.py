@@ -433,7 +433,7 @@ def _check_style_broken(ctx: _RobotData) -> dict:
     texts = ctx.program_texts()
     missing = [t for t in table if t.get("program", "").upper() not in texts]
     # only an ENABLED style pointing nowhere is a fault - a disabled slot with
-    # its program absent is a normal placeholder (GM ships MOVREPR* slots
+    # its program absent is a normal placeholder (the standard ships MOVREPR* slots
     # disabled fleet-wide), so it rides along as detail, never a flag
     live = [t for t in missing if t.get("enabled", True)]
     parked = len(missing) - len(live)

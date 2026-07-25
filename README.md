@@ -1,6 +1,6 @@
 # backupviewer
 
-A fast, light weight tool for taking, organizing, and viewing FANUC robot backups.
+A fast, light weight tool for taking, organizing, and viewing robot controller backups.
 
 ![status](https://img.shields.io/badge/status-v1.2-e2b714)
 ![license](https://img.shields.io/badge/license-GPLv3-7ec384)
@@ -15,7 +15,7 @@ backup, saved-backup count, and honest status pills (`missing`, `no backup`, `pa
 The folder tree **is** the library — files are law. A robot exists because its folder
 exists, so you grow the library three ways:
 
-- **discover on network** — sweep a subnet for FANUC controllers (FTP), name them, add them.
+- **discover on network** — sweep a subnet for robot controllers (FTP), name them, add them.
 - **manually** — add a robot that has no backup yet.
 - **drop it in** — copy an existing backup tree into the library folder with Explorer; a
   background watcher notices and lists it. No import wizard, no duplicate-hunting.
@@ -95,14 +95,14 @@ One panel for backup hygiene and library tidy-up:
 
 | tab | data | source files |
 |---|---|---|
-| **overview** | robot identity, software edition & options, master counts, memory pools, ethernet, GM wizard Q&A, motors, tasks — plus a collapsed "at backup time" section (safety, position, alarm history) and the dated-history picker | `SUMMARY.DG`, `SYSMAST.VA`, `GMWIZLOG.DT`, `ERR*.LS` |
+| **overview** | robot identity, software edition & options, master counts, memory pools, ethernet, setup-wizard Q&A, motors, tasks — plus a collapsed "at backup time" section (safety, position, alarm history) and the dated-history picker | `SUMMARY.DG`, `SYSMAST.VA`, `GMWIZLOG.DT`, `ERR*.LS` |
 | **frames** | tool / user / jog frames as vertical pendant-style cards, with payload schedules | `SYSFRAME.VA`, `FRAMEVAR.VA`, `SYMOTN.VA` |
 | **io** | pendant categories (digital/group/uop/sop/robot/flags), IN and OUT side by side, state at backup time, rack·slot·port | `IOCONFIG.DG`, `IOSTATE.DG`, `SUMMARY.DG` |
 | **registers** | R / PR / SR with comments, split into side-by-side columns on wide screens | `NUMREG.VA`, `POSREG.VA`, `STRREG.VA` |
 | **programs** | every program (incl. binary-only), ★ = callable from the PLC style table, syntax-highlighted source, calls / called-by panel + expandable call tree; macros sub-view | `*.LS`, `CELLIO.VA` |
 | **dcs** | safety: verify report, change history, signatures, code-styled safe-I/O logic | `DCSVRFY.DG`, `DCSCHGD*.DG` |
 | **3d view** (`0` key) | DCS cartesian zones drawn to scale — free orbit + viewport cube (26 snap directions), ortho/persp, pan/zoom, per-zone show/hide, pendant detail inline | `DCSPOS.VA`, `DCSVRFY.DG` |
-| **mh valves** | GM gripper / valve configuration (and magnet EOATs) | `MHGRIPDT.VA`, `MAG*.PC` |
+| **mh valves** | material-handling gripper / valve configuration (and magnet EOATs) | `MHGRIPDT.VA`, `MAG*.PC` |
 | **system vars** | the full `SYSTEM.VA` tree; KAREL `.PC` program variables | `SYSTEM.VA`, `*.VA`/`*.VR` |
 | **photos** *(camera)* | the most recent Matrox inspection image + pass/fail, recipe, exposure, camera identity and per-tool results, over a pass/fail-filterable thumbnail grid | `SavedImages/*.jpg` `.png` `.txt` |
 | **files** | raw browser for every file; text viewer + hex preview for binaries | everything |
@@ -195,7 +195,7 @@ python -m pytest tests -q
 The included tests (`test_ftpbackup.py`, `test_library.py`, `test_healthscan.py`,
 `test_backuplog.py`, `test_discover.py`) are self-contained — the FTP engine and health
 scan run end-to-end against in-memory fakes and synthetic fixtures. The broader parser/UI
-regression suite runs against a local FANUC backup fixture (real plant data, not
+regression suite runs against a local backup fixture (real plant data, not
 distributed); those tests skip gracefully when it's absent.
 
 ## Packaging (share a single .exe)

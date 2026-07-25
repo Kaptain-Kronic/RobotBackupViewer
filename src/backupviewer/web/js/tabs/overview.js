@@ -464,7 +464,7 @@
         ]));
       }
 
-      /* MH valves + magnet (GM end-effector): ONE card of collapsible entries -
+      /* MH valves + magnet (end-effector): ONE card of collapsible entries -
          the magnet first (if present), then each configured valve. Entries start
          collapsed; expanding shows organized detail (Mag registers / Outputs +
          Inputs) with lit DI/DO/R pills. Present when MHGRIPDT.VA or a magnet is. */

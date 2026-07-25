@@ -1,4 +1,4 @@
-/* tabs/mhvalves.js - GM material-handling gripper / valve config (MHGRIPDT.VA).
+/* tabs/mhvalves.js - material-handling gripper / valve config (MHGRIPDT.VA).
    Laid out like the pendant: a tool selector, then one card per configured
    valve showing its "Setup Clamp Information" fields and its resolved input /
    output signals. Each *_SN field is resolved through the valve's signal table

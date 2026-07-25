@@ -1421,7 +1421,7 @@ class Api:
             raise ApiError("NOT_FOUND", f"System variable not found: {name}")
         return sysvars.record_tree(rec)
 
-    # -- MH valves (GM material-handling grippers) -----------------------------------
+    # -- MH valves (material-handling grippers) --------------------------------------
 
     @_endpoint
     def get_mhvalves(self, sid: str | None = None, side: str = "a"):

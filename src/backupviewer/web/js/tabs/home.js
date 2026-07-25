@@ -1711,7 +1711,9 @@
     var fRobot = inp(entry.robot || entry.robot_name);
     var fModel = inp(entry.model);
     var fType = BV.el("select", { class: "lf-input" });
-    [["robot", "robot (FANUC)"], ["camera-mtx", "matrox camera"],
+    /* the camera labels keep their vendor: they pick which backup protocol
+       runs, so the name is the choice. There is only one kind of robot. */
+    [["robot", "robot"], ["camera-mtx", "matrox camera"],
      ["camera-keyence", "keyence camera (CV-X)"]].forEach(function (o) {
       var opt = BV.el("option", { value: o[0] }, o[1]);
       if ((entry.device_type || "robot") === o[0]) opt.selected = true;

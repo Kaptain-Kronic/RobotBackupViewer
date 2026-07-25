@@ -1,4 +1,7 @@
-"""GM Global wizard log (GMWIZLOG.DT) - the setup wizard's Q&A transcript.
+"""Setup wizard log (GMWIZLOG.DT) - the wizard's Q&A transcript.
+
+The sample below is the file's OWN header text, quoted verbatim so the format
+is recognisable; the vendor wording in it is the artifact's, not ours.
 
     ******  GM Global 4 Wizard Log File   *****
     Executed On:      22-MAY-26 14:08

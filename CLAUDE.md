@@ -7,7 +7,7 @@ rework, no drift.
 
 ## What this app is
 
-A desktop viewer for FANUC robot backups that plant techs trust when
+A desktop viewer for robot controller backups that plant techs trust when
 troubleshooting real equipment. It runs offline on plant-floor PCs, ships as
 a single ~13 MB exe, and reads evidence — it does not modify robots or
 backups. Wrong data erodes trust worse than missing data, so **correctness

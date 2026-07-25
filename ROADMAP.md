@@ -59,8 +59,8 @@ Each of these is deliberately scoped to land on its own. Good places to start.
 
 ## 3D View follow-ups
 
-- ✅ **Kinematics + posed arm** — FANUC's own `.def` kinematics imported once
-  from a Roboguide install into a local registry (exe ships zero FANUC
+- ✅ **Kinematics + posed arm** — the vendor's own `.def` kinematics imported
+  once from a simulator install into a local registry (exe ships zero vendor
   data), the arm posed from the backup's own `CURPOS.DG` snapshot (or by
   hand), DCS user models drawn at their true frames. Every pose
   self-verifies against the controller's printed TCP; "-IF" flange

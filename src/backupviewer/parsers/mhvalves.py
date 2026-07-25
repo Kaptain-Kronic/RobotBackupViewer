@@ -1,4 +1,4 @@
-"""GM material-handling gripper / valve configuration (MHGRIPDT.VA).
+"""Material-handling gripper / valve configuration (MHGRIPDT.VA).
 
 Reconstructs the pendant's MH valve menus. MHGRIPDT.VA carries, in one file:
 
