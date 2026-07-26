@@ -37,10 +37,11 @@ from . import qr
 from . import screengrab
 from . import search as search_mod
 from . import settings
-from .parsers import (alarms, callgraph, curpos, dcs, dcszones, frames,
-                      gmwizlog, io_dg, kinematics, ls_edit, ls_program, macros,
-                      magnet, mastering, mhvalves, mtx_portal, mtx_saved_image,
-                      payloads, registers, styles, summary_dg, sysvars)
+from .parsers import (alarms, callgraph, curpos, cvx_image, dcs, dcszones,
+                      frames, gmwizlog, io_dg, kinematics, ls_edit, ls_program,
+                      macros, magnet, mastering, mhvalves, mtx_portal,
+                      mtx_saved_image, payloads, registers, styles, summary_dg,
+                      sysvars)
 from .parsers.common import is_binary, read_text
 from .session import BackupSession, looks_like_backup
 
@@ -50,6 +51,10 @@ MAX_TEXT_BYTES = 2_000_000
 HEX_PREVIEW_BYTES = 4096
 MAX_IMAGE_BYTES = 12_000_000
 MAX_WS_SCAN_FILES = 20_000   # same bound the session walk uses
+# CV-X images are decoded down to this on the long edge. 2048-square masters are
+# both slower and bigger than any screen needs, and the decimation happens inside
+# the decode, so a thumbnail costs a fraction of a hero.
+DISPLAY_MAX_DIM = 1200
 _IMAGE_MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                ".png": "image/png", ".bmp": "image/bmp"}
 
@@ -1793,6 +1798,89 @@ class Api:
         return cached[2]
 
     def _photos_data(self, s: BackupSession):
+        """The photos payload for whichever kind of camera this backup came off.
+        Matrox saved images win when a backup somehow has both, since those carry
+        a parsed pass/fail report and a CV-X master does not."""
+        if not s.saved_image_files() and s.cvx_image_files():
+            return self._cvx_photos_data(s)
+        return self._mtx_photos_data(s)
+
+    def _cvx_photos_data(self, s: BackupSession):
+        """A CV-X's images, paired into one record per scene.
+
+        A camera stores each taught program (and each logged trigger) as TWO
+        files - a grayscale photo and a height map of the same moment - so they
+        are shown as one photo with both halves attached, and the tab crossfades
+        between them. Kind comes from the file header, never the name; see
+        parsers/cvx_image."""
+        def build():
+            groups: dict[str, dict] = {}
+            for p in s.cvx_image_files():
+                rel = s.rel(p)
+                try:
+                    with open(p, "rb") as fh:
+                        head = fh.read(64)
+                    size = p.stat().st_size
+                except OSError:
+                    continue
+                kind = cvx_image.header_kind(head)
+                if not kind:
+                    continue
+                g = groups.setdefault(cvx_image.pair_key(rel), {"files": {}})
+                g["files"][kind] = {"rel": rel, "name": p.name, "size": size}
+
+            photos = []
+            for key, g in groups.items():
+                got = g["files"]
+                shown = got.get(cvx_image.INTENSITY) or got.get(cvx_image.HEIGHT)
+                if not shown:
+                    continue
+                rel = shown["rel"]
+                parts = rel.split("/")
+                # .../cv-x/setting/<program>/[<sub>/]<name> - the program number is
+                # the folder right under setting/, whatever nests below it
+                program = ""
+                for i, part in enumerate(parts[:-1]):
+                    if part.lower() == "setting" and i + 1 < len(parts) - 1:
+                        program = parts[i + 1]
+                        break
+                info = cvx_image.label(rel)
+                verdict = info["verdict"]
+                rows = [["program", program], ["camera", info["cam"]],
+                        ["captured", info["stamp"]], ["sequence", info["seq"]],
+                        ["result", verdict]]
+                for kind in (cvx_image.INTENSITY, cvx_image.HEIGHT):
+                    f = got.get(kind)
+                    if f:
+                        rows.append([kind, f"{f['name']} · {f['size'] // 1000} kB"])
+                rec = {
+                    "name": shown["name"],
+                    "date": info["stamp"][:10] or (f"program {program}" if program else ""),
+                    "thumb": rel,
+                    "full": rel,
+                    "txt": "",
+                    # OK/NG is the camera's own verdict, mapped onto the pass/fail
+                    # the grid already colours by; the raw token stays in the rows
+                    "result": {"OK": "Pass", "NG": "Fail"}.get(verdict, ""),
+                    "timestamp": info["stamp"],
+                    "camera": {}, "recipe": {}, "tools": [],
+                    "sections": [{"title": "image", "rows": [
+                        {"key": k, "value": v} for k, v in rows if v]}],
+                    "_sort": (info["stamp"], program, key),
+                }
+                if got.get(cvx_image.HEIGHT) and got.get(cvx_image.INTENSITY):
+                    rec["overlay"] = {
+                        "base": got[cvx_image.INTENSITY]["rel"], "base_label": "greyscale",
+                        "top": got[cvx_image.HEIGHT]["rel"], "top_label": "height",
+                    }
+                photos.append(rec)
+
+            photos.sort(key=lambda x: x.pop("_sort"), reverse=True)
+            return {"photos": photos, "count": len(photos), "camera": {}}
+
+        return s.cached("cvx_photos", build)
+
+    def _mtx_photos_data(self, s: BackupSession):
         """Thin wrapper: the grouping + record shaping is the parser's
         (mtx_saved_image.group_photo_files / photo_record); this layer owns the
         session index, sidecar reads and file stats."""
@@ -1825,6 +1913,9 @@ class Api:
         p = s.find(rel)
         if p is None:
             raise ApiError("NOT_FOUND", f"image not found: {rel}")
+        cvx = self._cvx_image_data(p, s)
+        if cvx is not None:
+            return cvx
         ext = p.suffix.lower()
         mime = _IMAGE_MIME.get(ext)
         if mime is None:
@@ -1836,6 +1927,35 @@ class Api:
         data = base64.b64encode(p.read_bytes()).decode("ascii")
         return {"rel": s.rel(p), "name": p.name, "mime": mime, "size": size,
                 "data_uri": f"data:{mime};base64,{data}"}
+
+    def _cvx_image_data(self, p, s: BackupSession):
+        """A CV-X BMP rendered to a PNG the browser can actually show, or None
+        when this file is not one.
+
+        Two reasons this cannot be served as-is like a Matrox jpg: a height BMP
+        is packed range data that renders as grey mush in any image viewer, and
+        even the intensity halves are 8-12 MB - over MAX_IMAGE_BYTES, and far
+        past what belongs in a data-URI. Decoding decimates to DISPLAY_MAX_DIM
+        as it goes, so the work is proportional to what is shown, not to what is
+        on disk."""
+        if p.suffix.lower() != ".bmp":
+            return None
+        try:
+            data = p.read_bytes()
+        except OSError as e:
+            raise ApiError("UNREADABLE", f"cannot read {p.name}: {e}") from e
+        try:
+            kind = cvx_image.probe(data)["kind"]
+            w, h, rgba = cvx_image.to_rgba(data, DISPLAY_MAX_DIM)
+        except cvx_image.BadImage:
+            return None                      # a plain .bmp: let the raw path have it
+        # local import: screengrab pulls in ctypes.wintypes at module scope, and
+        # this path has no business being Windows-only just to reuse a PNG writer
+        from .screengrab import png_encode
+        png = png_encode(w, h, rgba)
+        return {"rel": s.rel(p), "name": p.name, "mime": "image/png",
+                "size": len(png), "kind": kind, "width": w, "height": h,
+                "data_uri": "data:image/png;base64," + base64.b64encode(png).decode("ascii")}
 
     @_endpoint
     def get_photos(self, sid: str | None = None):
