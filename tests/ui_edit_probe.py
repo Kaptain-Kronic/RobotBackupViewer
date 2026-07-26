@@ -341,6 +341,42 @@ def probe(window):
         check("pane.tab_created",
               js(window, "document.querySelectorAll('.ws-pane')[0].querySelectorAll('.ws-tab').length") == 1)
 
+        # ---- a LONG program scrolls inside the editor, never the window ----
+        # regression: .ws-work went column for the diff dock and .ws-panes lost
+        # its height clamp - a 400-line program then inflated the pane stack
+        # and #view scrolled the whole workspace (rail and all) out of frame
+        js(window, """(function(){
+            var code=document.querySelector('.lsed-code');
+            var lines=[];
+            for (var i=0;i<400;i++) lines.push('DO['+(20+i%9)+':Clamp '+(i%9)+']=ON');
+            code.textContent=lines.join('\\n');
+            code.dispatchEvent(new Event('input',{bubbles:true}));
+        })()""")
+        time.sleep(0.5)
+        chain = js(window, """JSON.stringify((function(){
+            var v=document.getElementById('view'), s=document.querySelector('.lsed-scroll');
+            return {view:[v.scrollHeight,v.clientHeight],
+                    scroller:[s.scrollHeight,s.clientHeight]};
+        })())""")
+        chain_d = json.loads(chain or "{}")
+        check("scroll.window_contained",
+              chain_d and chain_d["view"][0] - chain_d["view"][1] <= 2,
+              f"({chain})")
+        check("scroll.editor_scrolls_instead",
+              chain_d and chain_d["scroller"][0] > chain_d["scroller"][1] + 100,
+              "(the 400 lines must live in the editor's own scroller)")
+        # one undo restores the seeded text exactly, so the buffer reads clean
+        # for every later dirty/export check
+        js(window, """(function(){
+            var code=document.querySelector('.lsed-code');
+            code.dispatchEvent(new KeyboardEvent('keydown',
+                {key:'z',ctrlKey:true,bubbles:true,cancelable:true}));
+        })()""")
+        time.sleep(0.4)
+        check("scroll.undo_restores_clean",
+              js(window, "BV.workspace.dirtyCount()") == 0,
+              "(the growth was probe scaffolding, not an edit)")
+
         # ---- the drag decides the pane; the RIGHT QUARTER opens the split ----
         # order matters: there is nothing to split AGAINST until one program is
         # open, so the left-zone drop runs first
