@@ -45,8 +45,12 @@
     /* fullscreen lightbox: wheel zooms (around the cursor), drag pans, and it
        closes ONLY via the ✕, Esc, or a clean click on the backdrop — click-
        anywhere-closes kept eating pans, and with no visible close control
-       people reached for the app's own titlebar ✕ instead */
-    function openFullscreen(rel) {
+       people reached for the app's own titlebar ✕ instead.
+
+       `spec` is a rel string, or {base, top, mix} for a CV-X pair — the pan/zoom
+       transform is applied to the whole stack so both layers stay registered. */
+    function openFullscreen(spec) {
+      var pair = typeof spec === "string" ? null : spec;
       var overlay = BV.el("div", { class: "photo-fsov", style:
         "position:fixed;inset:0;z-index:9999;overflow:hidden;" +
         "background:color-mix(in srgb, var(--bg) 93%, transparent)" });
@@ -54,21 +58,33 @@
         "position:absolute;inset:0;margin:auto;max-width:98vw;max-height:98vh;" +
         "object-fit:contain;cursor:grab" });
       overlay.appendChild(fimg);
+      var ftop = null;
+      if (pair) {
+        ftop = BV.el("img", { alt: "", draggable: "false", style:
+          "position:absolute;inset:0;margin:auto;max-width:98vw;max-height:98vh;" +
+          "object-fit:contain;pointer-events:none;opacity:" + (pair.mix / 100) });
+        overlay.appendChild(ftop);
+      }
       var closeBtn = BV.el("button", { class: "btn", title: "close (esc)", style:
         "position:absolute;top:0.6rem;right:0.8rem;z-index:1;" +
         "font-size:1.25rem;line-height:1;padding:0.3rem 0.75rem" }, "✕");
       overlay.appendChild(closeBtn);
-      loadImage(rel).then(function (uri) { fimg.src = uri; }).catch(function () {
-        overlay.innerHTML = '<span class="dim" style="position:absolute;inset:0;margin:auto;' +
-          'width:fit-content;height:fit-content">image unavailable</span>';
-      });
+      loadImage(pair ? pair.base : spec).then(function (uri) { fimg.src = uri; })
+        .catch(function () {
+          overlay.innerHTML = '<span class="dim" style="position:absolute;inset:0;margin:auto;' +
+            'width:fit-content;height:fit-content">image unavailable</span>';
+        });
+      if (ftop) loadImage(pair.top).then(function (uri) { ftop.src = uri; })
+        .catch(function () {});
 
       /* pan/zoom state: the image stays centered at scale 1; translate happens
          BEFORE scale so the zoom-around-cursor math stays linear */
       var scale = 1, tx = 0, ty = 0, drag = null, justDragged = false;
       function apply() {
-        fimg.style.transform = scale === 1 && !tx && !ty ? "" :
+        var t = scale === 1 && !tx && !ty ? "" :
           "translate(" + tx + "px," + ty + "px) scale(" + scale + ")";
+        fimg.style.transform = t;
+        if (ftop) ftop.style.transform = t;    /* the pair moves as one image */
       }
       overlay.addEventListener("wheel", function (e) {
         e.preventDefault();
@@ -161,21 +177,27 @@
          to float in the toolbar, a whole screen away from its list) */
       var nPass = photos.filter(pass).length;
       var nFail = photos.filter(fail).length;
-      var seg = BV.segmented([
-        { id: "all", label: "all " + photos.length },
-        { id: "pass", label: "pass " + nPass },
-        { id: "fail", label: "fail " + nFail },
-      ], { value: filter, onChange: function (id) {
-          filter = pst.filter = id;
-          var list = filtered();
-          selectPhoto(list[0] || null);
-          buildGrid(list);
-        } });
-      var filterRow = BV.el("div", { style:
-        "display:flex;align-items:center;gap:0.6rem;margin:0 0 0.6rem" });
-      filterRow.appendChild(seg.el);
       wrap.appendChild(hero);
-      wrap.appendChild(filterRow);
+      /* the pass/fail filter only earns its space when the images carry a
+         verdict — CV-X masters have none, and "pass 0 / fail 0" is furniture */
+      if (nPass || nFail) {
+        var seg = BV.segmented([
+          { id: "all", label: "all " + photos.length },
+          { id: "pass", label: "pass " + nPass },
+          { id: "fail", label: "fail " + nFail },
+        ], { value: filter, onChange: function (id) {
+            filter = pst.filter = id;
+            var list = filtered();
+            selectPhoto(list[0] || null);
+            buildGrid(list);
+          } });
+        var filterRow = BV.el("div", { style:
+          "display:flex;align-items:center;gap:0.6rem;margin:0 0 0.6rem" });
+        filterRow.appendChild(seg.el);
+        wrap.appendChild(filterRow);
+      } else {
+        filter = pst.filter = "all";     /* a stale pass/fail filter would hide everything */
+      }
       wrap.appendChild(grid);
       view.appendChild(wrap);
 
@@ -184,15 +206,17 @@
         hero.innerHTML = "";
         if (!p) return;
 
-        /* left: the full image */
+        /* left: the full image (a CV-X pair gets both layers + its slider) */
+        var figCol = BV.el("div", { style:
+          "flex:1 1 380px;min-width:280px;max-width:640px;display:flex;" +
+          "flex-direction:column;gap:0.45rem" });
         var figure = BV.el("div", { style:
-          "flex:1 1 380px;min-width:280px;max-width:640px;background:var(--bg2);" +
-          "border:1px solid var(--sub-alt);border-radius:8px;overflow:hidden;" +
-          "display:flex;align-items:center;justify-content:center;min-height:220px" });
+          "background:var(--bg2);border:1px solid var(--sub-alt);border-radius:8px;" +
+          "overflow:hidden;display:flex;align-items:center;justify-content:center;" +
+          "min-height:220px" });
         figure.style.cursor = "zoom-in";
         var img = BV.el("img", { alt: BV.esc(p.name), style:
           "max-width:100%;max-height:46vh;display:block;object-fit:contain" });
-        figure.appendChild(img);
         var curRel = "";
         function showImage(rel) {
           if (!rel) return;
@@ -201,14 +225,61 @@
             figure.innerHTML = '<span class="dim">image unavailable</span>';
           });
         }
-        /* filtered (annotated jpg) vs raw (clean png) is a sticky preference:
-           picking raw survives changing photos and leaving the tab */
-        var hasBoth = p.thumb && p.full && p.thumb !== p.full;
-        var raw = pst.imgMode === "raw" && (hasBoth || !p.thumb);
-        showImage(raw ? p.full : (p.thumb || p.full));
-        figure.title = "click to view fullscreen";
-        figure.addEventListener("click", function () { if (curRel) openFullscreen(curRel); });
-        hero.appendChild(figure);
+
+        /* A CV-X stores every scene TWICE — a grayscale photo and a height map
+           of the same moment — so the two stack and the slider crossfades them.
+           The height layer is absolutely positioned over the base and both use
+           the same object-fit box, which keeps them registered at any size. */
+        var ov = p.overlay;
+        if (ov) {
+          var stack = BV.el("div", { style: "position:relative;line-height:0;max-width:100%" });
+          stack.appendChild(img);
+          var top = BV.el("img", { alt: "", style:
+            "position:absolute;inset:0;width:100%;height:100%;object-fit:contain;" +
+            "pointer-events:none" });
+          stack.appendChild(top);
+          figure.appendChild(stack);
+          showImage(ov.base);
+          loadImage(ov.top).then(function (uri) { top.src = uri; }).catch(function () {});
+
+          var mix = pst.mix === undefined ? 100 : Number(pst.mix);
+          top.style.opacity = String(mix / 100);
+          var slider = BV.el("input", { type: "range", min: "0", max: "100",
+            step: "1", value: String(mix), "aria-label": "height / greyscale mix" });
+          var readout = BV.el("span", { class: "range-val" }, mix + "%");
+          slider.addEventListener("input", function (e) {
+            var v = Number(e.target.value);
+            pst.mix = v;                      /* sticky across photos and tab returns */
+            top.style.opacity = String(v / 100);
+            readout.textContent = v + "%";
+          });
+          var row = BV.el("div", { style:
+            "display:flex;align-items:center;gap:0.5rem;font-size:0.78rem;color:var(--sub)" });
+          row.appendChild(BV.el("span", {}, BV.esc(ov.base_label || "photo")));
+          var sliderWrap = BV.el("div", { class: "range-wrap" });
+          sliderWrap.appendChild(slider);
+          sliderWrap.appendChild(readout);   /* .range-val is styled inside .range-wrap */
+          row.appendChild(sliderWrap);
+          row.appendChild(BV.el("span", {}, BV.esc(ov.top_label || "overlay")));
+          figCol.appendChild(figure);
+          figCol.appendChild(row);
+          figure.title = "click to view fullscreen";
+          figure.addEventListener("click", function () {
+            openFullscreen({ base: ov.base, top: ov.top, mix: Number(pst.mix === undefined ? 100 : pst.mix) });
+          });
+        } else {
+          figure.appendChild(img);
+          /* filtered (annotated jpg) vs raw (clean png) is a sticky preference:
+             picking raw survives changing photos and leaving the tab */
+          var hasBothImgs = p.thumb && p.full && p.thumb !== p.full;
+          var raw = pst.imgMode === "raw" && (hasBothImgs || !p.thumb);
+          showImage(raw ? p.full : (p.thumb || p.full));
+          figCol.appendChild(figure);
+          figure.title = "click to view fullscreen";
+          figure.addEventListener("click", function () { if (curRel) openFullscreen(curRel); });
+        }
+        hero.appendChild(figCol);
+        var hasBoth = !ov && p.thumb && p.full && p.thumb !== p.full;
 
         /* right: the parsed inspection report */
         var panel = BV.el("div", { style: "flex:1 1 300px;min-width:260px" });
