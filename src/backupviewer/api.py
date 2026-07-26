@@ -1009,6 +1009,38 @@ class Api:
         }
 
     @_endpoint
+    def ws_diff_texts(self, a_text, b_text, normalize=False):
+        """Line-aligned diff of two program bodies given as EDITOR TEXT (the
+        workspace's display form: one statement per line, no numbers, no ';').
+        One endpoint, both workspace diff views:
+
+        - review-your-edits (pristine vs edited buffer): normalize=False -
+          same file, same save-time state, so byte differences are real.
+        - pane-vs-pane (two robots' programs, live): normalize=True - ref
+          comments and the pendant's IO-status display are save-time state,
+          so a row differing only there is classified 'equiv', never
+          'change' (see compare.align_program_lines).
+
+        Also returns io_status {a, b}: whether each side was saved with the
+        pendant's IO-status view ON (any 3-field IO ref in the file). When
+        the flags differ, every IO line differs textually and the UI can say
+        why instead of crying wolf. Parsing/diffing stays in Python - JS
+        never interprets robot files."""
+        def body(t):
+            t = str(t if t is not None else "")
+            if not t:
+                return []
+            return [{"n": i + 1, "text": ln} for i, ln in enumerate(t.split("\n"))]
+
+        a_body, b_body = body(a_text), body(b_text)
+        out = compare.align_program_lines(a_body, b_body, normalize=bool(normalize))
+        out["io_status"] = {
+            "a": compare.io_status_shown(str(a_text if a_text is not None else "")),
+            "b": compare.io_status_shown(str(b_text if b_text is not None else "")),
+        }
+        return out
+
+    @_endpoint
     def pick_export_folder(self):
         import webview
 

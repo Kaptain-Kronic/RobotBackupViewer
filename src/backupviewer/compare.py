@@ -12,23 +12,64 @@ counts between two physical robots is the red flag (cloned mastering data).
 from __future__ import annotations
 
 import difflib
+import re
 
 MAX_ROWS = 500
 
 _AXES = ("x", "y", "z", "w", "p", "r")
 
 
-def align_program_lines(a_body: list[dict], b_body: list[dict]) -> dict:
+# A ref's bracket tail - the ':comment' in R[21:SERVO GUN WORK] and the
+# ':status:comment' the pendant's IO-status view adds (DI[10:OFF:PartPresent]).
+# Both are SAVE-TIME DISPLAY STATE (the controller's comment table, the
+# IO-status toggle), not part of the instruction: two robots routinely save
+# the same line under different display state, and find/replace already
+# matches on identity for exactly this reason.
+_REF_TAIL = re.compile(r"\b([A-Z]+\[\d+):[^\]]*\]")
+# an IO ref carrying THREE fields (num:status:comment): only the IO-status
+# view writes these, so one anywhere means the file was saved with it ON
+_IO_STATUS_REF = re.compile(r"\b[A-Z]+\[\d+:[^:\]]*:[^\]]*\]")
+
+
+def normalize_tp_refs(text: str) -> str:
+    """A body line with every ref reduced to its identity (TYPE[index]).
+    Used only as an ALIGNMENT/CLASSIFICATION key - the UI always shows the
+    raw text of both sides, nothing is rewritten on screen."""
+    return _REF_TAIL.sub(r"\1]", text)
+
+
+def io_status_shown(text: str) -> bool:
+    """Was this program saved with the pendant's IO-status view ON? The
+    toggle is whole-program save-time state: any 3-field IO ref means yes,
+    and then every 2-field ref in the same file is just one with no status
+    to show - not a differently-written instruction."""
+    return bool(_IO_STATUS_REF.search(text))
+
+
+def align_program_lines(a_body: list[dict], b_body: list[dict],
+                        normalize: bool = False) -> dict:
     """Line-align two TP program bodies for a side-by-side diff view.
 
     Input: parse_ls_program 'body' lists [{n, text}]. Output rows keep BOTH
-    sides per visual row: kind = same | change | a_only | b_only.
-    """
+    sides per visual row: kind = same | equiv | change | a_only | b_only.
+
+    normalize=True aligns and classifies on identity-normalized text (see
+    normalize_tp_refs): a row whose sides differ only in ref comments /
+    IO-status display is 'equiv' - same instruction, different save-time
+    display state - never 'change'. This is the pane-vs-pane mode; a raw
+    diff of two robots' programs would flag every IO line as changed when
+    only the pendant's display toggle differed. Same-source diffs (original
+    vs edited) keep normalize=False: there, byte differences are real."""
     a_texts = [l["text"] for l in a_body]
     b_texts = [l["text"] for l in b_body]
-    sm = difflib.SequenceMatcher(a=a_texts, b=b_texts, autojunk=False)
+    if normalize:
+        a_keys = [normalize_tp_refs(t) for t in a_texts]
+        b_keys = [normalize_tp_refs(t) for t in b_texts]
+    else:
+        a_keys, b_keys = a_texts, b_texts
+    sm = difflib.SequenceMatcher(a=a_keys, b=b_keys, autojunk=False)
     rows: list[dict] = []
-    stats = {"same": 0, "change": 0, "a_only": 0, "b_only": 0}
+    stats = {"same": 0, "equiv": 0, "change": 0, "a_only": 0, "b_only": 0}
 
     def row(kind, ai, bi):
         stats[kind] += 1
@@ -43,7 +84,8 @@ def align_program_lines(a_body: list[dict], b_body: list[dict]) -> dict:
     for op, i1, i2, j1, j2 in sm.get_opcodes():
         if op == "equal":
             for k in range(i2 - i1):
-                row("same", i1 + k, j1 + k)
+                row("same" if a_texts[i1 + k] == b_texts[j1 + k] else "equiv",
+                    i1 + k, j1 + k)
         elif op == "replace":
             n = max(i2 - i1, j2 - j1)
             for k in range(n):

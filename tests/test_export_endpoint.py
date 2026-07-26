@@ -121,6 +121,26 @@ def test_get_program_refuses_non_program(api, two_robots):
     assert _err(api.ws_get_program(str(a), "NOSUCH.LS")) == "NOT_FOUND"
 
 
+# ---------------------------------------------------------------- diffing
+
+def test_ws_diff_texts_modes(api):
+    """The workspace diff endpoint: raw for original-vs-edited, normalized
+    (identity) for pane-vs-pane, io_status flags per side."""
+    a = "R[21]=1\nDO[1:Clamp]=ON"
+    b = "R[21:SERVO GUN WORK]=1\nDO[1:OFF:Clamp]=ON"
+    d = _ok(api.ws_diff_texts(a, b, True))
+    assert [r["kind"] for r in d["rows"]] == ["equiv", "equiv"]
+    assert d["io_status"] == {"a": False, "b": True}
+    # raw mode: the same pair is two changed lines (same-source diffs are
+    # byte-honest - there, a comment edit IS an edit)
+    raw = _ok(api.ws_diff_texts(a, b))
+    assert [r["kind"] for r in raw["rows"]] == ["change", "change"]
+    # empty side: all rows one-sided, never a crash
+    e = _ok(api.ws_diff_texts("", "DO[1]=ON"))
+    assert [r["kind"] for r in e["rows"]] == ["b_only"]
+    assert _ok(api.ws_diff_texts("", ""))["rows"] == []
+
+
 # ---------------------------------------------------------------- export
 
 def test_export_puts_each_robot_in_its_own_folder(api, two_robots, tmp_path):
