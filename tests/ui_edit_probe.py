@@ -97,23 +97,25 @@ def poll(window, expr, tries=30, delay=0.25):
     return val
 
 
-# The split is opened by DRAGGING, so the probe has to drive real drag events.
-# Synthetic MouseEvents carry no dataTransfer, which edit.js's dragstart already
-# tolerates (its setData sits in a try/catch); dragover/drop read only clientX.
+# Splits are opened by DRAGGING onto a pane's edges, so the probe has to drive
+# real drag events AT a pane. Synthetic MouseEvents carry no dataTransfer,
+# which edit.js's dragstart already tolerates (its setData sits in a
+# try/catch); dragover/drop read only clientX/clientY.
 _DRAG_JS = """(function(){
-    var wrap=document.querySelector('.ws-panes');
-    var r=wrap.getBoundingClientRect();
-    var x=r.left+r.width*%(frac)f, y=r.top+r.height/2;
+    var pane=document.querySelectorAll('.ws-pane')[%(pane)d];
+    var r=pane.getBoundingClientRect();
+    var x=r.left+r.width*%(fx)f, y=r.top+r.height*%(fy)f;
     var src=%(src)s;
     src.dispatchEvent(new MouseEvent('dragstart',{bubbles:true}));
-    wrap.dispatchEvent(new MouseEvent('dragover',
+    pane.dispatchEvent(new MouseEvent('dragover',
         {bubbles:true,cancelable:true,clientX:x,clientY:y}));
-    var z=document.querySelector('.dropzone');
+    var z=document.querySelector('.dropzone.show');
     /* read the zone BEFORE the drop - dropping hides it again */
-    var seen=JSON.stringify({show:z.classList.contains('show'),
-                             split:z.classList.contains('split'),
-                             left:z.style.left});
-    wrap.dispatchEvent(new MouseEvent('drop',
+    var seen=JSON.stringify(z ? {show:true,split:z.classList.contains('split'),
+                                 left:z.style.left,top:z.style.top,
+                                 width:z.style.width,height:z.style.height}
+                              : {show:false});
+    pane.dispatchEvent(new MouseEvent('drop',
         {bubbles:true,cancelable:true,clientX:x,clientY:y}));
     src.dispatchEvent(new MouseEvent('dragend',{bubbles:true}));
     return seen;
@@ -138,18 +140,21 @@ def menu_text(window):
     })()""") or ""
 
 
-def drag_prog(window, row_idx, frac):
-    """Drag working-set row `row_idx` onto the pane area at `frac` of its width."""
+def drag_prog(window, row_idx, fx, fy=0.5, pane=0):
+    """Drag working-set row `row_idx` onto pane `pane` at (fx, fy) of its box.
+    The outer 22%% band of a pane is an edge (split there); the rest is
+    "into this pane's tabs"."""
     return js(window, _DRAG_JS % {
-        "frac": frac, "src": "document.querySelectorAll('.ws-prog')[%d]" % row_idx})
+        "fx": fx, "fy": fy, "pane": pane,
+        "src": "document.querySelectorAll('.ws-prog')[%d]" % row_idx})
 
 
-def drag_tab(window, pane_idx, tab_idx, frac):
-    """Drag an open program TAB out of its pane and onto `frac` of the width."""
+def drag_tab(window, from_pane, tab_idx, fx, fy=0.5, pane=0):
+    """Drag an open program TAB out of pane `from_pane` onto pane `pane`."""
     return js(window, _DRAG_JS % {
-        "frac": frac,
+        "fx": fx, "fy": fy, "pane": pane,
         "src": "document.querySelectorAll('.ws-pane')[%d].querySelectorAll('.ws-tab')[%d]"
-               % (pane_idx, tab_idx)})
+               % (from_pane, tab_idx)})
 
 
 def probe(window):
@@ -377,26 +382,27 @@ def probe(window):
               js(window, "BV.workspace.dirtyCount()") == 0,
               "(the growth was probe scaffolding, not an edit)")
 
-        # ---- the drag decides the pane; the RIGHT QUARTER opens the split ----
+        # ---- the drag decides the pane; an EDGE of a pane opens the split ----
         # order matters: there is nothing to split AGAINST until one program is
-        # open, so the left-zone drop runs first
+        # open, so the center drop runs first
         left_seen = drag_prog(window, 1, 0.30)
         time.sleep(0.6)
-        check("panes.left_zone_no_split",
+        check("panes.center_zone_no_split",
               js(window, "document.querySelectorAll('.ws-pane').length") == 1
               and '"split":false' in (left_seen or ""), f"({left_seen})")
-        check("panes.left_zone_lands_in_pane0",
+        check("panes.center_zone_lands_in_pane0",
               js(window, "document.querySelectorAll('.ws-pane')[0]"
                          ".querySelectorAll('.ws-tab').length") == 2)
-        right_seen = drag_prog(window, 1, 0.90)
+        right_seen = drag_prog(window, 1, 0.94)
         time.sleep(0.6)
-        check("panes.right_quarter_paints_split_zone",
-              '"split":true' in (right_seen or "") and '"left":"75%"' in (right_seen or ""),
+        check("panes.right_edge_paints_split_zone",
+              '"split":true' in (right_seen or "") and '"left":"50%"' in (right_seen or "")
+              and '"height":"100%"' in (right_seen or ""),
               f"({right_seen})")
         check("panes.two_after_drag_split",
               js(window, "document.querySelectorAll('.ws-pane').length") == 2)
         check("panes.resizer_between",
-              js(window, "document.querySelectorAll('.ws-panes .ws-resizer').length") == 1)
+              js(window, "document.querySelectorAll('.ws-splitrz').length") == 1)
         check("panes.second_pane_has_tab",
               js(window, "document.querySelectorAll('.ws-pane')[1].querySelectorAll('.ws-tab').length") == 1)
         check("panes.two_editors",
@@ -518,6 +524,83 @@ def probe(window):
         tabs_r = js(window, "document.querySelectorAll('.ws-pane')[1].querySelectorAll('.ws-tab').length")
         check("tabs.no_duplicate_across_panes", tabs_l == 1 and tabs_r == 1,
               f"(left {tabs_l}, right {tabs_r} — asking pane 1 for pane 0's program must focus, not copy)")
+
+        # ---- the layout TREE: stacking, the pane cap, ctrl+w / ctrl+shift+t ----
+        # scratch entries via duplicate() so the fixture stays untouched; they
+        # are removed again at the end of this section (confirm stubbed - a
+        # duplicate's buffer is unsaved by definition)
+        js(window, "window.confirm = function(){ return true; }")
+        js(window, """(function(){
+            var e0=BV.workspace.entries()[0];
+            window._t1=BV.workspace.duplicate(e0.id,'TREETMP1',false).id;
+            window._t2=BV.workspace.duplicate(e0.id,'TREETMP2',false).id;
+            window._t3=BV.workspace.duplicate(e0.id,'TREETMP3',false).id;
+        })()""")
+        js(window, "BV.route()")           # the rail rebuilds on render
+        time.sleep(0.8)
+        row_of = ("(function(nm){ return [...document.querySelectorAll('.ws-prog')]"
+                  ".find(function(r){ return r.textContent.indexOf(nm)>=0; }); })")
+        bottom_seen = js(window, _DRAG_JS % {
+            "fx": 0.5, "fy": 0.94, "pane": 0, "src": row_of + "('TREETMP1')"})
+        time.sleep(0.7)
+        check("tree.bottom_edge_stacks",
+              js(window, "document.querySelectorAll('.ws-pane').length") == 3
+              and js(window, "document.querySelectorAll('.ws-split.col').length") >= 1
+              and '"split":true' in (bottom_seen or "")
+              and '"top":"50%"' in (bottom_seen or ""),
+              f"({bottom_seen})")
+        js(window, _DRAG_JS % {
+            "fx": 0.94, "fy": 0.5, "pane": 2, "src": row_of + "('TREETMP2')"})
+        time.sleep(0.7)
+        check("tree.four_panes",
+              js(window, "document.querySelectorAll('.ws-pane').length") == 4)
+        # the FIFTH pane is refused: the drop still opens the program, but as
+        # a tab of the target pane, never a fifth split
+        js(window, _DRAG_JS % {
+            "fx": 0.94, "fy": 0.5, "pane": 0, "src": row_of + "('TREETMP3')"})
+        time.sleep(0.7)
+        check("tree.pane_cap_holds",
+              js(window, "document.querySelectorAll('.ws-pane').length") == 4)
+        check("tree.capped_drop_still_opens",
+              bool(js(window, """[...document.querySelectorAll('.ws-tab')]
+                  .some(function(t){ return t.textContent.indexOf('TREETMP3')>=0; })""")))
+        check("tree.details_btn_pinned_outside_scroll",
+              js(window, "document.querySelectorAll('.ws-strip > .ws-detbtn').length") == 4,
+              "(one per pane, outside the scrolling tab box)")
+        # ctrl+w closes the ACTIVE pane's tab; ctrl+shift+t brings it back
+        js(window, """(function(){
+            var tmp=[...document.querySelectorAll('.ws-tab')]
+                .find(function(t){ return t.textContent.indexOf('TREETMP3')>=0; });
+            tmp.click();
+        })()""")
+        time.sleep(0.5)
+        js(window, """document.dispatchEvent(new KeyboardEvent('keydown',
+            {key:'w',ctrlKey:true,bubbles:true,cancelable:true}))""")
+        time.sleep(0.5)
+        check("tree.ctrl_w_closes_active_tab",
+              not js(window, """[...document.querySelectorAll('.ws-tab')]
+                  .some(function(t){ return t.textContent.indexOf('TREETMP3')>=0; })"""))
+        js(window, """document.dispatchEvent(new KeyboardEvent('keydown',
+            {key:'T',ctrlKey:true,shiftKey:true,bubbles:true,cancelable:true}))""")
+        time.sleep(0.5)
+        check("tree.ctrl_shift_t_reopens",
+              bool(js(window, """[...document.querySelectorAll('.ws-tab')]
+                  .some(function(t){ return t.textContent.indexOf('TREETMP3')>=0; })""")))
+        # cleanup: scratch entries out, back to the two MAINs side by side
+        js(window, """(function(){
+            [window._t1, window._t2, window._t3].forEach(function(id){
+                var tab=[...document.querySelectorAll('.ws-tab')].find(function(t){
+                    return t.textContent.indexOf('TREETMP')>=0; });
+                if (tab) tab.querySelector('.x').click();
+                BV.workspace.remove(id);
+            });
+        })()""")
+        js(window, "BV.route()")
+        time.sleep(0.8)
+        panes_left = js(window, "document.querySelectorAll('.ws-pane').length")
+        check("tree.cleanup_back_to_two_panes",
+              panes_left == 2 and js(window, "BV.workspace.count()") == 2,
+              f"({panes_left} panes, {js(window, 'BV.workspace.count()')} entries)")
 
         # ---- pane-vs-pane diff: the toggle exists only while the split does ----
         # (BV.menu has no disabled state and toolbar toggles follow the same

@@ -22,15 +22,27 @@
 (function () {
   "use strict";
 
+  /* the pane LAYOUT is a tree: a leaf holds tabs, a split holds two kids in a
+     row (side by side) or a column (stacked) with draggable sizes. Up to
+     MAX_PANES leaves; dropping on a pane's EDGE splits it in that direction,
+     the center lands in its tabs. An emptied leaf folds away and a single-kid
+     split collapses - still derived, never toggled. */
+  var MAX_PANES = 4;
+  var treeSeq = 0;
+  function mkLeaf(tabs) {
+    return { id: "L" + (++treeSeq), leaf: true, tabs: tabs || [], active: 0 };
+  }
+
   var st = {
-    panes: [{ tabs: [], active: 0 }, { tabs: [], active: 0 }],
-    activePane: 0,
+    tree: mkLeaf([]),
+    activeLeaf: null,        /* leaf id; fixed up by normalizeTree */
     railOpen: true,
     navOpen: true,
     railTab: "set",          /* set | find */
     setFolds: {},            /* working-set robot folds */
     frFolds: {},             /* find-result folds */
-    details: [false, false], /* per-pane attrs/positions panel */
+    details: {},             /* leaf id -> attrs/positions panel open */
+    detH: {},                /* leaf id -> details panel px height */
     paneDiff: false,         /* the pane-vs-pane diff strip (split view only) */
     navSeg: "calls",         /* calls | labels */
     /* the rail's selection: a set of ENTRY IDS (stable across renames, unlike
@@ -38,6 +50,8 @@
        not nodes: renderWorkingSet() re-runs on every keystroke in an editor. */
     sel: {}, selAnchor: null,
   };
+  st.activeLeaf = st.tree.id;
+  var closedTabs = [];       /* ctrl+shift+t: [{entryId, leafId}], newest last */
   var fr = {
     find: "", repl: "",
     matchCase: false, wholeWord: false,
@@ -51,11 +65,38 @@
   var drag = null;
 
   function keyOf(t) { return t.id; }   /* stable: a rename must not orphan a tab */
-  function paneOf(idx) { return st.panes[idx] || st.panes[0]; }
-  /* the split is DERIVED, not a setting: the second pane exists exactly while
-     it holds tabs. Nothing to toggle, nothing to remember, and no stored flag
-     that can disagree with what is on screen. */
-  function visiblePanes() { return st.panes[1].tabs.length ? 2 : 1; }
+
+  /* ---- tree walkers ---- */
+  function leaves(node, out) {
+    node = node || st.tree;
+    out = out || [];
+    if (node.leaf) out.push(node);
+    else node.kids.forEach(function (k) { leaves(k, out); });
+    return out;
+  }
+  function leafById(id, node) {
+    node = node || st.tree;
+    if (node.id === id) return node.leaf ? node : null;
+    if (node.leaf) return null;
+    for (var i = 0; i < node.kids.length; i++) {
+      var f = leafById(id, node.kids[i]);
+      if (f) return f;
+    }
+    return null;
+  }
+  function parentOf(id, node) {
+    node = node || st.tree;
+    if (node.leaf) return null;
+    for (var i = 0; i < node.kids.length; i++) {
+      if (node.kids[i].id === id) return node;
+      var f = parentOf(id, node.kids[i]);
+      if (f) return f;
+    }
+    return null;
+  }
+  function activeLeafObj() {
+    return leafById(st.activeLeaf) || leaves()[0];
+  }
 
   /* ---- the working set's selection ---- */
   function selIds() { return Object.keys(st.sel); }
@@ -256,10 +297,12 @@
   }
   /* dirty dots without touching the rest of the DOM */
   function refreshDirtyMarks() {
-    (el.paneEls || []).forEach(function (pEl, i) {
+    if (!el.paneEls) return;
+    leaves().forEach(function (l) {
+      var pEl = el.paneEls[l.id];
       if (!pEl) return;
       var tabs = pEl.querySelectorAll(".ws-tab");
-      paneOf(i).tabs.forEach(function (t, ti) {
+      l.tabs.forEach(function (t, ti) {
         var tab = tabs[ti];
         if (!tab) return;
         var dirty = BV.workspace.dirty(t);
@@ -315,8 +358,11 @@
         BV.workspace.clear();
         setSel([]);
         st.selAnchor = null;
-        st.panes.forEach(function (p) { p.tabs = []; p.active = 0; });
-        normalizePanes();
+        st.tree = mkLeaf([]);
+        st.activeLeaf = st.tree.id;
+        st.details = {};
+        st.detH = {};
+        closedTabs = [];
         renderPanes();
         afterChange();
       });
@@ -387,7 +433,7 @@
           else rowMenu({ x: ev.clientX, y: ev.clientY }, e, dirty);
         });
         row.addEventListener("click", function (ev) { clickRow(e, ev); });
-        row.addEventListener("dblclick", function () { openTab(e, st.activePane); });
+        row.addEventListener("dblclick", function () { openTab(e); });
         row.addEventListener("dragstart", function (ev) {
           drag = { kind: "prog", entry: e };
           try { ev.dataTransfer.setData("text/plain", e.name); } catch (x2) {}
@@ -520,30 +566,34 @@
     ]);
   }
 
-  function otherPane() { return st.activePane === 0 ? 1 : 0; }
-
-  /* "open it over there": a program lives in exactly one pane, so one that is
-     already open MOVES rather than being focused where it already was. */
-  function moveToPane(entry, paneIdx) {
-    var held = paneHolding(entry);
-    if (held >= 0 && held !== paneIdx) {
-      var from = paneOf(held);
-      from.tabs = from.tabs.filter(function (t) { return keyOf(t) !== keyOf(entry); });
-    }
-    openTab(entry, paneIdx);
-  }
-
   function rowMenu(anchor, e, dirty) {
     var items = [];
-    var held = paneHolding(e);
-    var to = otherPane();
-    /* a split needs work on BOTH sides. Offering the item when the move would
-       just collapse the split back would be a lie, and BV.menu has no disabled
-       state - so it is omitted rather than shown dead. */
-    var keeps = paneOf(st.activePane).tabs.length - (held === st.activePane ? 1 : 0);
-    if (held !== to && keeps > 0) {
+    var held = leafHolding(e);
+    var act = activeLeafObj();
+    /* "open beside what I'm looking at": splits the active pane to the right,
+       or focuses the pane that already shows it. Omitted (BV.menu has no
+       disabled state) when it cannot mean anything: a split needs work on
+       BOTH sides, so the active pane must keep at least one tab after the
+       move - and a new pane needs room under the cap. */
+    var elsewhere = held && held.id !== act.id;
+    var actKeeps = act.tabs.length - (held && held.id === act.id ? 1 : 0);
+    if (elsewhere || (actKeeps > 0 && leaves().length < MAX_PANES)) {
       items.push({ label: "open in split view",
-        onClick: function () { moveToPane(e, to); } });
+        onClick: function () {
+          if (elsewhere) {
+            held.active = held.tabs.findIndex(function (t) { return keyOf(t) === keyOf(e); });
+            st.activeLeaf = held.id;
+            renderPanes();
+            return;
+          }
+          if (held) {
+            held.tabs = held.tabs.filter(function (t) { return keyOf(t) !== keyOf(e); });
+          }
+          if (!splitLeaf(activeLeafObj(), "row", 1, e)) placeTab(e);
+          normalizeTree();
+          renderPanes();
+          afterChange();
+        } });
     }
     items.push(
       { label: "review changes",
@@ -574,7 +624,7 @@
               var made = BV.workspace.duplicate(e.id, v, false);
               if (!made) return "invalid name, or already used for this robot";
               afterChange();
-              openTab(made, st.activePane);
+              openTab(made);
               return "";
             });
         } },
@@ -588,7 +638,7 @@
               var made = BV.workspace.duplicate(e.id, v, true);
               if (!made) return "invalid name, or already used for this robot";
               afterChange();
-              openTab(made, st.activePane);
+              openTab(made);
               return "";
             });
         } },
@@ -603,71 +653,113 @@
 
   /* a program lives in exactly ONE pane: asking for it anywhere else focuses
      the pane that already has it instead of opening a second copy */
-  function paneHolding(entry) {
-    for (var i = 0; i < visiblePanes(); i++) {
-      if (paneOf(i).tabs.some(function (t) { return keyOf(t) === keyOf(entry); })) return i;
-    }
-    return -1;
+  function leafHolding(entry) {
+    return leaves().filter(function (l) {
+      return l.tabs.some(function (t) { return keyOf(t) === keyOf(entry); });
+    })[0] || null;
   }
 
-  /* every path that can empty a pane funnels through here. A two-pane layout
-     with an empty LEFT pane is not "unsplit", it is a hole - so the right pane
-     slides over, its details panel in tow. activePane comes home too, or the
-     next double-click would silently re-open the split that just closed. */
-  function normalizePanes() {
-    if (!st.panes[0].tabs.length && st.panes[1].tabs.length) {
-      st.panes[0] = st.panes[1];
-      st.panes[1] = { tabs: [], active: 0 };
-      st.details[0] = st.details[1];
-      st.details[1] = false;
+  /* split `l` in `dir`; the new leaf (holding `entry`) sits before (side=0)
+     or after (side=1) it. null when the pane cap is hit. */
+  function splitLeaf(l, dir, side, entry) {
+    if (leaves().length >= MAX_PANES) {
+      BV.toast(MAX_PANES + " panes is the cap");
+      return null;
     }
-    if (!st.panes[1].tabs.length) st.activePane = 0;
-    st.panes.forEach(function (p) {
-      if (p.active >= p.tabs.length || p.active < 0) {
-        p.active = p.tabs.length ? p.tabs.length - 1 : 0;
+    var nl = mkLeaf([entry]);
+    var split = { id: "S" + (++treeSeq), dir: dir, sizes: [0.5, 0.5],
+                  kids: side ? [l, nl] : [nl, l] };
+    if (st.tree.id === l.id) st.tree = split;
+    else {
+      var p = parentOf(l.id);
+      p.kids[p.kids.indexOf(l)] = split;
+    }
+    st.activeLeaf = nl.id;
+    return nl;
+  }
+
+  /* every path that can change the tree funnels through here: an emptied leaf
+     folds away (the survivor slides over by construction), a single-kid split
+     collapses to that kid, actives are clamped, per-leaf state for dead
+     leaves is dropped, and the active leaf is always a live one. */
+  function normalizeTree() {
+    (function prune(n) {
+      if (n.leaf) return;
+      n.kids.forEach(prune);
+      n.kids = n.kids.filter(function (k) { return k.leaf ? k.tabs.length : k.kids.length; });
+      n.kids = n.kids.map(function (k) {
+        return (!k.leaf && k.kids.length === 1) ? k.kids[0] : k;
+      });
+    })(st.tree);
+    if (!st.tree.leaf) {
+      st.tree.kids = st.tree.kids.filter(function (k) {
+        return k.leaf ? k.tabs.length : k.kids.length;
+      });
+      if (st.tree.kids.length === 1) st.tree = st.tree.kids[0];
+      else if (!st.tree.kids.length) st.tree = mkLeaf([]);
+    }
+    var live = {};
+    leaves().forEach(function (l) {
+      live[l.id] = true;
+      if (l.active >= l.tabs.length || l.active < 0) {
+        l.active = l.tabs.length ? l.tabs.length - 1 : 0;
       }
     });
+    Object.keys(st.details).forEach(function (id) { if (!live[id]) delete st.details[id]; });
+    Object.keys(st.detH).forEach(function (id) { if (!live[id]) delete st.detH[id]; });
+    if (!live[st.activeLeaf]) st.activeLeaf = leaves()[0].id;
   }
 
-  /* put an entry in a pane WITHOUT painting; returns the pane it actually
+  /* put an entry in a leaf WITHOUT painting; returns the leaf it actually
      landed in (a program lives in exactly one pane, so an already-open one
-     wins). openTab is the single-entry wrapper that paints. */
-  function placeTab(entry, paneIdx) {
-    var held = paneHolding(entry);
-    if (held >= 0) paneIdx = held;          /* never duplicate across panes */
-    var pane = paneOf(paneIdx);
+     wins its existing home). openTab is the single-entry wrapper that paints. */
+  function placeTab(entry, leaf) {
+    var held = leafHolding(entry);
+    leaf = held || leaf || activeLeafObj();
     var at = -1;
-    pane.tabs.forEach(function (t, i) { if (keyOf(t) === keyOf(entry)) at = i; });
+    leaf.tabs.forEach(function (t, i) { if (keyOf(t) === keyOf(entry)) at = i; });
     if (at < 0) {
-      pane.tabs.push(entry);
-      at = pane.tabs.length - 1;
+      leaf.tabs.push(entry);
+      at = leaf.tabs.length - 1;
     }
-    pane.active = at;
-    return paneIdx;
+    leaf.active = at;
+    return leaf;
   }
 
-  function openTab(entry, paneIdx) {
-    /* asking for pane 1 CREATES the split - it is not a hidden pane to clamp
-       away from, it is an empty one, and putting a tab in it IS the gesture.
-       What is left here is a plain bounds check. */
-    if (paneIdx !== 0 && paneIdx !== 1) paneIdx = 0;
-    st.activePane = placeTab(entry, paneIdx);
-    normalizePanes();
+  function openTab(entry, leaf) {
+    st.activeLeaf = placeTab(entry, leaf).id;
+    normalizeTree();
     renderPanes();
     afterChange();
   }
-  /* closing a tab keeps the cached editor, so its undo history is still there
-     when the program is reopened */
-  function closeTab(paneIdx, idx) {
-    paneOf(paneIdx).tabs.splice(idx, 1);
-    normalizePanes();
+  /* closing a tab keeps the cached editor (undo history included); the TAB
+     itself goes on the reopen stack for ctrl+shift+t */
+  function closeTab(leaf, idx) {
+    var t = leaf.tabs[idx];
+    if (t) {
+      closedTabs.push({ entryId: keyOf(t), leafId: leaf.id });
+      if (closedTabs.length > 40) closedTabs.shift();
+    }
+    leaf.tabs.splice(idx, 1);
+    normalizeTree();
     renderPanes();
   }
+  function reopenClosedTab() {
+    while (closedTabs.length) {
+      var c = closedTabs.pop();
+      var e = BV.workspace.byId(c.entryId);
+      if (!e) continue;                     /* left the workspace since */
+      if (leafHolding(e)) continue;         /* already back on screen */
+      openTab(e, leafById(c.leafId) || activeLeafObj());
+      return;
+    }
+    BV.toast("no closed tab to reopen");
+  }
   function closeEverywhere(entry) {
-    st.panes.forEach(function (pane) {
-      pane.tabs = pane.tabs.filter(function (t) { return keyOf(t) !== keyOf(entry); });
+    leaves().forEach(function (l) {
+      l.tabs = l.tabs.filter(function (t) { return keyOf(t) !== keyOf(entry); });
     });
-    normalizePanes();
+    normalizeTree();
   }
   /* only leaving the workspace discards the editor (and its undo) */
   function dropEditor(entry) {
@@ -677,39 +769,84 @@
     delete editors[k];
   }
   function cycleTab(dir) {
-    var pane = paneOf(st.activePane);
-    if (!pane || pane.tabs.length < 2) return;
-    pane.active = (pane.active + dir + pane.tabs.length) % pane.tabs.length;
+    var leaf = activeLeafObj();
+    if (!leaf || leaf.tabs.length < 2) return;
+    leaf.active = (leaf.active + dir + leaf.tabs.length) % leaf.tabs.length;
     renderPanes();
   }
-  function hideDrop() { if (el.dropzone) el.dropzone.classList.remove("show", "split"); }
+  function hideDrop() {
+    document.querySelectorAll(".ws-pane > .dropzone.show").forEach(function (d) {
+      d.classList.remove("show", "split");
+    });
+  }
 
-  var SPLIT_ZONE = 0.25;   /* the right quarter of a single pane opens a second */
+  var EDGE_ZONE = 0.22;  /* the outer band of a pane that means "split here" */
 
-  /* where would a drop land, and what should the zone look like? Read by
-     dragover (to paint it) and by drop (to act on it), so the picture and the
-     result can never drift apart.
+  /* where would a drop land? Read by dragover (to paint it) and by drop (to
+     act on it), so the picture and the result can never drift apart. The
+     nearest edge wins inside the outer band - left/right split side by side,
+     top/bottom stack - and everything else lands in this pane's tabs. */
+  function zoneFor(paneEl, cx, cy) {
+    var r = paneEl.getBoundingClientRect();
+    var x = r.width ? (cx - r.left) / r.width : 0.5;
+    var y = r.height ? (cy - r.top) / r.height : 0.5;
+    var edge = [
+      { z: "left", d: x }, { z: "right", d: 1 - x },
+      { z: "top", d: y }, { z: "bottom", d: 1 - y },
+    ].sort(function (a, b) { return a.d - b.d; })[0];
+    return edge.d < EDGE_ZONE ? edge.z : "center";
+  }
+  function paintZone(dz, zone) {
+    hideDrop();              /* ONE lit zone ever - stale ones die here */
+    dz.style.left = zone === "right" ? "50%" : "0";
+    dz.style.top = zone === "bottom" ? "50%" : "0";
+    dz.style.width = (zone === "left" || zone === "right") ? "50%" : "100%";
+    dz.style.height = (zone === "top" || zone === "bottom") ? "50%" : "100%";
+    dz.classList.toggle("split", zone !== "center");
+    dz.classList.add("show");
+  }
 
-       unsplit : |<--- 75%: into this pane --->|<- 25%: split, land right ->|
-       split   : |<---- left pane ---->|<---- right pane ---->|
-
-     The right EDGE always means the right-hand pane; while there is no right
-     pane yet the zone is narrower, because creating one should take intent. */
-  function dropTarget(wrap, clientX) {
-    var r = wrap.getBoundingClientRect();
-    var f = r.width ? (clientX - r.left) / r.width : 0;
-    if (visiblePanes() === 2) {
-      return f > 0.5 ? { pane: 1, left: "50%", width: "50%", makes: false }
-                     : { pane: 0, left: "0", width: "50%", makes: false };
+  function dropOn(leaf, zone, d) {
+    var entry = d.entry;
+    var held = leafHolding(entry);
+    if (zone === "center") {
+      /* a drop is an explicit PLACEMENT, so it moves a program that is open
+         elsewhere. (Double-click is the "just show me this" gesture, and that
+         one still focuses wherever it already lives.) */
+      if (held && held.id !== leaf.id) {
+        held.tabs = held.tabs.filter(function (t) { return keyOf(t) !== keyOf(entry); });
+        normalizeTree();
+      }
+      openTab(entry, leafById(leaf.id) || activeLeafObj());
+      return;
     }
-    return f > 1 - SPLIT_ZONE
-      ? { pane: 1, left: "75%", width: "25%", makes: true }
-      : { pane: 0, left: "0", width: "75%", makes: false };
+    if (held && held.id === leaf.id && leaf.tabs.length === 1) {
+      BV.toast("that's the only program here — nothing to split against");
+      return;
+    }
+    /* remove-then-count: moving a pane's last tab onto another pane's edge
+       folds the source away, so the split must not be refused for a pane
+       that is about to stop existing */
+    if (held) {
+      held.tabs = held.tabs.filter(function (t) { return keyOf(t) !== keyOf(entry); });
+      normalizeTree();
+    }
+    var target = leafById(leaf.id) || activeLeafObj();
+    var made = splitLeaf(target, (zone === "left" || zone === "right") ? "row" : "col",
+                         (zone === "right" || zone === "bottom") ? 1 : 0, entry);
+    if (!made) {
+      /* cap hit: the entry still needs a home - back into the target's tabs */
+      placeTab(entry, target);
+      st.activeLeaf = target.id;
+    }
+    normalizeTree();
+    renderPanes();
+    afterChange();
   }
 
   function activeTab() {
-    var pane = paneOf(st.activePane);
-    return pane.tabs[pane.active] || null;
+    var leaf = activeLeafObj();
+    return leaf.tabs[leaf.active] || null;
   }
 
   function renderPanes() {
@@ -720,58 +857,55 @@
       if (ed && ed.el && ed.el.parentNode) ed.el.parentNode.removeChild(ed.el);
     });
     el.work.innerHTML = "";
-    el.paneEls = [];
+    el.paneEls = {};                       /* leaf id -> pane element */
     var wrap = BV.el("div", { class: "ws-panes" });
     el.work.appendChild(wrap);
-    el.dropzone = BV.el("div", { class: "dropzone" });
-    wrap.appendChild(el.dropzone);
-
-    wrap.addEventListener("dragover", function (e) {
-      if (!drag) return;
-      e.preventDefault();
-      var t = dropTarget(wrap, e.clientX);
-      el.dropzone.style.left = t.left;
-      el.dropzone.style.width = t.width;
-      el.dropzone.classList.toggle("split", t.makes);
-      el.dropzone.classList.add("show");
-    });
-    wrap.addEventListener("dragleave", function (e) { if (e.target === wrap) hideDrop(); });
-    wrap.addEventListener("drop", function (e) {
-      if (!drag) return;
-      e.preventDefault();
-      var target = dropTarget(wrap, e.clientX).pane;
-      var d = drag; drag = null; hideDrop();
-      if (d.kind === "tab" && d.fromPane === target) return;   /* no reorder yet */
-      var held = paneHolding(d.entry);
-      if (held === target) { openTab(d.entry, target); return; }   /* already there */
-      /* moving a pane's LAST tab to the empty other side is a swap, not a
-         split: the layout would collapse straight back and look broken. Say so
-         instead of doing nothing. */
-      if (held >= 0 && paneOf(held).tabs.length === 1 && !paneOf(target).tabs.length) {
-        BV.toast("that's the only program open — nothing to split against");
-        return;
-      }
-      /* a drop is an explicit PLACEMENT, so it moves a program that is already
-         open elsewhere. (Double-click is the "just show me this" gesture, and
-         that one still focuses wherever it already lives.) */
-      moveToPane(d.entry, target);
-    });
-
-    for (var i = 0; i < visiblePanes(); i++) {
-      if (i === 1) {
-        wrap.appendChild(makeResizer(function (dx, startPx) {
-          var total = wrap.getBoundingClientRect().width;
-          var px = Math.max(160, Math.min(total - 160, startPx + dx));
-          el.paneEls[0].style.flex = "0 0 " + px + "px";
-          el.paneEls[1].style.flex = "1 1 auto";
-          return px;
-        }, null, function () { return el.paneEls[0].getBoundingClientRect().width; }));
-      }
-      buildPane(wrap, i);
-    }
+    wrap.appendChild(renderNode(st.tree));
     syncDiffBtn();
     mountDiffPanel();
     renderNav();
+  }
+
+  /* the layout tree, recursively: a split is a flex row/column of two kids
+     with a draggable seam between them; a leaf is a pane */
+  function renderNode(node) {
+    if (node.leaf) return buildPane(node);
+    var box = BV.el("div", { class: "ws-split " + node.dir });
+    node.kids.forEach(function (k, i) {
+      if (i) box.appendChild(splitResizer(box, node, i));
+      var kid = BV.el("div", { class: "ws-kid" });
+      kid.style.flex = node.sizes[i] + " 1 0";
+      kid.appendChild(renderNode(k));
+      box.appendChild(kid);
+    });
+    return box;
+  }
+
+  function splitResizer(box, node, i) {
+    var rz = BV.el("div", { class: "ws-splitrz", title: "drag to resize" });
+    rz.addEventListener("mousedown", function (e) {
+      e.preventDefault();
+      rz.classList.add("dragging");
+      var horiz = node.dir === "row";
+      var r = box.getBoundingClientRect();
+      function mv(ev) {
+        var f = horiz ? (ev.clientX - r.left) / r.width : (ev.clientY - r.top) / r.height;
+        f = Math.max(0.12, Math.min(0.88, f));
+        node.sizes[i - 1] = f;
+        node.sizes[i] = 1 - f;
+        var kids = box.querySelectorAll(":scope > .ws-kid");
+        kids[i - 1].style.flex = f + " 1 0";
+        kids[i].style.flex = (1 - f) + " 1 0";
+      }
+      function up() {
+        document.removeEventListener("mousemove", mv);
+        document.removeEventListener("mouseup", up);
+        rz.classList.remove("dragging");
+      }
+      document.addEventListener("mousemove", mv);
+      document.addEventListener("mouseup", up);
+    });
+    return rz;
   }
 
   /* ------------------------------------------------------------------ *
@@ -787,7 +921,7 @@
    * ------------------------------------------------------------------ */
   function syncDiffBtn() {
     if (!el.diffBtn) return;
-    var split = visiblePanes() === 2;
+    var split = leaves().length === 2;
     el.diffBtn.style.display = split ? "" : "none";
     /* "on", never "primary": export is the toolbar's one primary and probes
        find it by that class */
@@ -796,8 +930,9 @@
   }
 
   function paneDiffPair() {
-    if (visiblePanes() !== 2) return null;
-    var a = paneOf(0).tabs[paneOf(0).active], b = paneOf(1).tabs[paneOf(1).active];
+    var ls = leaves();
+    if (ls.length !== 2) return null;
+    var a = ls[0].tabs[ls[0].active], b = ls[1].tabs[ls[1].active];
     return a && b ? [a, b] : null;
   }
 
@@ -874,86 +1009,115 @@
     diffTimer = setTimeout(refreshPaneDiff, 400);
   }
 
-  function buildPane(wrap, i) {
-    var pane = paneOf(i);
-    var split = visiblePanes() === 2;
-    var p = BV.el("div", { class: "ws-pane" + (st.activePane === i && split ? " active" : "") });
-    el.paneEls[i] = p;
+  function buildPane(leaf) {
+    var many = leaves().length > 1;
+    var p = BV.el("div", { class: "ws-pane" + (st.activeLeaf === leaf.id && many ? " active" : "") });
+    p.dataset.leaf = leaf.id;
+    el.paneEls[leaf.id] = p;
     p.addEventListener("mousedown", function () {
-      if (st.activePane !== i) {
-        st.activePane = i;
-        (el.paneEls || []).forEach(function (pe, idx) {
-          if (pe) pe.classList.toggle("active", idx === i && visiblePanes() === 2);
-        });
-        renderNav();
-      }
+      if (st.activeLeaf === leaf.id) return;
+      st.activeLeaf = leaf.id;
+      /* classes ONLY - a re-render here destroys the node under the pointer
+         between mousedown and click, eating the click (the rail lesson) */
+      var multi = leaves().length > 1;
+      Object.keys(el.paneEls).forEach(function (id) {
+        el.paneEls[id].classList.toggle("active", multi && id === leaf.id);
+      });
+      renderNav();
     });
 
+    var stripBox = BV.el("div", { class: "ws-strip" });
     var strip = BV.el("div", { class: "ws-tabs" });
+    stripBox.appendChild(strip);
     /* a vertical wheel pans the strip: with a mouse you are otherwise stuck */
     strip.addEventListener("wheel", function (ev) {
       if (!ev.deltaY) return;
       strip.scrollLeft += ev.deltaY;
       ev.preventDefault();
     }, { passive: false });
-    pane.tabs.forEach(function (t, ti) {
+    leaf.tabs.forEach(function (t, ti) {
       var dirty = BV.workspace.dirty(t);
-      var tab = BV.el("div", { class: "ws-tab" + (pane.active === ti ? " active" : ""),
+      var tab = BV.el("div", { class: "ws-tab" + (leaf.active === ti ? " active" : ""),
                                draggable: "true", title: t.root + "\n" + t.file });
       tab.innerHTML = '<span class="rb">' + BV.esc(labelFor(t.root)) + "</span>" +
         "<span>" + BV.esc(BV.workspace.displayName(t)) + "</span>" + (dirty ? '<span class="dot"></span>' : "");
       var x = BV.el("span", { class: "x" }, "✕");
-      x.addEventListener("click", function (ev) { ev.stopPropagation(); closeTab(i, ti); });
+      x.addEventListener("click", function (ev) { ev.stopPropagation(); closeTab(leaf, ti); });
       tab.appendChild(x);
       tab.addEventListener("click", function () {
-        pane.active = ti; st.activePane = i; renderPanes();
+        leaf.active = ti; st.activeLeaf = leaf.id; renderPanes();
       });
       tab.addEventListener("dragstart", function (ev) {
-        drag = { kind: "tab", entry: t, fromPane: i, idx: ti };
+        drag = { kind: "tab", entry: t, fromLeaf: leaf.id };
         try { ev.dataTransfer.setData("text/plain", t.name); } catch (x2) {}
       });
       tab.addEventListener("dragend", function () { drag = null; hideDrop(); });
       strip.appendChild(tab);
     });
-    if (!pane.tabs.length) {
+    if (!leaf.tabs.length) {
       strip.appendChild(BV.el("span", { class: "dim", style: "font-size:.72rem;padding:.25rem" },
         "drop or double-click a program"));
     } else {
+      /* pinned OUTSIDE the scrolling tab box, so it never drifts off-screen
+         behind a long tab strip */
       var dt = BV.el("button", { class: "btn ws-detbtn",
         title: "attributes + point data (rarely edited)" },
-        st.details[i] ? "hide details" : "details");
+        st.details[leaf.id] ? "hide details" : "details");
       dt.addEventListener("click", function () {
-        st.details[i] = !st.details[i];
+        st.details[leaf.id] = !st.details[leaf.id];
         renderPanes();
       });
-      strip.appendChild(dt);
+      stripBox.appendChild(dt);
     }
-    p.appendChild(strip);
+    p.appendChild(stripBox);
 
     var host = BV.el("div", { class: "ws-pane-host" });
     p.appendChild(host);
-    wrap.appendChild(p);
 
-    var t = pane.tabs[pane.active];
+    /* drop zones live on the PANE: edges split it, the center lands in its
+       tabs. One overlay per pane, but paintZone puts out every other one. */
+    var dz = BV.el("div", { class: "dropzone" });
+    p.appendChild(dz);
+    p.addEventListener("dragover", function (e) {
+      if (!drag) return;
+      e.preventDefault();
+      e.stopPropagation();
+      paintZone(dz, zoneFor(p, e.clientX, e.clientY));
+    });
+    p.addEventListener("dragleave", function (e) { if (e.target === p) hideDrop(); });
+    p.addEventListener("drop", function (e) {
+      if (!drag) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var d = drag;
+      drag = null;
+      hideDrop();
+      var zone = zoneFor(p, e.clientX, e.clientY);
+      if (d.kind === "tab" && d.fromLeaf === leaf.id && zone === "center") return; /* no reorder yet */
+      dropOn(leaf, zone, d);
+    });
+
+    var t = leaf.tabs[leaf.active];
     if (!t) {
       host.innerHTML = '<div class="empty-state" style="height:100%">' +
         '<div class="hint">' + (BV.workspace.count()
           ? "double-click a program in the working set"
           : "add programs to the workspace first") + "</div></div>";
-      return;
+      return p;
     }
-    mountEditor(t, host, p, i);
+    mountEditor(t, host, p, leaf);
+    return p;
   }
 
   /* cached instance re-attached; only a first open builds one */
-  function mountEditor(t, host, paneEl, paneIdx) {
+  function mountEditor(t, host, paneEl, leaf) {
     var k = keyOf(t);
     var cached = editors[k];
     if (cached) {
       host.appendChild(cached.el);
-      if (st.details[paneIdx]) {
+      if (st.details[leaf.id]) {
         var buf = BV.workspace.peek(t);
-        if (buf) paneEl.appendChild(detailsPanel(t, buf, paneIdx));
+        if (buf) paneEl.appendChild(detailsPanel(t, buf, leaf));
       }
       renderNav();
       return;
@@ -972,7 +1136,7 @@
           if (activeTab() && keyOf(activeTab()) === k) renderNav();
         },
       });
-      if (st.details[paneIdx]) paneEl.appendChild(detailsPanel(t, buf, paneIdx));
+      if (st.details[leaf.id]) paneEl.appendChild(detailsPanel(t, buf, leaf));
       loadNames(t.root);
       renderNav();
     }).catch(function (e) {
@@ -1461,7 +1625,7 @@
             String(rec.hits.length)));
           ph.addEventListener("click", function (ev) {
             if (ev.target.tagName === "INPUT") return;
-            if (!rec.hits.length) { openTab(rec.e, st.activePane); return; }
+            if (!rec.hits.length) { openTab(rec.e); return; }
             st.frFolds[pgKey] = !pgFolded;
             paint(false);
           });
@@ -1586,8 +1750,7 @@
      opened for the FIRST time mounts asynchronously (its text has to be read),
      so wait for the instance instead of assuming one frame is enough. */
   function revealLine(entry, lineIdx) {
-    var held = paneHolding(entry);
-    openTab(entry, held >= 0 ? held : st.activePane);
+    openTab(entry);          /* placeTab focuses an existing home on its own */
     var tries = 0;
     (function waitForEditor() {
       var ed = editors[keyOf(entry)];
@@ -1848,6 +2011,21 @@
       if (!st.railOpen) { st.railOpen = true; persistPanels(); renderShell(); }
       st.railTab = "find";
       renderRail(sel || undefined);
+      return;
+    }
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === "w" || e.key === "W")) {
+      /* close the active tab - and swallow the browser accelerator, which
+         would close the whole window */
+      e.preventDefault();
+      e.stopPropagation();
+      var leafW = activeLeafObj();
+      if (leafW.tabs.length) closeTab(leafW, leafW.active);
+      return;
+    }
+    if (e.ctrlKey && e.shiftKey && (e.key === "t" || e.key === "T")) {
+      e.preventDefault();
+      e.stopPropagation();
+      reopenClosedTab();
       return;
     }
     if (e.key === "Delete" && !e.ctrlKey && !e.altKey && !e.metaKey) {
