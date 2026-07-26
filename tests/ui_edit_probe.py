@@ -6,8 +6,11 @@ the rail's working set (grouped per robot, collapsible), per-pane tab strips
 BV.lsEditor mounting per pane, live dirty state reaching the rail and the
 topbar badge, find/replace scoped to the working set (identity-aware matching,
 per-robot scope, collapsible grouped results with select-all, click-to-reveal),
-and an export that lands ONE FOLDER PER ROBOT while both backups stay
-byte-for-byte untouched.
+the pane-vs-pane diff strip (offered only while split, live while typing,
+ref-comment differences honestly classified display-only), the
+review-your-edits modal (original vs edited; clean programs say so plainly;
+a rename alone counts as an exportable change), and an export that lands ONE
+FOLDER PER ROBOT while both backups stay byte-for-byte untouched.
 
 Two robots deliberately share a program name (MAIN.LS) - the collision the
 per-robot export layout exists to prevent.
@@ -480,6 +483,24 @@ def probe(window):
         check("tabs.no_duplicate_across_panes", tabs_l == 1 and tabs_r == 1,
               f"(left {tabs_l}, right {tabs_r} — asking pane 1 for pane 0's program must focus, not copy)")
 
+        # ---- pane-vs-pane diff: the toggle exists only while the split does ----
+        # (BV.menu has no disabled state and toolbar toggles follow the same
+        # rule: absent when meaningless, never dead)
+        check("diff.button_appears_with_split", bool(js(window, """(function(){
+            var b=[...document.querySelectorAll('.toolbar-slot .btn')]
+                .find(function(x){return x.textContent==='diff panes';});
+            return b && b.style.display !== 'none';
+        })()""")))
+        js(window, """[...document.querySelectorAll('.toolbar-slot .btn')]
+            .find(function(x){return x.textContent==='diff panes';}).click()""")
+        got = poll(window, "!!document.querySelector('.ws-diff')")
+        check("diff.panel_mounts", bool(got))
+        rows_n = poll(window, "document.querySelectorAll('.ws-diff .pd-row:not(.pd-head)').length")
+        check("diff.identical_programs_all_same",
+              rows_n == 8 and js(window,
+                  "document.querySelectorAll('.ws-diff .pd-same').length") == 8,
+              f"({rows_n} rows — two robots' pristine MAIN.LS are byte-identical)")
+
         # ---- edit one program: dirty must reach the rail + badge ----
         js(window, """(function(){
             var code=document.querySelectorAll('.lsed-code')[0];
@@ -494,6 +515,88 @@ def probe(window):
               "(unsaved work is visible from every screen)")
         check("edit.export_btn_enabled",
               not js(window, "document.querySelector('.toolbar-slot .btn.primary').disabled"))
+
+        # ---- the pane diff recomputes as you type (debounced) ----
+        a_only = poll(window, "document.querySelectorAll('.ws-diff .pd-a_only').length")
+        check("diff.live_update_on_typing", a_only == 1, f"({a_only} a-only rows)")
+        # identity honesty: a ref COMMENT difference must read display-only -
+        # the same instruction saved under different comment-table state
+        js(window, """(function(){
+            var code=document.querySelectorAll('.lsed-code')[0];
+            code.textContent = code.textContent.replace('R[21]=2','R[21:WORKCMT]=2');
+            code.dispatchEvent(new Event('input',{bubbles:true}));
+        })()""")
+        equiv = poll(window, "document.querySelectorAll('.ws-diff .pd-equiv').length")
+        check("diff.ref_comment_is_display_only", equiv == 1,
+              "(a naive text diff would call this line changed)")
+        check("diff.no_false_change",
+              js(window, "document.querySelectorAll('.ws-diff .pd-change').length") == 0)
+        stats_txt = js(window, "document.querySelector('.ws-diff-head').textContent") or ""
+        check("diff.stats_report_display_only", "display-only" in stats_txt,
+              f"({stats_txt[:60]!r})")
+        # clicking a row lands BOTH editors on that instruction (flash, no
+        # focus steal - the strip scrolls independently of the editors)
+        js(window, """(function(){
+            var r=document.querySelectorAll('.ws-diff .pd-same')[0];
+            r.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+        })()""")
+        time.sleep(0.4)
+        check("diff.row_click_flashes_both_editors",
+              js(window, "document.querySelectorAll('.lsed-scroll .flashbar').length") == 2)
+
+        # ---- review-your-edits: original vs edited, every kind of change ----
+        js(window, """[...document.querySelectorAll('.toolbar-slot .btn')]
+            .find(function(x){return x.textContent==='review…';}).click()""")
+        got = poll(window, "!!document.querySelector('.rv-modal')")
+        check("review.modal_opens", bool(got))
+        cards = poll(window, "document.querySelectorAll('.rv-card').length")
+        sum_txt = js(window, "(document.querySelector('.rv-sum')||{}).textContent||''")
+        check("review.only_changed_programs_get_cards", cards == 1, f"({cards} cards)")
+        check("review.summary_counts", "1 of 2 programs changed" in (sum_txt or ""),
+              f"({sum_txt!r})")
+        check("review.added_line_is_b_only",
+              js(window, "document.querySelectorAll('.rv-card .pd-b_only').length") == 1,
+              "(the typed line exists only on the edited side)")
+        # raw mode: same source, same save-time state - here the comment edit
+        # IS an edit, and hiding it would be the lie
+        check("review.comment_edit_visible_raw",
+              js(window, "document.querySelectorAll('.rv-card .pd-change').length") == 1)
+        heads = js(window, "(document.querySelector('.rv-card .pd-head')||{}).textContent||''")
+        check("review.heads_original_vs_edited",
+              "original (backup)" in (heads or "") and "edited" in (heads or ""), f"({heads!r})")
+        check("review.unchanged_listed",
+              "unchanged:" in (js(window, "document.querySelector('.rv-body').textContent") or ""),
+              "(clean programs are listed, not silently dropped)")
+        js(window, """document.getElementById('modal-root').dispatchEvent(
+            new MouseEvent('mousedown',{bubbles:true}))""")
+        time.sleep(0.4)
+        check("review.backdrop_closes", not js(window, "BV.modalOpen()"))
+
+        # a clean single program answers plainly (the rail's ⋯ menu path)
+        js(window, """document.querySelectorAll('.ws-prog')[1].dispatchEvent(
+            new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:60,clientY:140}))""")
+        time.sleep(0.35)
+        check("review.menu_item_present", "review changes" in menu_text(window))
+        js(window, """[...document.querySelectorAll('.ctx-menu .ctx-item')]
+            .find(function(b){return b.textContent.indexOf('review changes')>=0;}).click()""")
+        poll(window, "!!document.querySelector('.rv-modal')")
+        clean_txt = poll(window, "(document.querySelector('.rv-card')||{}).textContent||''")
+        check("review.clean_program_says_so",
+              "no changes — matches the backup" in (clean_txt or ""),
+              f"({(clean_txt or '')[-60:]!r})")
+        js(window, """document.getElementById('modal-root').dispatchEvent(
+            new MouseEvent('mousedown',{bubbles:true}))""")
+        time.sleep(0.4)
+
+        # ---- closing the strip: ✕ unmounts it, the toggle stays offered ----
+        js(window, "document.querySelector('.ws-diff-head .x').click()")
+        time.sleep(0.4)
+        check("diff.close_unmounts", not js(window, "!!document.querySelector('.ws-diff')"))
+        check("diff.button_still_offered_while_split", bool(js(window, """(function(){
+            var b=[...document.querySelectorAll('.toolbar-slot .btn')]
+                .find(function(x){return x.textContent==='diff panes';});
+            return b && b.style.display !== 'none' && !b.classList.contains('on');
+        })()""")))
 
         # ---- find/replace in the rail: identity-aware, scoped, grouped ----
         js(window, """[...document.querySelectorAll('.ws-railtab')]
@@ -612,6 +715,23 @@ def probe(window):
                 check(f"export.{robot}_kept_untouched_line", b"   1:  !setup ;\r\n" in data)
         check("export.no_part", not list(DEST.rglob("*.part")))
         check("export.clean_after_save", not js(window, "BV.workspace.anyDirty()"))
+
+        # ---- a rename alone is an exportable change (pending, not dirty) ----
+        js(window, "window._rn = BV.workspace.rename(BV.workspace.entries()[0].id, 'PENDINGCHK')")
+        time.sleep(0.5)
+        check("rename.pending_enables_export",
+              bool(js(window, "window._rn"))
+              and js(window, "BV.workspace.pendingCount()") == 1
+              and not js(window, "BV.workspace.anyDirty()")
+              and not js(window, "document.querySelector('.toolbar-slot .btn.primary').disabled"),
+              "(a rename-only workspace used to be silently unexportable)")
+        check("rename.badge_tints_for_pending",
+              bool(js(window, "document.querySelector('#cube-edit .cube-badge').classList.contains('dirty')")))
+        js(window, "BV.workspace.rename(BV.workspace.entries()[0].id, '')")
+        time.sleep(0.5)
+        check("rename.clear_disables_export",
+              bool(js(window, "document.querySelector('.toolbar-slot .btn.primary').disabled"))
+              and js(window, "BV.workspace.pendingCount()") == 0)
 
         # ---- THE trust contract ----
         for robot in ROBOTS:

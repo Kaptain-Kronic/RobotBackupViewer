@@ -31,6 +31,7 @@
     setFolds: {},            /* working-set robot folds */
     frFolds: {},             /* find-result folds */
     details: [false, false], /* per-pane attrs/positions panel */
+    paneDiff: false,         /* the pane-vs-pane diff strip (split view only) */
     navSeg: "calls",         /* calls | labels */
     /* the rail's selection: a set of ENTRY IDS (stable across renames, unlike
        a row index or a name), plus the row a shift-range measures from. Ids,
@@ -115,6 +116,22 @@
     el.counts = BV.el("span", { class: "dim", style: "font-size:.78rem" });
     bar.appendChild(el.counts);
     bar.appendChild(BV.el("span", { style: "flex:1" }));
+    /* only rendered while the split is open: BV.menu has no disabled state and
+       the same rule holds for toolbar toggles - a control that cannot do
+       anything is omitted, not shown dead (syncDiffBtn) */
+    el.diffBtn = BV.el("button", { class: "btn",
+      title: "diff the two panes' open programs, live while you edit" }, "diff panes");
+    el.diffBtn.style.display = "none";
+    el.diffBtn.addEventListener("click", function () {
+      st.paneDiff = !st.paneDiff;
+      renderPanes();
+    });
+    bar.appendChild(el.diffBtn);
+    el.reviewBtn = BV.el("button", { class: "btn",
+      title: "original vs edited for every program - body, attributes, points and renames" },
+      "review…");
+    el.reviewBtn.addEventListener("click", function () { showReview(); });
+    bar.appendChild(el.reviewBtn);
     el.exportBtn = BV.el("button", { class: "btn primary" }, "export…");
     el.exportBtn.addEventListener("click", showExport);
     bar.appendChild(el.exportBtn);
@@ -217,7 +234,9 @@
 
   function updateCounts() {
     if (!el.counts) return;
-    var n = BV.workspace.count(), d = BV.workspace.dirtyCount();
+    /* pending, not dirty: a rename is a real change with no buffer edit, and
+       gating export on buffer dirt alone made a rename-only set unexportable */
+    var n = BV.workspace.count(), d = BV.workspace.pendingCount();
     var robots = BV.workspace.byRobot().length;
     el.counts.textContent = n
       ? robots + (robots === 1 ? " robot · " : " robots · ") + n + " programs" +
@@ -225,6 +244,9 @@
       : "nothing in the workspace yet";
     el.exportBtn.textContent = d ? "export " + d + " file" + (d === 1 ? "" : "s") + "…" : "export…";
     el.exportBtn.disabled = !d;
+    /* review stays available while anything is IN the workspace: a review of a
+       clean program answers "no changes" plainly instead of being unreachable */
+    if (el.reviewBtn) el.reviewBtn.disabled = !n;
   }
   /* counts are safe any time; the RAIL must never be rebuilt while find owns
      it, or clicking a result would destroy the list being worked through */
@@ -524,6 +546,8 @@
         onClick: function () { moveToPane(e, to); } });
     }
     items.push(
+      { label: "review changes",
+        onClick: function () { showReview([e]); } },
       { label: e.saveAs ? "rename (now " + e.saveAs + ")" : "rename…",
         onClick: function () {
           askName("rename program", baseName(e),
@@ -745,7 +769,109 @@
       }
       buildPane(wrap, i);
     }
+    syncDiffBtn();
+    mountDiffPanel();
     renderNav();
+  }
+
+  /* ------------------------------------------------------------------ *
+   * pane-vs-pane diff: a strip under the editors, live while typing
+   *
+   * The strip is its OWN aligned, independently-scrolled list - it does not
+   * try to mirror two editors that scroll apart. Clicking a row brings BOTH
+   * editors to that instruction (scroll + flash, no focus steal - the click
+   * is inspection, not editing). Recomputed debounced off every workspace
+   * change; ws_diff_texts runs in normalize mode, so two robots' programs
+   * differing only in ref comments / the pendant's IO-status display read as
+   * "display-only", never as changed lines.
+   * ------------------------------------------------------------------ */
+  function syncDiffBtn() {
+    if (!el.diffBtn) return;
+    var split = visiblePanes() === 2;
+    el.diffBtn.style.display = split ? "" : "none";
+    /* "on", never "primary": export is the toolbar's one primary and probes
+       find it by that class */
+    el.diffBtn.classList.toggle("on", split && st.paneDiff);
+    if (!split) st.paneDiff = false;   /* the pair it pointed at is gone */
+  }
+
+  function paneDiffPair() {
+    if (visiblePanes() !== 2) return null;
+    var a = paneOf(0).tabs[paneOf(0).active], b = paneOf(1).tabs[paneOf(1).active];
+    return a && b ? [a, b] : null;
+  }
+
+  function mountDiffPanel() {
+    if (el.diffPanel && el.diffPanel.parentNode) el.diffPanel.parentNode.removeChild(el.diffPanel);
+    el.diffPanel = null;
+    el.paneDiffView = null;
+    if (!st.paneDiff || !paneDiffPair()) return;
+    var panel = BV.el("div", { class: "ws-diff",
+      title: "compares the two panes' open programs as you type; " +
+             "click a row to jump both editors to that instruction" });
+    el.diffPanel = panel;
+    var head = BV.el("div", { class: "ws-diff-head" });
+    panel.appendChild(head);
+    var body = BV.el("div", { class: "ws-diff-body" });
+    panel.appendChild(body);
+    el.work.appendChild(panel);
+
+    el.paneDiffView = BV.pdiffView(body, { onRowClick: function (row) {
+      var pair = paneDiffPair();
+      if (!pair) return;
+      if (row.a_n !== null) flashInPane(pair[0], row.a_n - 1);
+      if (row.b_n !== null) flashInPane(pair[1], row.b_n - 1);
+    } });
+
+    head.appendChild(el.paneDiffView.stats);
+    el.diffNote = BV.el("span", { class: "dim", style: "font-size:.72rem" });
+    head.appendChild(el.diffNote);
+    head.appendChild(BV.el("span", { style: "flex:1" }));
+    var prev = BV.el("button", { class: "btn", title: "previous difference" }, "↑");
+    var next = BV.el("button", { class: "btn", title: "next difference" }, "↓");
+    prev.addEventListener("click", function () { el.paneDiffView.jump(-1); });
+    next.addEventListener("click", function () { el.paneDiffView.jump(1); });
+    head.appendChild(prev);
+    head.appendChild(next);
+    var x = BV.el("span", { class: "x", title: "close the diff" }, "✕");
+    x.addEventListener("click", function () { st.paneDiff = false; renderPanes(); });
+    head.appendChild(x);
+    refreshPaneDiff();
+  }
+
+  var diffSeq = 0, diffTimer = null;
+  function refreshPaneDiff() {
+    var view = el.paneDiffView;
+    var pair = paneDiffPair();
+    if (!view || !pair) return;
+    var seq = ++diffSeq;
+    Promise.all([BV.workspace.buffer(pair[0]), BV.workspace.buffer(pair[1])])
+      .then(function (bufs) {
+        return BV.api.call("ws_diff_texts", bufs[0].text, bufs[1].text, true);
+      })
+      .then(function (d) {
+        if (seq !== diffSeq || el.paneDiffView !== view) return;   /* stale */
+        view.setHeads(labelFor(pair[0].root) + " · " + BV.workspace.displayName(pair[0]),
+                      labelFor(pair[1].root) + " · " + BV.workspace.displayName(pair[1]));
+        view.setData(d);
+        if (el.diffNote) {
+          el.diffNote.textContent = d.io_status && d.io_status.a !== d.io_status.b
+            ? "sides saved under different IO-status display — those rows are " +
+              "display-only, not changes"
+            : "";
+        }
+      })
+      .catch(function (e) {
+        if (seq !== diffSeq || el.paneDiffView !== view) return;
+        if (el.diffNote) el.diffNote.textContent = "diff unavailable: " + (e.message || e);
+      });
+  }
+  /* debounced: onChange fires per keystroke, and every buffer mutation path
+     (typing, find/replace, attrs) funnels through a workspace emit anyway */
+  function schedulePaneDiff() {
+    if (!el.paneDiffView) return;
+    clearTimeout(diffTimer);
+    diffTimer = setTimeout(refreshPaneDiff, 400);
   }
 
   function buildPane(wrap, i) {
@@ -1434,6 +1560,28 @@
     });
   }
 
+  /* flash (and center) one line of an OPEN program's editor without stealing
+     focus or moving the caret - the diff strip's click is inspection, not
+     editing. scroll=false leaves the viewport alone (revealLine already
+     centered via focusLine). */
+  function flashInPane(entry, lineIdx, scroll) {
+    var ed = editors[keyOf(entry)];
+    if (!ed || !ed.el.parentNode) return;
+    var scroller = ed.el.querySelector(".lsed-scroll");
+    if (!scroller) return;
+    var cs = getComputedStyle(ed.code);
+    var lh = parseFloat(cs.lineHeight) || 16;
+    var padTop = parseFloat(cs.paddingTop) || 0;
+    if (scroll !== false) {
+      scroller.scrollTop = Math.max(0, padTop + lineIdx * lh - scroller.clientHeight / 2);
+    }
+    var bar = BV.el("div", { class: "flashbar" });
+    bar.style.top = (padTop + lineIdx * lh) + "px";
+    bar.style.height = lh + "px";
+    scroller.appendChild(bar);
+    setTimeout(function () { if (bar.parentNode) bar.parentNode.removeChild(bar); }, 1600);
+  }
+
   /* open a program in a pane and flash one line. The editor for a program
      opened for the FIRST time mounts asynchronously (its text has to be read),
      so wait for the instance instead of assuming one frame is enough. */
@@ -1449,16 +1597,168 @@
         return;
       }
       ed.focusLine(lineIdx + 1);
-      var scroller = ed.el.querySelector(".lsed-scroll");
-      if (!scroller) return;
-      var cs = getComputedStyle(ed.code);
-      var lh = parseFloat(cs.lineHeight) || 16;
-      var bar = BV.el("div", { class: "flashbar" });
-      bar.style.top = (parseFloat(cs.paddingTop) + lineIdx * lh) + "px";
-      bar.style.height = lh + "px";
-      scroller.appendChild(bar);
-      setTimeout(function () { if (bar.parentNode) bar.parentNode.removeChild(bar); }, 1600);
+      flashInPane(entry, lineIdx, false);
     })();
+  }
+
+  /* ------------------------------------------------------------------ *
+   * review-your-edits: original vs edited, before anything leaves the tool
+   *
+   * The honesty screen for the whole editing lane: EVERY kind of change an
+   * entry can carry is shown - body lines (the shared aligned diff, raw mode:
+   * same source, same save-time state, so byte differences are real),
+   * attribute edits, position/point edits, and a rename. A clean program says
+   * "no changes" plainly instead of rendering an empty table. Originals are
+   * the PRISTINE buffer base - exports re-apply to pristine, so what this
+   * screen shows is exactly what the export writes.
+   * ------------------------------------------------------------------ */
+  function stemOf(name) { return String(name || "").replace(/\.[Ll][Ss]$/, ""); }
+
+  function attrChangeRows(buf) {
+    var out = [];
+    if (!buf || !buf.baseAttrs) return out;
+    ["comment", "owner", "protect"].forEach(function (k) {
+      if ((buf.attrs[k] || "") !== (buf.baseAttrs[k] || "")) {
+        out.push({ what: k, a: buf.baseAttrs[k] || "—", b: buf.attrs[k] || "—" });
+      }
+    });
+    return out;
+  }
+
+  /* the pristine value a position edit replaces; masked fields show their
+     ******** honestly - a point placed logically but never initialized */
+  function posOriginal(buf, ed) {
+    var p = (buf.positions || []).filter(function (x) { return x.id === ed.id; })[0];
+    if (!p) return "—";
+    if (ed.field === "comment") return p.comment || "—";
+    var g = (p.groups || []).filter(function (x) { return x.gp === ed.gp; })[0];
+    if (!g) return "—";
+    if (ed.field === "config") return g.config || "—";
+    if (ed.field === "uf" || ed.field === "ut") {
+      return g[ed.field] === undefined ? "—" : String(g[ed.field]);
+    }
+    var v = /^j\d$/.test(ed.field)
+      ? (g.joints || [])[+ed.field.slice(1) - 1]
+      : g[ed.field];
+    if (v === null || v === undefined) return g.masked ? "********" : "—";
+    return String(v);
+  }
+
+  function posChangeRows(buf) {
+    var keys = Object.keys((buf && buf.posEdits) || {});
+    keys.sort();
+    return keys.map(function (k) {
+      var ed = buf.posEdits[k];
+      return { what: "P[" + ed.id + "] gp" + ed.gp + " " + ed.field,
+               a: posOriginal(buf, ed), b: String(ed.value) };
+    });
+  }
+
+  var CHANGE_COLS = [
+    { key: "what", label: "", dim: true },
+    { key: "a", label: "original" },
+    { key: "b", label: "edited", accent: true },
+  ];
+
+  /* one program's card; .changed says whether anything is in it */
+  function reviewCard(e, bodyDiff) {
+    var card = BV.el("div", { class: "card rv-card" });
+    card.appendChild(BV.el("h3", null,
+      BV.esc(labelFor(e.root)) + " · " + BV.esc(BV.workspace.displayName(e))));
+    var buf = BV.workspace.peek(e);
+    var renamed = !!e.saveAs && e.saveAs.toUpperCase() !== stemOf(e.name).toUpperCase();
+
+    var rows = [];
+    if (renamed) rows.push({ what: "program name", a: stemOf(e.name), b: e.saveAs });
+    if (buf) {
+      rows = rows.concat(attrChangeRows(buf), posChangeRows(buf));
+    }
+    if (renamed) {
+      card.appendChild(BV.el("div", { class: "dim", style: "font-size:.76rem;margin:0 0 .3rem" },
+        "exports as " + BV.esc(e.saveAs) + ".LS with its /PROG header repointed — " +
+        "the source file is never touched"));
+    }
+    if (rows.length) card.appendChild(BV.table(CHANGE_COLS, rows));
+
+    var bodyChanged = bodyDiff &&
+      (bodyDiff.stats.change + bodyDiff.stats.a_only + bodyDiff.stats.b_only) > 0;
+    if (bodyChanged) {
+      var bar = BV.el("div", { class: "rv-diffbar" });
+      var pd = BV.pdiffView(card, { heads: ["original (backup)", "edited"], data: bodyDiff });
+      bar.appendChild(pd.stats);
+      bar.appendChild(BV.el("span", { style: "flex:1" }));
+      var prev = BV.el("button", { class: "btn", title: "previous difference" }, "↑");
+      var next = BV.el("button", { class: "btn", title: "next difference" }, "↓");
+      prev.addEventListener("click", function () { pd.jump(-1); });
+      next.addEventListener("click", function () { pd.jump(1); });
+      bar.appendChild(prev);
+      bar.appendChild(next);
+      card.insertBefore(bar, pd.el);
+    }
+
+    var changed = rows.length > 0 || bodyChanged;
+    if (buf && buf.base === null) {
+      /* a restored draft whose pristine source could not be re-read: saying
+         "no changes" here would be a lie - say what is actually known */
+      card.appendChild(BV.el("div", { style: "color:var(--warn);font-size:.8rem" },
+        "the original could not be read — body and attribute changes cannot be shown"));
+      changed = true;
+    } else if (!changed) {
+      card.appendChild(BV.el("div", { class: "dim", style: "font-size:.8rem" },
+        "no changes — matches the backup"));
+    }
+    return { el: card, changed: changed };
+  }
+
+  /* list defaults to the whole working set (the export…-sibling button);
+     the rail's ⋯ menu passes one entry */
+  function showReview(list) {
+    list = (list || BV.workspace.entries()).slice();
+    if (!list.length) { BV.toast("the workspace is empty"); return; }
+    var body = BV.el("div", { class: "rv-body" });
+    body.innerHTML = '<div class="dim" style="padding:1rem">reading originals…</div>';
+    var m = BV.modal("review edits — original vs edited", body);
+    m.el.classList.add("rv-modal");
+
+    /* a draft restored from settings has base=null and is unsaved by
+       definition - seed pristine first so "original" is real, never a guess */
+    Promise.all(list.map(function (e) {
+      var b = BV.workspace.peek(e);
+      return b && b.base === null
+        ? BV.workspace.buffer(e).catch(function () { return null; })
+        : Promise.resolve(null);
+    })).then(function () {
+      return Promise.all(list.map(function (e) {
+        var b = BV.workspace.peek(e);
+        if (b && b.base !== null && b.text !== b.base) {
+          return BV.api.call("ws_diff_texts", b.base, b.text, false)
+            .catch(function () { return null; });
+        }
+        return Promise.resolve(null);
+      }));
+    }).then(function (diffs) {
+      if (!document.body.contains(body)) return;    /* closed mid-load */
+      body.innerHTML = "";
+      var clean = [];
+      list.forEach(function (e, i) {
+        var card = reviewCard(e, diffs[i]);
+        if (card.changed || list.length === 1) body.appendChild(card.el);
+        else clean.push(e);
+      });
+      var changedN = list.length - clean.length;
+      body.insertBefore(BV.el("div", { class: "dim rv-sum" },
+        list.length === 1
+          ? BV.esc(BV.workspace.displayName(list[0]))
+          : changedN + " of " + list.length + " programs changed"),
+        body.firstChild);
+      if (clean.length && list.length > 1) {
+        /* honesty: the unchanged ones are listed, not silently dropped */
+        body.appendChild(BV.el("div", { class: "dim", style: "font-size:.76rem;padding:.2rem .4rem" },
+          "unchanged: " + BV.esc(clean.map(function (e) {
+            return BV.workspace.displayName(e);
+          }).join(", "))));
+      }
+    });
   }
 
   /* ------------------------------------------------------------------ *
@@ -1569,7 +1869,10 @@
     }
   }, true);
 
-  BV.state.on("workspace", function () { if (el.counts) updateCounts(); });
+  BV.state.on("workspace", function () {
+    if (el.counts) updateCounts();
+    schedulePaneDiff();          /* every buffer mutation funnels through here */
+  });
 
   BV.openWorkspace = function () {
     if (location.hash === "#edit") BV.route();
