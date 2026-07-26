@@ -163,9 +163,17 @@ In progress (claimed 2026-07-23, first slices building on main):
   offline path for fleet-wide register/IO renaming and a hazard (loading an old
   program silently reverts renamed comments) — the hazard half is already
   detectable offline, so it is a candidate scan check either way.
+- ✅ **The two diff views** — review-your-edits (original vs edited for every
+  kind of change: body, attributes, points, renames; the compare engine
+  pointed at pristine vs buffer, exactly what the export writes) and the live
+  pane-vs-pane diff (split view only, recomputes while typing). Pane-vs-pane
+  classifies on IDENTITY: ref comments and the pendant's IO-status display
+  are save-time state, so `DI[10:OFF:Comment]` vs `DI[10:Comment]` reads
+  "display-only", never "changed". One shared renderer (`BV.pdiffView`)
+  serves both plus the #pdiff tab.
 - 📋 Next in this lane: insert-CALL picker (pick a real program/macro from
-  the backup), then the review-your-edits diff screen, then
-  validation/autocomplete against the backup's own IO and register tables.
+  the backup), then validation/autocomplete against the backup's own IO and
+  register tables.
 
 Decided principles (these are settled — build against them):
 

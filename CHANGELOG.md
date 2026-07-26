@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+- **Review your edits before they leave the tool.** A "review…" button beside
+  export (and "review changes" on any program's ⋯ menu) shows original vs
+  edited side by side — body lines aligned and highlighted, plus attribute
+  edits, point edits (a masked `********` original honestly stays masked), and
+  renames with a note that the export repoints the `/PROG` header. The
+  original is the pristine backup copy, which is exactly what the export
+  re-applies your edits to. A clean program says "no changes — matches the
+  backup" instead of showing an empty table, and unchanged programs in a set
+  are listed rather than silently dropped.
+- **Diff the split panes, live.** With two programs open side by side, "diff
+  panes" docks an aligned diff under the editors that recomputes as you type.
+  It compares on *identity*: `R[21]` vs `R[21:SERVO GUN WORK]`, or the
+  pendant's IO-status form `DI[10:OFF:Comment]` vs `DI[10:Comment]`, are the
+  same instruction saved under different display state — those rows read as
+  "display-only", never as changes, because a diff that cries wolf on every IO
+  line is worse than no diff. When the two files were saved under different
+  IO-status display, the strip says so. The strip scrolls on its own rather
+  than mirroring two editors scrolled apart; clicking a row lands both editors
+  on that instruction. The toggle only exists while the split does.
+- **A rename alone is an exportable change.** Renaming a program without
+  touching its body used to leave the export button disabled — the rename
+  exported fine, but only if something else was edited too. The button, the
+  count and the topbar badge now treat an unexported rename as pending work.
+
 ## v1.4 — the edit workspace
 - **The app is called Backup Viewer.** The window title, taskbar entry, crash
   dialog and `--help` line all used to lead with a robot vendor's name, which
