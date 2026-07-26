@@ -1313,7 +1313,7 @@
       host.appendChild(cached.el);
       if (st.details[leaf.id]) {
         var buf = BV.workspace.peek(t);
-        if (buf) paneEl.appendChild(detailsPanel(t, buf, leaf));
+        if (buf) mountDetails(t, buf, paneEl, leaf);
       }
       renderNav();
       return;
@@ -1332,7 +1332,7 @@
           if (activeTab() && keyOf(activeTab()) === k) renderNav();
         },
       });
-      if (st.details[leaf.id]) paneEl.appendChild(detailsPanel(t, buf, leaf));
+      if (st.details[leaf.id]) mountDetails(t, buf, paneEl, leaf);
       loadNames(t.root);
       renderNav();
     }).catch(function (e) {
@@ -1486,6 +1486,39 @@
   /* ------------------------------------------------------------------ *
    * details: editable attributes + point data
    * ------------------------------------------------------------------ */
+
+  /* the panel plus its drag seam: the height is yours to set, remembered
+     per pane (module state, like everything else here) */
+  function mountDetails(t, buf, paneEl, leaf) {
+    var rz = BV.el("div", { class: "ws-detrz", title: "drag to resize the details" });
+    var det = detailsPanel(t, buf, leaf);
+    if (st.detH[leaf.id]) {
+      det.style.height = st.detH[leaf.id] + "px";
+      det.style.maxHeight = "none";     /* an explicit height outranks the cap */
+    }
+    rz.addEventListener("mousedown", function (e) {
+      e.preventDefault();
+      rz.classList.add("dragging");
+      var y0 = e.clientY, h0 = det.getBoundingClientRect().height;
+      function mv(ev) {
+        var max = paneEl.getBoundingClientRect().height - 120;
+        var h = Math.max(70, Math.min(max, h0 - (ev.clientY - y0)));
+        st.detH[leaf.id] = h;
+        det.style.height = h + "px";
+        det.style.maxHeight = "none";
+      }
+      function up() {
+        document.removeEventListener("mousemove", mv);
+        document.removeEventListener("mouseup", up);
+        rz.classList.remove("dragging");
+      }
+      document.addEventListener("mousemove", mv);
+      document.addEventListener("mouseup", up);
+    });
+    paneEl.appendChild(rz);
+    paneEl.appendChild(det);
+  }
+
   function detailsPanel(t, buf, paneIdx) {
     var box = BV.el("div", { class: "ws-details scrollbody" });
     var ac = BV.el("div", { class: "card" });
@@ -2018,58 +2051,71 @@
     { key: "b", label: "edited", accent: true },
   ];
 
-  /* one program's card; .changed says whether anything is in it */
+  /* one program's section (borderless - the diff table is the only box);
+     .changed says whether anything is in it */
   function reviewCard(e, bodyDiff) {
-    var card = BV.el("div", { class: "card rv-card" });
-    card.appendChild(BV.el("h3", null,
-      BV.esc(labelFor(e.root)) + " · " + BV.esc(BV.workspace.displayName(e))));
+    var sect = BV.el("div", { class: "rv-sect" });
     var buf = BV.workspace.peek(e);
     var renamed = !!e.saveAs && e.saveAs.toUpperCase() !== stemOf(e.name).toUpperCase();
 
     var rows = [];
     if (renamed) rows.push({ what: "program name", a: stemOf(e.name), b: e.saveAs });
-    if (buf) {
-      rows = rows.concat(attrChangeRows(buf), posChangeRows(buf));
-    }
-    if (renamed) {
-      card.appendChild(BV.el("div", { class: "dim", style: "font-size:.76rem;margin:0 0 .3rem" },
-        "exports as " + BV.esc(e.saveAs) + ".LS with its /PROG header repointed — " +
-        "the source file is never touched"));
-    }
-    if (rows.length) card.appendChild(BV.table(CHANGE_COLS, rows));
+    var attrRows = buf ? attrChangeRows(buf) : [];
+    var posRows = buf ? posChangeRows(buf) : [];
+    rows = rows.concat(attrRows, posRows);
 
     var bodyChanged = bodyDiff &&
       (bodyDiff.stats.change + bodyDiff.stats.a_only + bodyDiff.stats.b_only) > 0;
+
+    /* the header says WHAT KIND of change at a glance */
+    var kinds = [];
+    if (bodyChanged) kinds.push("body");
+    if (attrRows.length) kinds.push(attrRows.length + " attribute" + (attrRows.length === 1 ? "" : "s"));
+    if (posRows.length) kinds.push(posRows.length + " point" + (posRows.length === 1 ? "" : "s"));
+    if (renamed) kinds.push(kinds.length ? "rename" : "rename only");
+    var head = BV.el("div", { class: "rv-prog-h" });
+    head.appendChild(BV.el("span", { class: "nm" }, BV.esc(BV.workspace.displayName(e))));
+    head.appendChild(BV.el("span", { class: "kind" },
+      BV.esc(kinds.length ? kinds.join(" + ") : "unchanged")));
+    sect.appendChild(head);
+
+    if (renamed) {
+      sect.appendChild(BV.el("div", { class: "dim", style: "font-size:.76rem;margin:0 0 .3rem" },
+        "exports as " + BV.esc(e.saveAs) + ".LS with its /PROG header repointed — " +
+        "the source file is never touched"));
+    }
+    if (rows.length) sect.appendChild(BV.table(CHANGE_COLS, rows));
+
     if (bodyChanged) {
-      var bar = BV.el("div", { class: "rv-diffbar" });
-      var pd = BV.pdiffView(card, { heads: ["original (backup)", "edited"], data: bodyDiff });
-      bar.appendChild(pd.stats);
-      bar.appendChild(BV.el("span", { style: "flex:1" }));
+      var pd2 = BV.pdiffView(sect, { heads: ["original (backup)", "edited"], data: bodyDiff });
+      var pills = BV.el("span", { class: "pills" });
+      pills.appendChild(pd2.stats);
       var prev = BV.el("button", { class: "btn", title: "previous difference" }, "↑");
       var next = BV.el("button", { class: "btn", title: "next difference" }, "↓");
-      prev.addEventListener("click", function () { pd.jump(-1); });
-      next.addEventListener("click", function () { pd.jump(1); });
-      bar.appendChild(prev);
-      bar.appendChild(next);
-      card.insertBefore(bar, pd.el);
+      prev.addEventListener("click", function () { pd2.jump(-1); });
+      next.addEventListener("click", function () { pd2.jump(1); });
+      pills.appendChild(prev);
+      pills.appendChild(next);
+      head.appendChild(pills);
     }
 
     var changed = rows.length > 0 || bodyChanged;
     if (buf && buf.base === null) {
       /* a restored draft whose pristine source could not be re-read: saying
          "no changes" here would be a lie - say what is actually known */
-      card.appendChild(BV.el("div", { style: "color:var(--warn);font-size:.8rem" },
+      sect.appendChild(BV.el("div", { style: "color:var(--warn);font-size:.8rem" },
         "the original could not be read — body and attribute changes cannot be shown"));
       changed = true;
     } else if (!changed) {
-      card.appendChild(BV.el("div", { class: "dim", style: "font-size:.8rem" },
+      sect.appendChild(BV.el("div", { class: "dim", style: "font-size:.8rem" },
         "no changes — matches the backup"));
     }
-    return { el: card, changed: changed };
+    return { el: sect, changed: changed };
   }
 
   /* list defaults to the whole working set (the export…-sibling button);
-     the rail's ⋯ menu passes one entry */
+     the rail's ⋯ menu passes one entry. Sections group per ROBOT, unchanged
+     programs fold behind a per-robot toggle - listed, never silently dropped. */
   function showReview(list) {
     list = (list || BV.workspace.entries()).slice();
     if (!list.length) { BV.toast("the workspace is empty"); return; }
@@ -2077,6 +2123,8 @@
     body.innerHTML = '<div class="dim" style="padding:1rem">reading originals…</div>';
     var m = BV.modal("review edits — original vs edited", body);
     m.el.classList.add("rv-modal");
+    var sumEl = BV.el("span", { class: "meta rv-sum" });
+    m.el.querySelector("h2").appendChild(sumEl);   /* the summary rides the title row */
 
     /* a draft restored from settings has base=null and is unsaved by
        definition - seed pristine first so "original" is real, never a guess */
@@ -2097,25 +2145,43 @@
     }).then(function (diffs) {
       if (!document.body.contains(body)) return;    /* closed mid-load */
       body.innerHTML = "";
-      var clean = [];
-      list.forEach(function (e, i) {
-        var card = reviewCard(e, diffs[i]);
-        if (card.changed || list.length === 1) body.appendChild(card.el);
-        else clean.push(e);
+      var byIdx = {};
+      list.forEach(function (e, i) { byIdx[e.id] = i; });
+      var changedN = 0;
+      BV.workspace.byRobot().forEach(function (g) {
+        var here = g.programs.filter(function (e) { return byIdx[e.id] !== undefined; });
+        if (!here.length) return;
+        var built = here.map(function (e) { return reviewCard(e, diffs[byIdx[e.id]]); });
+        var chg = [];
+        var clean = [];
+        here.forEach(function (e, i) {
+          (built[i].changed ? chg : clean).push({ e: e, card: built[i] });
+        });
+        changedN += chg.length;
+        body.appendChild(BV.el("div", { class: "rv-robot-h" },
+          '<span class="rb">' + BV.esc(g.label) + "</span>" +
+          '<span class="meta">' + chg.length + " changed · " + clean.length + " unchanged</span>"));
+        chg.forEach(function (c) { body.appendChild(c.card.el); });
+        if (list.length === 1 && clean.length) {
+          /* the rail's single-program review: the plain answer, not a fold */
+          clean.forEach(function (c) { body.appendChild(c.card.el); });
+        } else if (clean.length) {
+          var det = BV.el("details", { class: "rv-unchanged" });
+          det.innerHTML = "<summary>" + clean.length + " unchanged program" +
+            (clean.length === 1 ? "" : "s") + "</summary>" +
+            '<div class="names">' + clean.map(function (c) {
+              return BV.esc(BV.workspace.displayName(c.e));
+            }).join("<br>") + "</div>";
+          body.appendChild(det);
+        }
       });
-      var changedN = list.length - clean.length;
-      body.insertBefore(BV.el("div", { class: "dim rv-sum" },
-        list.length === 1
-          ? BV.esc(BV.workspace.displayName(list[0]))
-          : changedN + " of " + list.length + " programs changed"),
-        body.firstChild);
-      if (clean.length && list.length > 1) {
-        /* honesty: the unchanged ones are listed, not silently dropped */
-        body.appendChild(BV.el("div", { class: "dim", style: "font-size:.76rem;padding:.2rem .4rem" },
-          "unchanged: " + BV.esc(clean.map(function (e) {
-            return BV.workspace.displayName(e);
-          }).join(", "))));
-      }
+      var nRobots = BV.workspace.byRobot().filter(function (g) {
+        return g.programs.some(function (e) { return byIdx[e.id] !== undefined; });
+      }).length;
+      sumEl.textContent = list.length === 1
+        ? BV.workspace.displayName(list[0])
+        : changedN + " of " + list.length + " programs changed · " +
+          nRobots + (nRobots === 1 ? " robot" : " robots");
     });
   }
 

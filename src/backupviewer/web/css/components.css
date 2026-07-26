@@ -516,15 +516,39 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .ws-prog.pickable .nm { text-decoration: underline dotted; }
 
 /* ---- pane-vs-pane diff strip (edit workspace, split view only) ---- */
-/* ---- review-your-edits modal ---- */
+/* ---- review-your-edits modal ----
+   Flat on purpose (field feedback: boxes-in-boxes read as noise): the diff
+   table is the ONE bordered element per section; robot headers divide, the
+   program name is the biggest thing in its section, and the summary rides
+   the modal's own title row instead of outranking nothing. */
 .modal.rv-modal { max-width: min(96rem, 96vw); }
-.rv-sum { font-size: 0.8rem; padding: 0.1rem 0.4rem 0.4rem; }
-.rv-card { margin: 0 0.2rem 0.8rem; }
-.rv-card .viewer { height: auto; max-height: 46vh; }
-.rv-diffbar {
-  display: flex; align-items: center; gap: 0.6rem; margin: 0.4rem 0 0.3rem;
+.rv-modal h2 { display: flex; align-items: baseline; gap: 0.8rem; }
+.rv-modal h2 .meta { margin-left: auto; font-weight: 400; color: var(--sub);
+                     text-transform: none; }
+.rv-robot-h {
+  display: flex; align-items: baseline; gap: 0.6rem; margin: 0.9rem 0.2rem 0.45rem;
+  padding-bottom: 0.25rem; border-bottom: 1px solid var(--edge);
+  font-family: var(--font-mono);
 }
-.rv-diffbar .btn { padding: 0.05rem 0.45rem; font-size: 0.74rem; }
+.rv-robot-h:first-child { margin-top: 0.1rem; }
+.rv-robot-h .rb { color: var(--accent); font-size: 1.05rem; font-weight: 600; }
+.rv-robot-h .meta { color: var(--sub); font-size: 0.76rem; }
+.rv-sect { margin: 0.15rem 0.2rem 1rem; }
+.rv-sect .viewer { height: auto; max-height: 46vh; }
+.rv-prog-h {
+  display: flex; align-items: baseline; gap: 0.55rem; margin-bottom: 0.35rem;
+  font-family: var(--font-mono);
+}
+.rv-prog-h .nm { font-size: 1rem; font-weight: 600; color: var(--text); }
+.rv-prog-h .kind { font-size: 0.72rem; color: var(--sub); }
+.rv-prog-h .pills { margin-left: auto; display: flex; gap: 0.3rem; align-items: baseline; }
+.rv-prog-h .pills .btn { padding: 0.05rem 0.45rem; font-size: 0.74rem; }
+.rv-unchanged { margin: 0.1rem 0.2rem 0.6rem; font-size: 0.78rem; }
+.rv-unchanged summary { cursor: pointer; color: var(--sub); user-select: none; }
+.rv-unchanged .names {
+  color: var(--sub-alt); font-family: var(--font-mono); font-size: 0.74rem;
+  margin-top: 0.3rem; column-width: 14rem; column-gap: 1.2rem;
+}
 
 /* a collapsed side panel leaves a thin click-to-open strip */
 .ws-stub {
@@ -628,8 +652,12 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .ws-detbtn { margin-left: auto; flex: none; padding: 0.1rem 0.45rem; font-size: 0.7rem; }
 .ws-pane-host { flex: 1; min-height: 0; position: relative; }
 .ws-pane-host .lsed-scroll { position: relative; }   /* anchor for the flash bar */
-.ws-details { flex: none; max-height: 45%; overflow: auto; margin-top: 0.4rem; }
+.ws-details { flex: none; max-height: 45%; overflow: auto; margin-top: 0; }
 .ws-details .card { margin-bottom: 0.5rem; }
+/* the seam above the details panel: drag it to choose the panel's height */
+.ws-detrz { flex: none; height: 5px; cursor: row-resize; background: var(--edge);
+            opacity: 0.5; margin-top: 0.4rem; }
+.ws-detrz:hover, .ws-detrz.dragging { opacity: 1; background: var(--accent); }
 .flashbar {
   position: absolute; left: 0; right: 0; pointer-events: none;
   background: color-mix(in srgb, var(--warn) 34%, transparent);

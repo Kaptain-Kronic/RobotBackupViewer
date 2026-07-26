@@ -762,24 +762,39 @@ def probe(window):
             .find(function(x){return x.textContent==='review…';}).click()""")
         got = poll(window, "!!document.querySelector('.rv-modal')")
         check("review.modal_opens", bool(got))
-        cards = poll(window, "document.querySelectorAll('.rv-card').length")
-        sum_txt = js(window, "(document.querySelector('.rv-sum')||{}).textContent||''")
-        check("review.only_changed_programs_get_cards", cards == 1, f"({cards} cards)")
-        check("review.summary_counts", "1 of 2 programs changed" in (sum_txt or ""),
-              f"({sum_txt!r})")
+        cards = poll(window, "document.querySelectorAll('.rv-sect').length")
+        sum_txt = js(window, "(document.querySelector('.rv-modal h2 .rv-sum')||{}).textContent||''")
+        check("review.only_changed_programs_get_sections", cards == 1, f"({cards} sections)")
+        check("review.summary_rides_the_title_row",
+              "1 of 2 programs changed" in (sum_txt or ""), f"({sum_txt!r})")
+        check("review.robot_section_headers",
+              js(window, "document.querySelectorAll('.rv-robot-h').length") == 2,
+              "(one divider per robot, counts in the meta)")
+        check("review.pills_on_the_program_header",
+              js(window, "document.querySelectorAll('.rv-prog-h .pills .pill').length") >= 3,
+              "(stats belong to the program line, not their own row)")
+        kind_txt = js(window, "(document.querySelector('.rv-prog-h .kind')||{}).textContent||''")
+        check("review.kind_subtitle", "body" in (kind_txt or ""), f"({kind_txt!r})")
+        check("review.one_box_only",
+              js(window, "document.querySelectorAll('.rv-sect .card').length") == 0,
+              "(the diff table is the only bordered element in a section)")
         check("review.added_line_is_b_only",
-              js(window, "document.querySelectorAll('.rv-card .pd-b_only').length") == 1,
+              js(window, "document.querySelectorAll('.rv-sect .pd-b_only').length") == 1,
               "(the typed line exists only on the edited side)")
         # raw mode: same source, same save-time state - here the comment edit
         # IS an edit, and hiding it would be the lie
         check("review.comment_edit_visible_raw",
-              js(window, "document.querySelectorAll('.rv-card .pd-change').length") == 1)
-        heads = js(window, "(document.querySelector('.rv-card .pd-head')||{}).textContent||''")
+              js(window, "document.querySelectorAll('.rv-sect .pd-change').length") == 1)
+        heads = js(window, "(document.querySelector('.rv-sect .pd-head')||{}).textContent||''")
         check("review.heads_original_vs_edited",
               "original (backup)" in (heads or "") and "edited" in (heads or ""), f"({heads!r})")
-        check("review.unchanged_listed",
-              "unchanged:" in (js(window, "document.querySelector('.rv-body').textContent") or ""),
-              "(clean programs are listed, not silently dropped)")
+        check("review.unchanged_folded_not_dropped", bool(js(window, """(function(){
+            var d=document.querySelector('.rv-unchanged');
+            if (!d) return false;
+            d.open = true;
+            return d.textContent.indexOf('unchanged program')>=0 &&
+                   d.querySelector('.names').textContent.indexOf('MAIN.LS')>=0;
+        })()""")), "(clean programs fold per robot - listed, never silently dropped)")
         js(window, """document.getElementById('modal-root').dispatchEvent(
             new MouseEvent('mousedown',{bubbles:true}))""")
         time.sleep(0.4)
@@ -793,7 +808,7 @@ def probe(window):
         js(window, """[...document.querySelectorAll('.ctx-menu .ctx-item')]
             .find(function(b){return b.textContent.indexOf('review changes')>=0;}).click()""")
         poll(window, "!!document.querySelector('.rv-modal')")
-        clean_txt = poll(window, "(document.querySelector('.rv-card')||{}).textContent||''")
+        clean_txt = poll(window, "(document.querySelector('.rv-sect')||{}).textContent||''")
         check("review.clean_program_says_so",
               "no changes — matches the backup" in (clean_txt or ""),
               f"({(clean_txt or '')[-60:]!r})")
@@ -842,6 +857,37 @@ def probe(window):
         time.sleep(0.6)
         check("pdiff.state_restored_for_find",
               js(window, "document.querySelectorAll('.ws-pane').length") == 2)
+
+        # ---- details panel: the seam above it drags its height ----
+        js(window, "document.querySelectorAll('.ws-strip .ws-detbtn')[0].click()")
+        got = poll(window, "!!document.querySelector('.ws-details')")
+        check("details.panel_opens", bool(got))
+        check("details.resize_seam_present",
+              bool(js(window, "!!document.querySelector('.ws-detrz')")))
+        drag_res = js(window, """(function(){
+            var rz=document.querySelector('.ws-detrz');
+            var det=document.querySelector('.ws-details');
+            var h0=det.getBoundingClientRect().height;
+            var r=rz.getBoundingClientRect();
+            rz.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,clientY:r.top}));
+            document.dispatchEvent(new MouseEvent('mousemove',{bubbles:true,clientY:r.top-80}));
+            document.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));
+            return JSON.stringify([Math.round(h0), Math.round(det.getBoundingClientRect().height)]);
+        })()""")
+        dd = json.loads(drag_res or "[0,0]")
+        check("details.seam_drags_taller", dd[1] >= dd[0] + 60, f"({drag_res})")
+        # the chosen height survives a re-render (module state, per pane)
+        js(window, "BV.route()")
+        time.sleep(0.8)
+        h_after = js(window, """(function(){
+            var d=document.querySelector('.ws-details');
+            return d ? Math.round(d.getBoundingClientRect().height) : 0;
+        })()""")
+        check("details.height_remembered", abs((h_after or 0) - dd[1]) <= 2,
+              f"({dd[1]} -> {h_after})")
+        js(window, "document.querySelectorAll('.ws-strip .ws-detbtn')[0].click()")
+        time.sleep(0.4)
+        check("details.closes_again", not js(window, "!!document.querySelector('.ws-details')"))
 
         # ---- find/replace in the rail: identity-aware, scoped, grouped ----
         js(window, """[...document.querySelectorAll('.ws-railtab')]
