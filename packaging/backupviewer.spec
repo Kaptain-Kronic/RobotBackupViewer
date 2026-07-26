@@ -1,5 +1,11 @@
 # PyInstaller spec - build with:  pyinstaller packaging/backupviewer.spec
-# (run from the repo root; use a python.org Python, not the Microsoft Store one)
+# (run from the repo root)
+#
+# The note here used to say "use a python.org Python, not the Microsoft Store
+# one". That was true of an older toolchain; the Store Python has since built
+# 1.3, 1.3.1 and 1.4 cleanly under PyInstaller 6.20, so it is no longer a
+# reason to go hunting for a second interpreter. If a Store build ever does
+# fail, a python.org install remains the fallback worth trying first.
 from pathlib import Path
 
 ROOT = Path(SPECPATH).parent  # noqa: F821 - SPECPATH injected by PyInstaller
