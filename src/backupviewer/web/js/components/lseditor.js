@@ -34,7 +34,17 @@
    during horizontal scroll - zero sync JS, nothing for a probe window
    (no rAF, no native scroll events) to miss.
 
-   BV.lsEditor(host, {text, onChange}) -> {el, code, getText, setText, focusLine} */
+   Alignment gaps (setGaps): the pane diff renders "the other side has lines
+   here" as NON-EDITABLE spacer blocks between lines - re-emitted from a map
+   on every repaint, so they hold vertical space without ever existing in the
+   text. getText() skips them, caret offsets never see them, undo snapshots
+   stay pure text, and delete-at-a-gap-boundary is intercepted into text
+   space (Chromium would otherwise eat the block atomically and the repaint
+   would resurrect it - a dead keystroke). lineTop(n) is the gap-aware
+   line->pixel map every outside decoration must use instead of n*lineHeight.
+
+   BV.lsEditor(host, {text, onChange})
+     -> {el, code, getText, setText, focusLine, setGaps, lineTop} */
 (function () {
   "use strict";
 
@@ -148,12 +158,63 @@
     var lastText = null;
     var lastCount = -1;
 
+    /* ---- alignment gaps (the pane-diff's blank rows) --------------------
+       gapAfter[n] = blank rows rendered after 1-based line n (0 = before
+       line 1). They are NON-EDITABLE spacer blocks re-emitted from this map
+       on every repaint, so they hold vertical space without ever existing in
+       the text: getText() skips them (no text nodes), caret offsets never
+       see them, and undo snapshots stay pure text. Heights are in `lh` so
+       they track the text-size setting like every other row.
+
+       Placement rule: a gap block goes AFTER the "\n" separator, BEFORE the
+       next line's first token. Chromium suppresses a trailing "\n"'s empty
+       line box (the data-lsed-end sentinel exists because of exactly that),
+       so "line\n" + block + "next" renders with no phantom rows - whereas
+       block-then-"\n" would put a leading newline in the following anonymous
+       block and paint a blank line that isn't in the text. */
+    var gapAfter = {};
+
+    function gapSpan(n) {
+      return '<span class="lsed-gap" data-lsed-gap="1" contenteditable="false" ' +
+             'style="height:' + n + 'lh"></span>';
+    }
+
+    function setGaps(list) {
+      gapAfter = {};
+      (list || []).forEach(function (g) {
+        if (g && g.n > 0) gapAfter[g.after] = (gapAfter[g.after] || 0) + g.n;
+      });
+      var t = lastText === null ? getText() : lastText;
+      var caret = caretOffsets();
+      code.innerHTML = buildHtml(t);
+      if (caret) setSelection(caret.start, caret.end);
+      lastCount = -1;                    /* the gutter must re-emit its gaps */
+      updateGutter(t.split("\n").length);
+    }
+
+    /* blank rows above 1-based line n - the bar/scroll math needs real pixels */
+    function gapsBefore(n) {
+      var s = 0;
+      for (var k in gapAfter) if (+k < n) s += gapAfter[k];
+      return s;
+    }
+    function lineTop(n) {
+      var cs = getComputedStyle(code);
+      var lh = parseFloat(cs.lineHeight) || 16;
+      return (parseFloat(cs.paddingTop) || 0) + (n - 1 + gapsBefore(n)) * lh;
+    }
+
     function buildHtml(text) {
       var lines = text.split("\n");
-      var html = "";
+      var html = gapAfter[0] ? gapSpan(gapAfter[0]) : "";
       for (var i = 0; i < lines.length; i++) {
-        html += (i ? "\n" : "") + BV.highlightTP(lines[i]);
+        if (i) {
+          html += "\n";
+          if (gapAfter[i]) html += gapSpan(gapAfter[i]);
+        }
+        html += BV.highlightTP(lines[i]);
       }
+      if (gapAfter[lines.length]) html += gapSpan(gapAfter[lines.length]);
       /* hold the trailing empty line (or the empty editor) open for the caret */
       if (text === "" || text.endsWith("\n")) html += '<br data-lsed-end="1">';
       return html;
@@ -162,9 +223,13 @@
     function updateGutter(count) {
       if (count === lastCount) return;
       lastCount = count;
-      var g = "";
-      for (var n = 1; n <= count; n++) g += n + "\n";
-      nums.textContent = g;
+      var g = gapAfter[0] ? gapSpan(gapAfter[0]) : "";
+      for (var n = 1; n <= count; n++) {
+        if (n > 1 && gapAfter[n - 1]) g += gapSpan(gapAfter[n - 1]);
+        g += n + "\n";
+      }
+      if (gapAfter[count]) g += gapSpan(gapAfter[count]);
+      nums.innerHTML = g;               /* digits + our own spans only */
       nums.style.minWidth = (String(count).length + 0.2) + "ch";
     }
 
@@ -258,10 +323,46 @@
       afterEdit(false);
     });
 
+    /* Backspace at the start of a line just below a gap (and Delete at the
+       end of a line just above one) must eat the NEWLINE. Left to Chromium,
+       the non-editable gap block is the caret's neighbor: it deletes the
+       block as one atomic unit, the next repaint resurrects it, and the
+       keystroke reads as dead. Do the edit in text space instead. */
+    function gapBoundaryDelete(key) {
+      if (!Object.keys(gapAfter).length) return false;   /* no gaps: all native */
+      var caret = caretOffsets();
+      if (!caret || caret.start !== caret.end) return false;
+      var t = lastText === null ? getText() : lastText;
+      var off = caret.start;
+      var a, b;
+      if (key === "Backspace") {
+        if (off === 0 || t[off - 1] !== "\n") return false;
+        if (!gapAfter[t.slice(0, off - 1).split("\n").length]) return false;
+        a = off - 1; b = off;
+      } else {
+        if (off >= t.length || t[off] !== "\n") return false;
+        if (!gapAfter[t.slice(0, off).split("\n").length]) return false;
+        a = off; b = off + 1;
+      }
+      lastText = t.slice(0, a) + t.slice(b);
+      code.innerHTML = buildHtml(lastText);
+      setSelection(a, a);
+      lastCount = -1;
+      updateGutter(lastText.split("\n").length);
+      pushHistory(false);
+      if (opts && opts.onChange) opts.onChange(lastText);
+      return true;
+    }
+
     code.addEventListener("keydown", function (e) {
       if (e.key === "Enter") {
         e.preventDefault();
         insertPlain("\n");
+        return;
+      }
+      if ((e.key === "Backspace" || e.key === "Delete") &&
+          gapBoundaryDelete(e.key)) {
+        e.preventDefault();
         return;
       }
       if (e.key === "Tab") {
@@ -330,9 +431,8 @@
       for (var i = 0; i < Math.min(n - 1, lines.length); i++) pos += lines[i].length + 1;
       try { code.focus(); } catch (e) { /* probe window */ }
       setSelection(pos, pos);
-      var lh = parseFloat(getComputedStyle(code).lineHeight) || 16;
-      var padTop = parseFloat(getComputedStyle(code).paddingTop) || 0;
-      scroll.scrollTop = Math.max(0, padTop + (n - 1) * lh - scroll.clientHeight / 2);
+      /* lineTop, not n*lh: alignment gaps above the line are real pixels */
+      scroll.scrollTop = Math.max(0, lineTop(n) - scroll.clientHeight / 2);
     }
 
     setText((opts && opts.text) || "");
@@ -343,6 +443,8 @@
       getText: getText,
       setText: setText,
       focusLine: focusLine,
+      setGaps: setGaps,        /* [{after: 1-based line (0 = top), n: rows}] */
+      lineTop: lineTop,        /* 1-based line -> px offset inside the scroller */
     };
   };
 })();

@@ -1052,6 +1052,49 @@ def probe(window):
         check("list.context_add_worked",
               js(window, "BV.workspace.count()") >= n_ws)
 
+        # ---- lsEditor alignment gaps: the component contract, in isolation ----
+        # A scratch instance in its own host: gaps are pixels, never text.
+        gap_out = js(window, """(function(){
+            var host=document.createElement('div');
+            host.style.cssText='position:fixed;left:0;top:0;width:400px;height:220px;visibility:hidden';
+            document.body.appendChild(host);
+            var ed=BV.lsEditor(host,{text:'DO[1:A]=ON\\nDO[2:B]=ON\\nDO[3:C]=ON\\nDO[4:D]=ON'});
+            var out={};
+            var lh=parseFloat(getComputedStyle(ed.code).lineHeight)||16;
+            var t0=ed.lineTop(3);
+            ed.setGaps([{after:2,n:3}]);
+            out.lineTopGrew=Math.round(ed.lineTop(3)-t0)===Math.round(3*lh);
+            out.codeGap=(function(g){return g?g.style.height:''})(ed.code.querySelector('.lsed-gap'));
+            out.gutterGap=!!ed.el.querySelector('.lsed-nums .lsed-gap');
+            out.textPure=ed.getText()==='DO[1:A]=ON\\nDO[2:B]=ON\\nDO[3:C]=ON\\nDO[4:D]=ON';
+            /* backspace AT the gap boundary (start of line 3) must eat the
+               newline in text space, not the gap block */
+            ed.focusLine(3);
+            ed.code.dispatchEvent(new KeyboardEvent('keydown',
+                {key:'Backspace',bubbles:true,cancelable:true}));
+            var t=ed.getText().split('\\n');
+            out.boundaryMerged=t.length===3 && t[1]==='DO[2:B]=ONDO[3:C]=ON';
+            /* undo restores, gaps still drawn */
+            ed.code.dispatchEvent(new KeyboardEvent('keydown',
+                {key:'z',ctrlKey:true,bubbles:true,cancelable:true}));
+            out.undoRestored=ed.getText().split('\\n').length===4;
+            out.gapSurvivedUndo=!!ed.code.querySelector('.lsed-gap');
+            ed.setGaps([]);
+            out.cleared=!ed.el.querySelector('.lsed-gap');
+            host.remove();
+            return JSON.stringify(out);
+        })()""")
+        g = json.loads(gap_out or "{}")
+        check("gaps.line_top_gap_aware", g.get("lineTopGrew") is True)
+        check("gaps.code_spacer_in_lh", g.get("codeGap") == "3lh", f"({g.get('codeGap')!r})")
+        check("gaps.gutter_mirrors", g.get("gutterGap") is True)
+        check("gaps.never_in_text", g.get("textPure") is True)
+        check("gaps.boundary_backspace_eats_newline", g.get("boundaryMerged") is True,
+              "(Chromium's atomic island delete would read as a dead key)")
+        check("gaps.undo_restores_text", g.get("undoRestored") is True)
+        check("gaps.survive_undo_repaint", g.get("gapSurvivedUndo") is True)
+        check("gaps.clear_removes_all", g.get("cleared") is True)
+
         print()
         print("FAILURES:", FAILURES if FAILURES else "none")
     except Exception as e:  # noqa: BLE001

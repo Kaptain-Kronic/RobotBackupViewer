@@ -447,6 +447,15 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
    `code {font-family: monospace}` once snuck Courier into the highlight layer.
    font-family only: each tp-* class keeps its own weight/style/color. */
 .lsed-code * { font-family: inherit; }
+/* alignment gaps (the pane diff's blank rows): non-editable spacer blocks the
+   editor re-emits from its gap map on every repaint - they hold pixels, never
+   text. Dimmed blank = "the other pane has lines here". Heights are inline
+   `Nlh`, so they track the text-size setting like every other row. */
+.lsed-gap {
+  display: block; pointer-events: none; user-select: none;
+  background: color-mix(in srgb, var(--bg) 60%, transparent);
+}
+.lsed-nums .lsed-gap { background: transparent; }
 /* selection must be OPAQUE (mixed toward the editor bg, not transparent):
    Chromium paints the selection once per inline fragment and token spans
    produce duplicate fragments on the same row - a translucent color STACKS
