@@ -326,7 +326,7 @@
     var badge = cubes.edit.querySelector(".cube-badge");
     var paintBadge = function () {
       var n = BV.workspace ? BV.workspace.count() : 0;
-      var d = BV.workspace ? BV.workspace.dirtyCount() : 0;
+      var d = BV.workspace ? BV.workspace.pendingCount() : 0;
       if (badge) {
         badge.textContent = n ? String(n) : "";
         badge.classList.toggle("hidden", !n);

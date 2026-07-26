@@ -88,6 +88,7 @@
             root: e.root, file: e.file,
             name: e.name || e.file.split("/").pop(),
             label: e.label || "", saveAs: e.saveAs || "",
+            exportedAs: e.exportedAs || "",
           });
         });
       }
@@ -123,7 +124,7 @@
         id: idFor(e.root, e.file, nextSeq(e.root, e.file)),
         root: e.root, file: e.file,
         name: e.name || e.file.split("/").pop(),
-        label: e.label || "", saveAs: "",
+        label: e.label || "", saveAs: "", exportedAs: "",
       };
       entries.push(entry);
       changed();
@@ -147,7 +148,7 @@
       var entry = {
         id: idFor(src.root, src.file, nextSeq(src.root, src.file)),
         root: src.root, file: src.file, name: src.name,
-        label: src.label, saveAs: base,
+        label: src.label, saveAs: base, exportedAs: "",
       };
       entries.push(entry);
       var from = bufs[id];
@@ -273,6 +274,20 @@
     },
     anyDirty: function () { return this.dirtyCount() > 0; },
 
+    /* "pending" = anything not yet exported: buffer edits (dirty) OR a rename
+       the export hasn't written yet. A rename IS a change even with no edits -
+       gating the export button on buffer dirt alone made a rename-only
+       workspace unexportable. Dots/discard guards stay on dirty(): a rename is
+       visible in the entry's own name and cheap to redo, unlike typed work. */
+    pending: function (e) {
+      if (!e) return false;
+      return this.dirty(e) || (e.saveAs || "") !== (e.exportedAs || "");
+    },
+    pendingCount: function () {
+      var self = this;
+      return entries.filter(function (e) { return self.pending(e); }).length;
+    },
+
     /* ws_export payload: every entry whose buffer differs from PRISTINE, plus
        every entry carrying a rename (a rename IS a change even with no edits) */
     edits: function () {
@@ -300,6 +315,7 @@
 
     markSaved: function () {
       Object.keys(bufs).forEach(function (id) { stamp(bufs[id]); });
+      entries.forEach(function (e) { e.exportedAs = e.saveAs || ""; });
       changed();
     },
   };
