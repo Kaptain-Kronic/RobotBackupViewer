@@ -1203,6 +1203,9 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .pd-head .pd-text { color: var(--text); font-size: 1.1rem; font-weight: 600; text-align: center; }
 .pd-head .pd-text:first-of-type { border-right: none; }
 .pd-same { opacity: 0.55; }
+/* equiv: the same instruction shown differently (ref comments / IO-status
+   display) - quieter than a change, but not dimmed away like same */
+.pd-equiv { opacity: 0.8; background: color-mix(in srgb, var(--sub-alt) 8%, transparent); }
 .pd-change { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .pd-a_only { background: color-mix(in srgb, var(--error) 9%, transparent); }
 .pd-b_only { background: color-mix(in srgb, var(--ok) 9%, transparent); }
