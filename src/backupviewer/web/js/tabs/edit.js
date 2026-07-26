@@ -43,7 +43,6 @@
     frFolds: {},             /* find-result folds */
     details: {},             /* leaf id -> attrs/positions panel open */
     detH: {},                /* leaf id -> details panel px height */
-    paneDiff: false,         /* the pane-vs-pane diff strip (split view only) */
     navSeg: "calls",         /* calls | labels */
     /* the rail's selection: a set of ENTRY IDS (stable across renames, unlike
        a row index or a name), plus the row a shift-range measures from. Ids,
@@ -157,14 +156,27 @@
     el.counts = BV.el("span", { class: "dim", style: "font-size:.78rem" });
     bar.appendChild(el.counts);
     bar.appendChild(BV.el("span", { style: "flex:1" }));
-    /* only rendered while the split is open: BV.menu has no disabled state and
-       the same rule holds for toolbar toggles - a control that cannot do
-       anything is omitted, not shown dead (syncDiffBtn) */
+    /* the inline pane diff: diff… arms pick-two, the stats + prev/next ride
+       here while it is on. Always offered - picking opens what it needs. */
+    el.diffStats = BV.el("span", { class: "ws-diffstats",
+      style: "display:flex;gap:.3rem;align-items:center" });
+    bar.appendChild(el.diffStats);
+    el.armHint = BV.el("span", { class: "ws-armhint" });
+    bar.appendChild(el.armHint);
+    el.diffPrev = BV.el("button", { class: "btn", title: "previous difference" }, "↑");
+    el.diffNext = BV.el("button", { class: "btn", title: "next difference" }, "↓");
+    el.diffPrev.style.display = el.diffNext.style.display = "none";
+    el.diffPrev.addEventListener("click", function () { jumpDiff(-1); });
+    el.diffNext.addEventListener("click", function () { jumpDiff(1); });
+    bar.appendChild(el.diffPrev);
+    bar.appendChild(el.diffNext);
     el.diffBtn = BV.el("button", { class: "btn",
-      title: "diff the two panes' open programs, live while you edit" }, "diff panes");
-    el.diffBtn.style.display = "none";
+      title: "mark the differences between two programs inside their editors, " +
+             "live while you edit - click it, then pick the two" }, "diff…");
     el.diffBtn.addEventListener("click", function () {
-      st.paneDiff = !st.paneDiff;
+      if (pd.on) { clearPaneDiff(); renderPanes(); return; }
+      pd.armed = !pd.armed;
+      pd.picked = [];
       renderPanes();
     });
     bar.appendChild(el.diffBtn);
@@ -403,6 +415,7 @@
       g.programs.forEach(function (e) {
         var dirty = BV.workspace.dirty(e);
         var row = BV.el("div", { class: "ws-prog", draggable: "true", title: e.file });
+        if (pd.armed) row.classList.add("pickable");
         if (st.sel[keyOf(e)]) row.classList.add("sel");
         if (st.selAnchor === keyOf(e)) row.classList.add("anchor");
         row.innerHTML = '<span class="dot' + (dirty ? " dirty" : "") + '"></span>' +
@@ -432,8 +445,14 @@
           if (selCount() > 1) multiMenu({ x: ev.clientX, y: ev.clientY });
           else rowMenu({ x: ev.clientX, y: ev.clientY }, e, dirty);
         });
-        row.addEventListener("click", function (ev) { clickRow(e, ev); });
-        row.addEventListener("dblclick", function () { openTab(e); });
+        row.addEventListener("click", function (ev) {
+          if (pd.armed) { pickForDiff(e); return; }
+          clickRow(e, ev);
+        });
+        row.addEventListener("dblclick", function () {
+          if (pd.armed) return;
+          openTab(e);
+        });
         row.addEventListener("dragstart", function (ev) {
           drag = { kind: "prog", entry: e };
           try { ev.dataTransfer.setData("text/plain", e.name); } catch (x2) {}
@@ -577,7 +596,7 @@
        move - and a new pane needs room under the cap. */
     var elsewhere = held && held.id !== act.id;
     var actKeeps = act.tabs.length - (held && held.id === act.id ? 1 : 0);
-    if (elsewhere || (actKeeps > 0 && leaves().length < MAX_PANES)) {
+    if (!pd.on && (elsewhere || (actKeeps > 0 && leaves().length < MAX_PANES))) {
       items.push({ label: "open in split view",
         onClick: function () {
           if (elsewhere) {
@@ -708,6 +727,9 @@
     Object.keys(st.details).forEach(function (id) { if (!live[id]) delete st.details[id]; });
     Object.keys(st.detH).forEach(function (id) { if (!live[id]) delete st.detH[id]; });
     if (!live[st.activeLeaf]) st.activeLeaf = leaves()[0].id;
+    /* closing one of the diff's two tabs ends the diff AND restores the
+       parked layout in one motion (the pair it pointed at is gone) */
+    if (pd.on && !pairOpen()) clearPaneDiff();
   }
 
   /* put an entry in a leaf WITHOUT painting; returns the leaf it actually
@@ -727,6 +749,12 @@
   }
 
   function openTab(entry, leaf) {
+    /* diff mode locks the layout; a program already on screen may still be
+       focused (that changes nothing about the tree) */
+    if (pd.on && !leafHolding(entry)) {
+      BV.toast("close the diff first");
+      return;
+    }
     st.activeLeaf = placeTab(entry, leaf).id;
     normalizeTree();
     renderPanes();
@@ -759,6 +787,13 @@
     leaves().forEach(function (l) {
       l.tabs = l.tabs.filter(function (t) { return keyOf(t) !== keyOf(entry); });
     });
+    /* an entry removed mid-diff must leave the PARKED tree too, or the
+       restore would resurrect a tab for a program that no longer exists */
+    if (parked) {
+      leaves(parked).forEach(function (l) {
+        l.tabs = l.tabs.filter(function (t) { return keyOf(t) !== keyOf(entry); });
+      });
+    }
     normalizeTree();
   }
   /* only leaving the workspace discards the editor (and its undo) */
@@ -807,6 +842,7 @@
   }
 
   function dropOn(leaf, zone, d) {
+    if (pd.on) { BV.toast("close the diff first"); return; }
     var entry = d.entry;
     var held = leafHolding(entry);
     if (zone === "center") {
@@ -861,8 +897,7 @@
     var wrap = BV.el("div", { class: "ws-panes" });
     el.work.appendChild(wrap);
     wrap.appendChild(renderNode(st.tree));
-    syncDiffBtn();
-    mountDiffPanel();
+    syncDiffUi();
     renderNav();
   }
 
@@ -909,104 +944,255 @@
   }
 
   /* ------------------------------------------------------------------ *
-   * pane-vs-pane diff: a strip under the editors, live while typing
+   * the inline pane diff: pick two programs, their EDITORS carry the marks
    *
-   * The strip is its OWN aligned, independently-scrolled list - it does not
-   * try to mirror two editors that scroll apart. Clicking a row brings BOTH
-   * editors to that instruction (scroll + flash, no focus steal - the click
-   * is inspection, not editing). Recomputed debounced off every workspace
-   * change; ws_diff_texts runs in normalize mode, so two robots' programs
-   * differing only in ref comments / the pendant's IO-status display read as
-   * "display-only", never as changed lines.
+   * diff… arms picking; the next two clicks (open tabs or working-set rows)
+   * choose the pair. Diff mode is a VIEW, not a rearrangement: unless the
+   * two already are the only two panes, the layout is PARKED and a clean
+   * side-by-side pair presented; closing the diff - or one of its two tabs -
+   * restores the parked tree exactly. While it is on the layout is LOCKED:
+   * opening anything else says "close the diff first" rather than quietly
+   * reshaping the tree under the comparison.
+   *
+   * The marks are honest: ws_diff_texts runs in normalize mode, so two
+   * robots' programs differing only in ref comments / the pendant's
+   * IO-status display read as display-only, never as changed lines. Where
+   * one side has lines the other lacks, the other side shows REAL blank
+   * rows (lsEditor gaps) - both editors are then the same height row for
+   * row, and the scroll lock is a plain mirror.
    * ------------------------------------------------------------------ */
-  function syncDiffBtn() {
-    if (!el.diffBtn) return;
-    var split = leaves().length === 2;
-    el.diffBtn.style.display = split ? "" : "none";
-    /* "on", never "primary": export is the toolbar's one primary and probes
-       find it by that class */
-    el.diffBtn.classList.toggle("on", split && st.paneDiff);
-    if (!split) st.paneDiff = false;   /* the pair it pointed at is gone */
+  var pd = { armed: false, picked: [], on: false, a: null, b: null,
+             rows: null, idx: [], cur: -1, lastD: null };
+  var parked = null;          /* the tree as it was before diff mode took over */
+
+  function pairOpen() {
+    if (!pd.a || !pd.b) return false;
+    var la = leafHolding(pd.a), lb = leafHolding(pd.b);
+    return !!(la && lb && la.id !== lb.id);
+  }
+  function diffEditors() {
+    var ea = pd.a && editors[keyOf(pd.a)], eb = pd.b && editors[keyOf(pd.b)];
+    return ea && eb && ea.el.parentNode && eb.el.parentNode ? [ea, eb] : null;
+  }
+  function sideOfLeaf(leaf) {
+    if (!pd.on) return null;
+    var t = leaf.tabs[leaf.active];
+    if (t && pd.a && keyOf(t) === keyOf(pd.a)) return "a";
+    if (t && pd.b && keyOf(t) === keyOf(pd.b)) return "b";
+    return null;
   }
 
-  function paneDiffPair() {
+  function pickForDiff(entry) {
+    if (pd.picked.some(function (e) { return keyOf(e) === keyOf(entry); })) return;
+    pd.picked.push(entry);
+    if (pd.picked.length < 2) {
+      renderPanes();
+      if (st.railTab === "set" && st.railOpen) renderWorkingSet();
+      return;
+    }
+    var a = pd.picked[0], b = pd.picked[1];
+    pd.armed = false;
+    pd.picked = [];
+    pd.on = true;
+    pd.a = a;
+    pd.b = b;
     var ls = leaves();
-    if (ls.length !== 2) return null;
-    var a = ls[0].tabs[ls[0].active], b = ls[1].tabs[ls[1].active];
-    return a && b ? [a, b] : null;
+    function shows(l, e) {
+      var t = l.tabs[l.active];
+      return !!(t && keyOf(t) === keyOf(e));
+    }
+    var already = ls.length === 2 &&
+      ((shows(ls[0], a) && shows(ls[1], b)) || (shows(ls[0], b) && shows(ls[1], a)));
+    if (!already) {
+      parked = st.tree;
+      st.tree = { id: "S" + (++treeSeq), dir: "row", sizes: [0.5, 0.5],
+                  kids: [mkLeaf([a]), mkLeaf([b])] };
+      st.activeLeaf = st.tree.kids[0].id;
+    }
+    renderPanes();
+    if (st.railTab === "set" && st.railOpen) renderWorkingSet();
+    runPaneDiff();
   }
 
-  function mountDiffPanel() {
-    if (el.diffPanel && el.diffPanel.parentNode) el.diffPanel.parentNode.removeChild(el.diffPanel);
-    el.diffPanel = null;
-    el.paneDiffView = null;
-    if (!st.paneDiff || !paneDiffPair()) return;
-    var panel = BV.el("div", { class: "ws-diff",
-      title: "compares the two panes' open programs as you type; " +
-             "click a row to jump both editors to that instruction" });
-    el.diffPanel = panel;
-    var head = BV.el("div", { class: "ws-diff-head" });
-    panel.appendChild(head);
-    var body = BV.el("div", { class: "ws-diff-body" });
-    panel.appendChild(body);
-    el.work.appendChild(panel);
-
-    el.paneDiffView = BV.pdiffView(body, { onRowClick: function (row) {
-      var pair = paneDiffPair();
-      if (!pair) return;
-      if (row.a_n !== null) flashInPane(pair[0], row.a_n - 1);
-      if (row.b_n !== null) flashInPane(pair[1], row.b_n - 1);
-    } });
-
-    head.appendChild(el.paneDiffView.stats);
-    el.diffNote = BV.el("span", { class: "dim", style: "font-size:.72rem" });
-    head.appendChild(el.diffNote);
-    head.appendChild(BV.el("span", { style: "flex:1" }));
-    var prev = BV.el("button", { class: "btn", title: "previous difference" }, "↑");
-    var next = BV.el("button", { class: "btn", title: "next difference" }, "↓");
-    prev.addEventListener("click", function () { el.paneDiffView.jump(-1); });
-    next.addEventListener("click", function () { el.paneDiffView.jump(1); });
-    head.appendChild(prev);
-    head.appendChild(next);
-    var x = BV.el("span", { class: "x", title: "close the diff" }, "✕");
-    x.addEventListener("click", function () { st.paneDiff = false; renderPanes(); });
-    head.appendChild(x);
-    refreshPaneDiff();
+  function clearPaneDiff() {
+    var eds = diffEditors();
+    pd.on = false;
+    pd.armed = false;
+    pd.picked = [];
+    unlockScroll();
+    if (eds) {
+      eds.forEach(function (ed) {
+        ed.el.querySelectorAll(".wsd-bar").forEach(function (bx) { bx.remove(); });
+        ed.setGaps([]);
+      });
+    }
+    pd.a = pd.b = pd.rows = pd.lastD = null;
+    pd.idx = [];
+    pd.cur = -1;
+    if (parked) {
+      st.tree = parked;
+      parked = null;
+      st.activeLeaf = leaves()[0].id;
+      normalizeTree();       /* entries removed mid-diff leave holes to fold */
+    }
   }
 
   var diffSeq = 0, diffTimer = null;
-  function refreshPaneDiff() {
-    var view = el.paneDiffView;
-    var pair = paneDiffPair();
-    if (!view || !pair) return;
+  /* debounced: onChange fires per keystroke, and every buffer mutation path
+     (typing, find/replace, attrs) funnels through a workspace emit anyway */
+  function schedulePaneDiff() {
+    if (!pd.on) return;
+    clearTimeout(diffTimer);
+    diffTimer = setTimeout(function () { runPaneDiff(); }, 400);
+  }
+  function runPaneDiff(tries) {
+    if (!pd.on) return;
+    if (!diffEditors()) {          /* first-open editors mount async */
+      if ((tries || 0) < 40) {
+        setTimeout(function () { runPaneDiff((tries || 0) + 1); }, 100);
+      }
+      return;
+    }
     var seq = ++diffSeq;
-    Promise.all([BV.workspace.buffer(pair[0]), BV.workspace.buffer(pair[1])])
+    var a = pd.a, b = pd.b;
+    Promise.all([BV.workspace.buffer(a), BV.workspace.buffer(b)])
       .then(function (bufs) {
         return BV.api.call("ws_diff_texts", bufs[0].text, bufs[1].text, true);
       })
       .then(function (d) {
-        if (seq !== diffSeq || el.paneDiffView !== view) return;   /* stale */
-        view.setHeads(labelFor(pair[0].root) + " · " + BV.workspace.displayName(pair[0]),
-                      labelFor(pair[1].root) + " · " + BV.workspace.displayName(pair[1]));
-        view.setData(d);
-        if (el.diffNote) {
-          el.diffNote.textContent = d.io_status && d.io_status.a !== d.io_status.b
-            ? "sides saved under different IO-status display — those rows are " +
-              "display-only, not changes"
-            : "";
-        }
+        if (seq !== diffSeq || !pd.on || pd.a !== a || pd.b !== b) return;  /* stale */
+        var eds = diffEditors();
+        if (!eds) return;
+        pd.rows = d.rows;
+        pd.lastD = d;
+        pd.idx = [];
+        d.rows.forEach(function (r, i) {
+          if (r.kind !== "same" && r.kind !== "equiv") pd.idx.push(i);
+        });
+        eds[0].setGaps(gapsFor(d.rows, "a"));
+        eds[1].setGaps(gapsFor(d.rows, "b"));
+        decorateDiff(eds, d.rows);
+        lockScroll(eds);
+        syncDiffUi();
       })
       .catch(function (e) {
-        if (seq !== diffSeq || el.paneDiffView !== view) return;
-        if (el.diffNote) el.diffNote.textContent = "diff unavailable: " + (e.message || e);
+        if (seq !== diffSeq || !pd.on) return;
+        if (el.diffStats) {
+          el.diffStats.innerHTML = '<span class="dim" style="font-size:.74rem">' +
+            "diff unavailable: " + BV.esc(e.message || e) + "</span>";
+        }
       });
   }
-  /* debounced: onChange fires per keystroke, and every buffer mutation path
-     (typing, find/replace, attrs) funnels through a workspace emit anyway */
-  function schedulePaneDiff() {
-    if (!el.paneDiffView) return;
-    clearTimeout(diffTimer);
-    diffTimer = setTimeout(refreshPaneDiff, 400);
+
+  /* rows -> [{after, n}] for one side: a run of rows where this side is null
+     becomes one gap after the last line this side DID have */
+  function gapsFor(rows, mine) {
+    var out = [], last = 0, run = 0;
+    rows.forEach(function (r) {
+      var n = r[mine + "_n"];
+      if (n === null) { run++; return; }
+      if (run) { out.push({ after: last, n: run }); run = 0; }
+      last = n;
+    });
+    if (run) out.push({ after: last, n: run });
+    return out;
+  }
+
+  function decorateDiff(eds, rows) {
+    [["a", eds[0]], ["b", eds[1]]].forEach(function (cfg) {
+      var mine = cfg[0], ed = cfg[1];
+      var scroller = ed.el.querySelector(".lsed-scroll");
+      var lh = parseFloat(getComputedStyle(ed.code).lineHeight) || 16;
+      ed.el.querySelectorAll(".wsd-bar").forEach(function (bx) { bx.remove(); });
+      rows.forEach(function (r) {
+        var n = r[mine + "_n"];
+        if (n === null || r.kind === "same") return;  /* nulls are real gaps */
+        var bar = BV.el("div", { class: "wsd-bar " +
+          (r.kind === "change" ? "change" : r.kind === "equiv" ? "equiv" : "only") });
+        bar.style.top = ed.lineTop(n) + "px";         /* gap-aware, never n*lh */
+        bar.style.height = lh + "px";
+        scroller.appendChild(bar);
+      });
+    });
+  }
+
+  /* locked scrolling: the gaps made both sides the same height row for row,
+     so the lock is a plain mirror - no alignment map needed */
+  var lockHandlers = null;
+  function lockScroll(eds) {
+    unlockScroll();
+    var sA = eds[0].el.querySelector(".lsed-scroll");
+    var sB = eds[1].el.querySelector(".lsed-scroll");
+    var syncing = false;
+    function mirror(src, dst) {
+      return function () {
+        if (syncing) return;
+        syncing = true;
+        dst.scrollTop = src.scrollTop;
+        syncing = false;
+      };
+    }
+    var hA = mirror(sA, sB), hB = mirror(sB, sA);
+    sA.addEventListener("scroll", hA);
+    sB.addEventListener("scroll", hB);
+    lockHandlers = [[sA, hA], [sB, hB]];
+  }
+  function unlockScroll() {
+    (lockHandlers || []).forEach(function (h) { h[0].removeEventListener("scroll", h[1]); });
+    lockHandlers = null;
+  }
+
+  function jumpDiff(dir) {
+    if (!pd.on || !pd.rows) return;
+    if (!pd.idx.length) { BV.toast("no differences"); return; }
+    pd.cur = (pd.cur + dir + pd.idx.length) % pd.idx.length;
+    var r = pd.rows[pd.idx[pd.cur]];
+    var side = r.a_n !== null ? "a" : "b";
+    var ed = editors[keyOf(pd[side])];
+    if (!ed || !ed.el.parentNode) return;
+    var scroller = ed.el.querySelector(".lsed-scroll");
+    var lh = parseFloat(getComputedStyle(ed.code).lineHeight) || 16;
+    var top = ed.lineTop(r[side + "_n"]);
+    scroller.scrollTop = Math.max(0, top - scroller.clientHeight / 2);
+    /* the mirror lock carries the other side to the same row */
+    var bar = BV.el("div", { class: "flashbar" });
+    bar.style.top = top + "px";
+    bar.style.height = lh + "px";
+    scroller.appendChild(bar);
+    setTimeout(function () { if (bar.parentNode) bar.parentNode.removeChild(bar); }, 1600);
+  }
+
+  /* the toolbar follows the mode; stats repaint from the last result so a
+     route away and back does not blank them */
+  function syncDiffUi() {
+    if (!el.diffBtn) return;
+    el.diffBtn.textContent = pd.on ? "diff ✕" : (pd.armed ? "picking…" : "diff…");
+    el.diffBtn.classList.toggle("on", pd.on || pd.armed);
+    el.diffPrev.style.display = el.diffNext.style.display = pd.on ? "" : "none";
+    el.armHint.textContent = pd.armed
+      ? (pd.picked.length
+          ? "picked " + BV.workspace.displayName(pd.picked[0]) + " — pick the second"
+          : "pick two open tabs or working-set programs (esc cancels)")
+      : "";
+    if (pd.on && pd.lastD) paintDiffStats(pd.lastD);
+    else el.diffStats.innerHTML = "";
+  }
+
+  function paintDiffStats(d) {
+    var s = d.stats;
+    var html = '<span class="pill acc">~' + s.change + "</span>" +
+      '<span class="pill err">a only ' + s.a_only + "</span>" +
+      '<span class="pill on">b only ' + s.b_only + "</span>" +
+      (s.equiv ? '<span class="pill ghost" title="same instruction, different ref ' +
+                 'comments or IO-status display — not a change">' + s.equiv +
+                 " display-only</span>" : "") +
+      '<span class="dim" style="font-size:.74rem">' + s.same + " identical</span>";
+    if (d.io_status && d.io_status.a !== d.io_status.b) {
+      html += '<span class="pill ghost" title="the two sides were saved under ' +
+        'different IO-status display (a pendant toggle) — those rows are ' +
+        'display-only, not changes">io display differs</span>';
+    }
+    el.diffStats.innerHTML = html;
   }
 
   function buildPane(leaf) {
@@ -1027,6 +1213,9 @@
     });
 
     var stripBox = BV.el("div", { class: "ws-strip" });
+    /* which side of the diff this pane is - matches the stats pills */
+    var side = sideOfLeaf(leaf);
+    if (side) stripBox.appendChild(BV.el("span", { class: "ws-side" }, side));
     var strip = BV.el("div", { class: "ws-tabs" });
     stripBox.appendChild(strip);
     /* a vertical wheel pans the strip: with a mouse you are otherwise stuck */
@@ -1041,10 +1230,17 @@
                                draggable: "true", title: t.root + "\n" + t.file });
       tab.innerHTML = '<span class="rb">' + BV.esc(labelFor(t.root)) + "</span>" +
         "<span>" + BV.esc(BV.workspace.displayName(t)) + "</span>" + (dirty ? '<span class="dot"></span>' : "");
+      if (pd.armed) {
+        tab.classList.add("pickable");
+        if (pd.picked.some(function (p) { return keyOf(p) === keyOf(t); })) {
+          tab.classList.add("picked");
+        }
+      }
       var x = BV.el("span", { class: "x" }, "✕");
       x.addEventListener("click", function (ev) { ev.stopPropagation(); closeTab(leaf, ti); });
       tab.appendChild(x);
       tab.addEventListener("click", function () {
+        if (pd.armed) { pickForDiff(t); return; }
         leaf.active = ti; st.activeLeaf = leaf.id; renderPanes();
       });
       tab.addEventListener("dragstart", function (ev) {
@@ -1079,7 +1275,7 @@
     var dz = BV.el("div", { class: "dropzone" });
     p.appendChild(dz);
     p.addEventListener("dragover", function (e) {
-      if (!drag) return;
+      if (!drag || pd.on) return;   /* locked layout: no zones to offer */
       e.preventDefault();
       e.stopPropagation();
       paintZone(dz, zoneFor(p, e.clientX, e.clientY));
@@ -1733,14 +1929,13 @@
     if (!ed || !ed.el.parentNode) return;
     var scroller = ed.el.querySelector(".lsed-scroll");
     if (!scroller) return;
-    var cs = getComputedStyle(ed.code);
-    var lh = parseFloat(cs.lineHeight) || 16;
-    var padTop = parseFloat(cs.paddingTop) || 0;
+    var lh = parseFloat(getComputedStyle(ed.code).lineHeight) || 16;
+    var top = ed.lineTop(lineIdx + 1);   /* gap-aware: diff gaps are real pixels */
     if (scroll !== false) {
-      scroller.scrollTop = Math.max(0, padTop + lineIdx * lh - scroller.clientHeight / 2);
+      scroller.scrollTop = Math.max(0, top - scroller.clientHeight / 2);
     }
     var bar = BV.el("div", { class: "flashbar" });
-    bar.style.top = (padTop + lineIdx * lh) + "px";
+    bar.style.top = top + "px";
     bar.style.height = lh + "px";
     scroller.appendChild(bar);
     setTimeout(function () { if (bar.parentNode) bar.parentNode.removeChild(bar); }, 1600);
@@ -2039,6 +2234,13 @@
       e.preventDefault();
       e.stopPropagation();
       removeEntries(selEntries());
+      return;
+    }
+    if (e.key === "Escape" && pd.armed) {
+      pd.armed = false;
+      pd.picked = [];
+      renderPanes();
+      if (st.railTab === "set" && st.railOpen) renderWorkingSet();
       return;
     }
     if (e.key === "Escape" && st.railTab === "find") {

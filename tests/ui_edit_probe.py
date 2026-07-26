@@ -602,23 +602,59 @@ def probe(window):
               panes_left == 2 and js(window, "BV.workspace.count()") == 2,
               f"({panes_left} panes, {js(window, 'BV.workspace.count()')} entries)")
 
-        # ---- pane-vs-pane diff: the toggle exists only while the split does ----
-        # (BV.menu has no disabled state and toolbar toggles follow the same
-        # rule: absent when meaningless, never dead)
-        check("diff.button_appears_with_split", bool(js(window, """(function(){
-            var b=[...document.querySelectorAll('.toolbar-slot .btn')]
-                .find(function(x){return x.textContent==='diff panes';});
-            return b && b.style.display !== 'none';
-        })()""")))
+        # ---- the inline pane diff: pick two, the EDITORS carry the marks ----
+        # collapse to ONE pane first, so pick-two has to build the pair view
+        # itself - park + restore is the point
+        drag_tab(window, 1, 0, 0.5, pane=0)
+        time.sleep(0.6)
+        check("pdiff.collapsed_to_one_pane",
+              js(window, "document.querySelectorAll('.ws-pane').length") == 1)
         js(window, """[...document.querySelectorAll('.toolbar-slot .btn')]
-            .find(function(x){return x.textContent==='diff panes';}).click()""")
-        got = poll(window, "!!document.querySelector('.ws-diff')")
-        check("diff.panel_mounts", bool(got))
-        rows_n = poll(window, "document.querySelectorAll('.ws-diff .pd-row:not(.pd-head)').length")
-        check("diff.identical_programs_all_same",
-              rows_n == 8 and js(window,
-                  "document.querySelectorAll('.ws-diff .pd-same').length") == 8,
-              f"({rows_n} rows — two robots' pristine MAIN.LS are byte-identical)")
+            .find(function(x){return x.textContent==='diff…';}).click()""")
+        time.sleep(0.3)
+        hint = js(window, "(document.querySelector('.ws-armhint')||{}).textContent||''")
+        check("pdiff.arming_hint", "pick two" in (hint or ""), f"({hint!r})")
+        check("pdiff.tabs_marked_pickable",
+              js(window, "document.querySelectorAll('.ws-tab.pickable').length") == 2)
+        # ONE click per pick - activating the pane first must not eat it
+        js(window, "document.querySelectorAll('.ws-tab')[0].click()")
+        time.sleep(0.3)
+        js(window, "document.querySelectorAll('.ws-tab')[1].click()")
+        got = poll(window, "document.querySelectorAll('.ws-pane').length === 2")
+        check("pdiff.pair_view_presents_side_by_side", bool(got))
+        badges = js(window, """[...document.querySelectorAll('.ws-side')]
+            .map(function(b){return b.textContent;}).join('')""")
+        check("pdiff.side_badges_match_pills", badges == "ab", f"({badges!r})")
+        stats_txt = poll(window, """(function(){
+            var s=document.querySelector('.ws-diffstats');
+            return s && s.textContent.indexOf('identical')>=0 ? s.textContent : '';
+        })()""")
+        check("pdiff.stats_ride_the_toolbar", "8 identical" in (stats_txt or ""),
+              f"({stats_txt!r} — two robots' pristine MAIN.LS are byte-identical)")
+        check("pdiff.identical_no_marks",
+              js(window, "document.querySelectorAll('.wsd-bar').length") == 0
+              and js(window, "document.querySelectorAll('.lsed-gap').length") == 0)
+        # diff ✕ restores the PARKED single-pane layout exactly
+        js(window, """[...document.querySelectorAll('.toolbar-slot .btn')]
+            .find(function(x){return x.textContent==='diff ✕';}).click()""")
+        time.sleep(0.5)
+        check("pdiff.close_restores_parked_layout",
+              js(window, "document.querySelectorAll('.ws-pane').length") == 1
+              and js(window, "document.querySelectorAll('.ws-pane .ws-tab').length") == 2
+              and js(window, "document.querySelectorAll('.ws-side').length") == 0)
+        # re-split and diff the two panes in place (already the pair: no park)
+        drag_tab(window, 0, 1, 0.94)
+        time.sleep(0.6)
+        js(window, """[...document.querySelectorAll('.toolbar-slot .btn')]
+            .find(function(x){return x.textContent==='diff…';}).click()""")
+        time.sleep(0.3)
+        js(window, "document.querySelectorAll('.ws-pane')[0].querySelector('.ws-tab').click()")
+        time.sleep(0.3)
+        js(window, "document.querySelectorAll('.ws-pane')[1].querySelector('.ws-tab').click()")
+        poll(window, """(function(){
+            var s=document.querySelector('.ws-diffstats');
+            return s && s.textContent.indexOf('identical')>=0;
+        })()""")
 
         # ---- edit one program: dirty must reach the rail + badge ----
         js(window, """(function(){
@@ -635,9 +671,18 @@ def probe(window):
         check("edit.export_btn_enabled",
               not js(window, "document.querySelector('.toolbar-slot .btn.primary').disabled"))
 
-        # ---- the pane diff recomputes as you type (debounced) ----
-        a_only = poll(window, "document.querySelectorAll('.ws-diff .pd-a_only').length")
-        check("diff.live_update_on_typing", a_only == 1, f"({a_only} a-only rows)")
+        # ---- the diff recomputes as you type; marks live IN the editors ----
+        a_only_bars = poll(window, "document.querySelectorAll('.wsd-bar.only').length")
+        check("pdiff.typed_line_marked_in_editor", a_only_bars == 1,
+              f"({a_only_bars} one-side bars)")
+        check("pdiff.other_side_gets_real_gap",
+              js(window, "document.querySelectorAll('.lsed-code .lsed-gap').length") == 1,
+              "(the counterpart shows a blank row, not a squeezed-up line)")
+        heights = js(window, """JSON.stringify([...document.querySelectorAll('.lsed-scroll')]
+            .map(function(s){return s.scrollHeight;}))""")
+        hh = json.loads(heights or "[0,1]")
+        check("pdiff.gap_equalizes_heights", len(hh) == 2 and hh[0] == hh[1],
+              f"({heights} — row-for-row alignment is the whole point)")
         # identity honesty: a ref COMMENT difference must read display-only -
         # the same instruction saved under different comment-table state
         js(window, """(function(){
@@ -645,23 +690,72 @@ def probe(window):
             code.textContent = code.textContent.replace('R[21]=2','R[21:WORKCMT]=2');
             code.dispatchEvent(new Event('input',{bubbles:true}));
         })()""")
-        equiv = poll(window, "document.querySelectorAll('.ws-diff .pd-equiv').length")
-        check("diff.ref_comment_is_display_only", equiv == 1,
-              "(a naive text diff would call this line changed)")
-        check("diff.no_false_change",
-              js(window, "document.querySelectorAll('.ws-diff .pd-change').length") == 0)
-        stats_txt = js(window, "document.querySelector('.ws-diff-head').textContent") or ""
-        check("diff.stats_report_display_only", "display-only" in stats_txt,
+        equiv = poll(window, "document.querySelectorAll('.wsd-bar.equiv').length")
+        check("pdiff.ref_comment_is_display_only", equiv == 2,
+              f"({equiv} — one faint bar per side; a naive text diff would call it changed)")
+        check("pdiff.no_false_change",
+              js(window, "document.querySelectorAll('.wsd-bar.change').length") == 0)
+        stats_txt = js(window, "(document.querySelector('.ws-diffstats')||{}).textContent||''")
+        check("pdiff.stats_report_display_only", "display-only" in (stats_txt or ""),
               f"({stats_txt[:60]!r})")
-        # clicking a row lands BOTH editors on that instruction (flash, no
-        # focus steal - the strip scrolls independently of the editors)
+        # the scroll LOCK is a plain mirror - but the fixture programs are 8
+        # lines, so grow side A first until both sides actually overflow (the
+        # gap mirrors the growth onto side B); one undo puts it all back
         js(window, """(function(){
-            var r=document.querySelectorAll('.ws-diff .pd-same')[0];
-            r.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+            var code=document.querySelectorAll('.lsed-code')[0];
+            var lines=[];
+            for (var i=0;i<200;i++) lines.push('DO['+(20+i%9)+':Clamp]=ON');
+            code.textContent = code.textContent + '\\n' + lines.join('\\n');
+            code.dispatchEvent(new Event('input',{bubbles:true}));
         })()""")
-        time.sleep(0.4)
-        check("diff.row_click_flashes_both_editors",
-              js(window, "document.querySelectorAll('.lsed-scroll .flashbar').length") == 2)
+        grown = poll(window, """(function(){
+            var s=document.querySelectorAll('.lsed-scroll');
+            return s.length === 2 && s[1].scrollHeight > s[1].clientHeight + 100;
+        })()""")
+        check("pdiff.growth_mirrored_by_gap", bool(grown),
+              "(200 typed lines must swell BOTH sides via the alignment gap)")
+        mirror = js(window, """(function(){
+            var s=[...document.querySelectorAll('.lsed-scroll')];
+            if (s.length < 2) return 'scrollers:'+s.length+' panes:'+
+                document.querySelectorAll('.ws-pane').length+' codes:'+
+                document.querySelectorAll('.lsed-code').length;
+            s[0].scrollTop=60;
+            s[0].dispatchEvent(new Event('scroll'));
+            return JSON.stringify([s[0].scrollTop, s[1].scrollTop]);
+        })()""")
+        try:
+            mm = json.loads(mirror or "[0,1]")
+        except ValueError:
+            mm = [None, None]
+        check("pdiff.scroll_locked", mm[0] == 60 and mm[1] == 60, f"({mirror})")
+        back = js(window, """(function(){
+            var s=[...document.querySelectorAll('.lsed-scroll')];
+            if (s.length < 2) return 'scrollers:'+s.length;
+            s[1].scrollTop=0;
+            s[1].dispatchEvent(new Event('scroll'));
+            return 'ok';
+        })()""")
+        time.sleep(0.2)
+        check("pdiff.lock_works_both_ways",
+              back == "ok"
+              and js(window, "document.querySelectorAll('.lsed-scroll')[0].scrollTop") == 0,
+              f"({back})")
+        # one undo takes the growth back out; the diff re-settles
+        js(window, """(function(){
+            var code=document.querySelectorAll('.lsed-code')[0];
+            code.dispatchEvent(new KeyboardEvent('keydown',
+                {key:'z',ctrlKey:true,bubbles:true,cancelable:true}));
+        })()""")
+        poll(window, """(function(){
+            var g=document.querySelectorAll('.lsed-code .lsed-gap');
+            return g.length === 1 && g[0].style.height === '1lh';
+        })()""")
+        # ↓ next jumps to a difference and flashes it
+        js(window, """[...document.querySelectorAll('.toolbar-slot .btn')]
+            .find(function(x){return x.title==='next difference';}).click()""")
+        time.sleep(0.3)
+        check("pdiff.jump_flashes",
+              js(window, "document.querySelectorAll('.lsed-scroll .flashbar').length") >= 1)
 
         # ---- review-your-edits: original vs edited, every kind of change ----
         js(window, """[...document.querySelectorAll('.toolbar-slot .btn')]
@@ -707,15 +801,47 @@ def probe(window):
             new MouseEvent('mousedown',{bubbles:true}))""")
         time.sleep(0.4)
 
-        # ---- closing the strip: ✕ unmounts it, the toggle stays offered ----
-        js(window, "document.querySelector('.ws-diff-head .x').click()")
-        time.sleep(0.4)
-        check("diff.close_unmounts", not js(window, "!!document.querySelector('.ws-diff')"))
-        check("diff.button_still_offered_while_split", bool(js(window, """(function(){
-            var b=[...document.querySelectorAll('.toolbar-slot .btn')]
-                .find(function(x){return x.textContent==='diff panes';});
-            return b && b.style.display !== 'none' && !b.classList.contains('on');
-        })()""")))
+        # ---- diff mode LOCKS the layout; closing a diffed tab ends it ----
+        # an unopened program refuses to open while the diff is on
+        js(window, """(function(){
+            var e0=BV.workspace.entries()[0];
+            window._t4=BV.workspace.duplicate(e0.id,'TREETMP4',false).id;
+        })()""")
+        js(window, "BV.route()")
+        time.sleep(0.8)
+        check("pdiff.survives_reroute",
+              js(window, "document.querySelectorAll('.ws-side').length") == 2
+              and "display-only" in (js(window,
+                  "(document.querySelector('.ws-diffstats')||{}).textContent||''") or ""),
+              "(module state + repainted stats, not DOM state)")
+        js(window, """(function(){
+            var r=[...document.querySelectorAll('.ws-prog')].find(function(x){
+                return x.textContent.indexOf('TREETMP4')>=0; });
+            r.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
+        })()""")
+        time.sleep(0.5)
+        check("pdiff.layout_locked_while_on",
+              js(window, "document.querySelectorAll('.ws-tab').length") == 2,
+              "(opening anything says 'close the diff first' instead of reshaping)")
+        js(window, "BV.workspace.remove(window._t4)")
+        # closing one of the diff's OWN tabs clears the marks with the diff
+        js(window, "document.querySelectorAll('.ws-pane')[1].querySelector('.ws-tab .x').click()")
+        time.sleep(0.5)
+        check("pdiff.closing_diffed_tab_clears",
+              js(window, "document.querySelectorAll('.ws-side').length") == 0
+              and js(window, "document.querySelectorAll('.wsd-bar').length") == 0
+              and js(window, "document.querySelectorAll('.lsed-gap').length") == 0
+              and bool(js(window, """[...document.querySelectorAll('.toolbar-slot .btn')]
+                  .some(function(x){return x.textContent==='diff…';})""")))
+        # back to two panes for the find/replace flow below: the closed side
+        # reopens from the rail (allowed again - the diff is off), then splits
+        js(window, """document.querySelectorAll('.ws-prog')[1]
+            .dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))""")
+        time.sleep(0.6)
+        drag_tab(window, 0, 1, 0.94)
+        time.sleep(0.6)
+        check("pdiff.state_restored_for_find",
+              js(window, "document.querySelectorAll('.ws-pane').length") == 2)
 
         # ---- find/replace in the rail: identity-aware, scoped, grouped ----
         js(window, """[...document.querySelectorAll('.ws-railtab')]
