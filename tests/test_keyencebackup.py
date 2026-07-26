@@ -12,7 +12,7 @@ enforces it: a pathful RETR raises, which would fail the backup if we regressed.
 import ftplib
 from pathlib import Path
 
-from backupviewer import keyencebackup, library, settings
+from backupviewer import keyence_workspace, keyencebackup, library, settings
 from backupviewer.session import BackupSession
 
 HOME = {
@@ -178,10 +178,16 @@ def test_backup_end_to_end(monkeypatch, tmp_path):
     dated = Path(res["dated_path"])
     cam = dated / "CAM1"
     for rel in SETTING_FILES:
-        assert cam.joinpath(*rel.split("/")).is_file(), rel
+        assert cam.joinpath("SD1", *rel.split("/")).is_file(), rel
     for rel in BOX_FILES + ["cv-x/temp/scratch.tmp"]:
-        assert not cam.joinpath(*rel.split("/")).exists(), rel
+        assert not cam.joinpath("SD1", *rel.split("/")).exists(), rel
     assert not list(dated.rglob("*.part"))
+
+    # …and the pull IS a CV-X simulator workspace: SD1/ + the manifest beside it
+    assert keyence_workspace.is_workspace(cam)
+    ws = keyence_workspace.read_workspace_xml(cam / "workspace.xml")
+    assert ws["ControllerIpAddress"] == "10.0.0.55"      # the camera we dialed
+    assert ws["software_grade_text"] == "@DR3"
 
     import json
     md = json.loads((dated / "backup.json").read_text(encoding="utf-8"))
@@ -190,7 +196,8 @@ def test_backup_end_to_end(monkeypatch, tmp_path):
     assert md["complete"] is True                 # flipped true only on success
 
     latest = Path(res["latest_path"])
-    assert latest.joinpath("CAM1", "cv-x", "setting", "env.dat").is_file()
+    assert latest.joinpath("CAM1", "SD1", "cv-x", "setting", "env.dat").is_file()
+    assert keyence_workspace.is_workspace(latest / "CAM1")   # the mirror opens too
 
     e = library.list_robots()["robots"][0]
     assert e.get("device_type") == "camera-keyence"
@@ -218,6 +225,9 @@ def test_partial_backup_left_marked_incomplete(tmp_path):
     md = json.loads((dated / "backup.json").read_text(encoding="utf-8"))
     assert md["complete"] is False
     assert not (dated / "notes.txt").exists()     # success sidecars never ran
+    # and no manifest: a workspace.xml over an empty SD1/ would promise the
+    # simulator a settings tree that was never pulled
+    assert not list(dated.rglob("workspace.xml"))
 
 
 def test_run_id_in_snapshot(tmp_path):
@@ -240,8 +250,12 @@ def test_multi_camera_layout(monkeypatch, tmp_path):
     assert res["status"] == "done", res
     assert res["done"] == 2 * len(SETTING_FILES)
     dated = Path(res["dated_path"])
-    assert dated.joinpath("CAM1", "cv-x", "setting", "env.dat").is_file()
-    assert dated.joinpath("CAM2", "cv-x", "setting", "env.dat").is_file()
+    assert dated.joinpath("CAM1", "SD1", "cv-x", "setting", "env.dat").is_file()
+    assert dated.joinpath("CAM2", "SD1", "cv-x", "setting", "env.dat").is_file()
+    # each camera is its own workspace, pointed at its OWN address
+    for label, host in (("CAM1", "10.0.0.55"), ("CAM2", "10.0.0.56")):
+        ws = keyence_workspace.read_workspace_xml(dated / label / "workspace.xml")
+        assert ws["ControllerIpAddress"] == host
 
 
 def test_backup_cancel(monkeypatch, tmp_path):

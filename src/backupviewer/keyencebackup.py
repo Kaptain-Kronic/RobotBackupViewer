@@ -12,6 +12,11 @@ proprietary `Vapi.Net.dll` C# helper the old plan assumed is NOT required.
 Backup scope (matches the shop's existing Terminal-Software backup and the parked
 helper's default): the whole `cv-x/setting/` tree; `cv-x/box/` is optional (big).
 
+On disk it lands as `<dated>/<label>/SD1/cv-x/setting/…` - `SD1/` being the
+camera's own FTP login dir - plus a `workspace.xml` at `<label>/`. That pair is
+exactly a **CV-X Series Simulator workspace**, so a backup we take opens in the
+simulator with no export step (see keyence_workspace for the format proof).
+
 Mirrors mtxbackup.CameraBackupJob's shape (uuid id, lock-guarded progress dict,
 snapshot()/cancel()/run() on a worker thread) so the api layer polls it through
 the same endpoints, and reuses ftpbackup's gentle transfer primitives.
@@ -33,8 +38,9 @@ import logging
 import time
 from pathlib import Path
 
-from . import ftpbackup
+from . import ftpbackup, keyence_workspace
 from .ftpbackup import _names, _walk   # shared read-only FTP listing helpers
+from .parsers import cvx_inspect
 
 log = logging.getLogger(__name__)
 
@@ -88,7 +94,9 @@ class KeyenceBackupJob(ftpbackup.CameraJobBase):
     def __init__(self, host, dest_root, plant, line, station, *,
                  cameras=None, user=KEYENCE_USER, passwd=KEYENCE_PASS, passive=True,
                  port=21, include_box=False, note="", run_id="", ftp_factory=ftplib.FTP,
-                 throttle=0.03, on_complete=None):
+                 throttle=0.03, on_complete=None,
+                 controller_type=keyence_workspace.CONTROLLER_TYPE,
+                 software_grade=keyence_workspace.SOFTWARE_GRADE):
         super().__init__(host, dest_root, plant, line, station, cameras=cameras,
                          note=note, run_id=run_id, throttle=throttle,
                          on_complete=on_complete)
@@ -98,12 +106,22 @@ class KeyenceBackupJob(ftpbackup.CameraJobBase):
         self.passive = passive
         self.include_box = include_box
         self._ftp_factory = ftp_factory
+        # written into each camera's workspace.xml; the FTP session cannot ask the
+        # controller for them, so they stay overridable rather than guessed
+        self.controller_type = controller_type
+        self.software_grade = software_grade
 
     def _pull_camera(self, host, label, dated: Path, done, nbytes):
         """Connect to one CV-X, enumerate cv-x/setting (+box), and download each
-        file into <dated>/<label>/…. The CV-X FTP refuses pathful RETR, so we CWD
-        into each remote directory and RETR bare basenames."""
+        file into <dated>/<label>/SD1/…. The CV-X FTP refuses pathful RETR, so we
+        CWD into each remote directory and RETR bare basenames.
+
+        The `SD1/` level is the camera's own FTP login dir - keeping it makes the
+        snapshot a faithful copy of the SD card AND makes <label>/ a CV-X
+        simulator workspace once workspace.xml lands next to it (see
+        keyence_workspace)."""
         ftp = None
+        got = 0
         try:
             self._set(status="listing", current=f"{label} @ {host}")
             ftp = self._connect(host)
@@ -127,10 +145,11 @@ class KeyenceBackupJob(ftpbackup.CameraJobBase):
                 if rdir != cur_dir:
                     self._cwd_into(ftp, home, rdir)   # reposition only on dir change
                     cur_dir = rdir
-                dest = dated.joinpath(label, *parts)
+                dest = dated.joinpath(label, keyence_workspace.SD_DIR, *parts)
                 try:
                     nbytes += ftpbackup.retrieve(ftp, base, dest)   # bare-name RETR at CWD
                     done += 1
+                    got += 1
                 except ftplib.all_errors as e:   # tuple incl. OSError (long-path/os ops)
                     # a single missing/locked file must not sink the whole pull
                     with self._lock:
@@ -139,6 +158,8 @@ class KeyenceBackupJob(ftpbackup.CameraJobBase):
                 self._set(done=done, bytes=nbytes)
                 if self._throttle:
                     time.sleep(self._throttle)
+            if got:
+                self._write_workspace(dated / label, host)
             return done, nbytes
         finally:
             if ftp is not None:
@@ -149,6 +170,20 @@ class KeyenceBackupJob(ftpbackup.CameraJobBase):
                         ftp.close()
                     except Exception:  # noqa: BLE001
                         pass
+
+    def _write_workspace(self, folder: Path, host: str):
+        """Drop the CV-X simulator's workspace.xml next to the pulled SD1/ tree,
+        so <label>/ opens straight in the simulator. Written only when the camera
+        actually yielded files (a manifest pointing at an empty tree would be a
+        lie), and guarded: a manifest is a convenience, and failing to write one
+        must never fail a backup that already has the settings on disk."""
+        try:
+            keyence_workspace.write_workspace_xml(
+                folder, host,
+                controller_type=self.controller_type,
+                software_grade=self.software_grade)
+        except OSError:
+            log.exception("workspace.xml for %s not written (backup is intact)", folder)
 
     def _cwd_into(self, ftp, home, rdir):
         """Position CWD at home/<rdir> segment by segment (the CV-X FTP rejects a
@@ -168,6 +203,48 @@ class KeyenceBackupJob(ftpbackup.CameraJobBase):
         except Exception:  # noqa: BLE001
             pass
         return ftp
+
+def name_from_backup(snapshot) -> dict:
+    """Best-effort {name, model} for a CV-X out of the backup it just pulled -
+    the Keyence twin of mtxbackup.name_from_backup, feeding the same
+    library.teach_camera_name so a camera discovered as a bare IP renames itself
+    (folder and all) the way a robot self-names from SUMMARY.DG.
+
+    A CV-X exposes no controller name over FTP, so its identity is read from the
+    names of its inspection PROGRAMS (`setting/<NNN>/inspect.dat`), which on a
+    plant floor are written as station tags - see parsers/cvx_inspect.py for the
+    format and for why one name is chosen out of several.
+
+    Blanks on any failure: naming must never sink a finished backup. `model` is
+    left blank because the model is only in the live FTP banner, which a pulled
+    snapshot does not carry."""
+    out = {"name": "", "model": ""}
+    try:
+        root = Path(snapshot or "")
+        if not root.is_dir():
+            return out
+        names: dict = {}
+        # <dated>/<CAM label>/SD1/cv-x/setting/<NNN>/inspect.dat - glob rather
+        # than assume the wrapper depth, so a single-camera pull and a
+        # CAM1/CAM2 station both read the same way
+        for p in sorted(root.rglob("inspect.dat")):
+            if p.parent.parent.name.lower() != "setting":
+                continue
+            try:
+                data = Path(ftpbackup.long_path(p)).read_bytes()
+            except OSError:
+                continue
+            name = cvx_inspect.program_name(data)
+            if name:
+                # keyed by program dir; a 2-camera station's slots collide only
+                # when both cameras use the same numbers, and then the shared
+                # name is the honest answer anyway
+                names.setdefault(p.parent.name, name)
+        out["name"] = cvx_inspect.camera_name(names)
+        return out
+    except OSError:
+        return out
+
 
 # -- pre-flight probe + read-only diagnose ---------------------------------------
 

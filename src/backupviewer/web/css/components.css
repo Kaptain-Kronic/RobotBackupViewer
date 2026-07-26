@@ -1284,6 +1284,31 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
   white-space: nowrap; direction: rtl; text-align: left;
 }
 
+/* ---- cv-x simulator export ("load cameras…") ---- */
+/* rem, never px: this list grows with the text-size setting like everything else */
+.sim-export { min-width: min(30rem, 80vw); }
+.sim-dest {
+  font-size: 0.78rem; color: var(--sub); margin: 0 0 0.6rem;
+  overflow-wrap: break-word;
+}
+.sim-rows { display: flex; flex-direction: column; max-height: 50vh; overflow-y: auto; }
+.sim-selall, .sim-row {
+  display: grid; grid-template-columns: auto 1fr; gap: 0.15rem 0.55rem;
+  align-items: center; padding: 0.35rem 0.2rem; border-bottom: 1px solid var(--edge);
+}
+.sim-selall { border-bottom-width: 2px; }
+.sim-row:hover { background: var(--bg2); }
+.sim-main { display: flex; align-items: center; gap: 0.4rem; min-width: 0; }
+.sim-name { font-size: 0.9rem; overflow-wrap: break-word; }
+.sim-sub, .sim-why { grid-column: 2; font-size: 0.74rem; overflow-wrap: break-word; }
+.sim-why { color: var(--warn); }
+/* the destructive case reads louder than a qualified name */
+.sim-why.err { color: var(--error); }
+.sim-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 1rem; margin-top: 0.7rem;
+}
+
 /* ---- home / library (the main menu) ---- */
 /* the ONE action row, pinned while the plant tree scrolls (same sticky recipe
    as .hero.stick: negative top cancels #view's padding, full-bleed margins +

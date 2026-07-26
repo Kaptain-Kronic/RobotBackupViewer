@@ -77,6 +77,15 @@ def library_root() -> str:
     return s.get("library_root") or s.get("backup_root") or str(Path.home() / "RobotBackups")
 
 
+def sim_root() -> str:
+    """The flat folder the CV-X simulator's base path points at: one workspace
+    folder per camera, side by side, because the simulator does not walk a nested
+    tree. Deliberately NOT the library root - the library keeps plant/line/dated
+    history, this keeps only what you asked to load into the simulator."""
+    s = load()
+    return s.get("sim_root") or str(Path.home() / "Documents" / "KEYENCE" / "BackupViewer")
+
+
 def set_value(key: str, value) -> None:
     # read-modify-write under one lock: js_api calls run on separate threads,
     # and concurrent set_value calls must not clobber each other's keys

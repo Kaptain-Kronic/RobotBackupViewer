@@ -1,5 +1,53 @@
 # Changelog
 
+## Unreleased
+- **A CV-X backup is now a simulator workspace.** Pulling a Keyence camera got
+  you the settings tree and nothing that could open it — to look at a backup in
+  the CV-X Series Simulator you re-took it with Keyence's own software. The pull
+  now lands under `SD1/` (the camera's real FTP login dir) with the simulator's
+  `workspace.xml` beside it, so the camera folder inside a backup opens in the
+  simulator directly, no export and no second copy. Multi-camera stations get one
+  workspace per camera, each pointed at its own address. The manifest format was
+  read off 52 real workspaces and is reproduced byte-for-byte (BOM, CRLF, field
+  order and all); it is written only when files actually arrived, so a failed
+  pull never leaves a manifest promising a tree that isn't there. Simulator saves
+  dropped into the library are recognised as backups too, so it reads both ways.
+- **A CV-X names itself.** A camera found by discovery was filed under its bare
+  IP, so the simulator folder filled up with `192.0.2.44`-style names. A CV-X
+  exposes no controller name over FTP — the banner carries only the model, and
+  `env.dat` no identity — but every inspection program carries the name a tech
+  typed for it, and on a plant floor those read as station tags. Keyence now has
+  the same self-naming Matrox has had: the backup teaches the library its real
+  name (folder and all, so a rescan can't revert it), and a name someone typed
+  is still never overwritten. Format pinned against 154 real `inspect.dat` files
+  across 13 cameras — the name sits at `0x4c` and is echoed at `0x398`, and the
+  parser requires the two copies to agree, so a mis-seek yields nothing rather
+  than a plausible wrong name. On the 46 real camera backups on hand this
+  produces a station-style tag for 85%; the rest get whatever the tech actually
+  typed (a part name like `Lower Hinge Reinforcement`), which still beats an IP.
+- **"Load cameras into the simulator."** The simulator takes one base path and
+  lists the workspace folders directly inside it — it will not walk a plant/line/
+  dated tree, so pointing it at the library showed nothing. Settings gained a
+  **simulator folder** row (under `library folder`) with a **copy** button,
+  because that path's whole job is to be pasted into the simulator, and a
+  **load cameras…** picker that copies the chosen cameras' latest workspaces
+  side by side into it. Names follow the shop's own convention — the station
+  alone, plus the camera label only when a station really has two — and a name
+  already claimed by a different station gets its line appended rather than
+  overwriting it, and says so. Copying is on demand, not automatic, because each
+  workspace is ~100 MB and the simulator only ever needs the few you are about
+  to open; re-loading a camera replaces its copy whole, so an interrupted copy
+  can't leave a half-workspace, and the backup itself is only ever read.
+- **The export will not eat a workspace it didn't write.** Loading a camera
+  replaces `<simulator folder>/<name>`, and replacing means deleting first —
+  which is fine for our own previous export and unacceptable for a workspace
+  somebody built by hand. Since the two are byte-identical in shape, the export
+  now keeps a ledger of the folders it created (one dotfile at the base path,
+  never inside a workspace the simulator reads). Ours are replaced silently;
+  anything else stops, is listed by name and full path, and is destroyed only
+  after an explicit "replace them" — the safe cameras in the same batch still
+  land. A wiped or corrupt ledger makes it ask rather than assume.
+
 ## v1.4 — the edit workspace
 - **The app is called Backup Viewer.** The window title, taskbar entry, crash
   dialog and `--help` line all used to lead with a robot vendor's name, which

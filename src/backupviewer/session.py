@@ -46,6 +46,10 @@ _BACKUP_FILE_EXTS = (".LS", ".VA", ".TP", ".PC", ".MR", ".DG", ".SV", ".IO", ".D
 # "DA" initials folder) to claim as a backup. The app's own camera snapshots
 # also carry backup.json and a CAM<n>/ wrapper, so they're recognised regardless.
 _KEYENCE_MARKER_DIR = "cv-x"
+# a CV-X simulator workspace: workspace.xml AND SD1/ together (either alone is too
+# ordinary a name to claim). Covers both the simulator's own saves and our pulls.
+_KEYENCE_WS_FILE = "workspace.xml"
+_KEYENCE_WS_DIR = "sd1"
 _MTX_MARKER_DIRS = {"da", "documents"}
 _CAM_DIR_RE = re.compile(r"^CAM\d+$", re.IGNORECASE)
 
@@ -55,10 +59,12 @@ def looks_like_backup(d: Path) -> bool:
     backup root? True when it holds any FANUC backup file (.LS/.VA/.TP/.DG/...),
     a maintenance-data marker subfolder (mnt_data/md_ls/mdb), the app's own
     snapshot sidecar (backup.json - the reliable marker for ANY app-taken backup,
-    robot or camera), a Keyence cv-x/ tree, a CAM<n>/ wrapper, or a Matrox
-    da/+Documents/ export. Deliberately strict - da/ alone is NOT enough - so the
-    scan never mistakes an ordinary folder for a backup."""
+    robot or camera), a Keyence cv-x/ tree, a CV-X simulator workspace
+    (workspace.xml + SD1/), a CAM<n>/ wrapper, or a Matrox da/+Documents/ export.
+    Deliberately strict - da/ alone is NOT enough - so the scan never mistakes an
+    ordinary folder for a backup."""
     dirs = set()
+    files = set()
     try:
         for p in d.iterdir():
             try:
@@ -73,10 +79,14 @@ def looks_like_backup(d: Path) -> bool:
                     return True
                 elif p.suffix.upper() in _BACKUP_FILE_EXTS:
                     return True
+                else:
+                    files.add(p.name.lower())
             except OSError:
                 continue
     except OSError:
         return False
+    if _KEYENCE_WS_FILE in files and _KEYENCE_WS_DIR in dirs:
+        return True                      # a CV-X simulator workspace
     return _MTX_MARKER_DIRS <= dirs      # da/ AND Documents/ together = a Matrox export
 
 
