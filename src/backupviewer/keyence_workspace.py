@@ -293,7 +293,7 @@ def _ident(item) -> tuple:
 # %APPDATA%, still knows) and a missing entry always fails toward caution.
 
 EXPORT_LEDGER = ".backupviewer-exports.json"
-_LEDGER_NOTE = ("folders listed here were created by BackupViewer's simulator "
+_LEDGER_NOTE = ("folders listed here were created by Backup Viewer's simulator "
                 "export and will be replaced by it. Anything not listed is left "
                 "alone unless you confirm. Safe to delete - the export will then "
                 "simply ask again.")

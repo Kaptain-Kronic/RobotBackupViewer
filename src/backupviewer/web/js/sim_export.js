@@ -77,7 +77,7 @@
         if (c.foreign) {
           lab.appendChild(BV.el("span", { class: "sim-why err" },
             "a folder called " + BV.esc(c.name) + " is already there and " +
-            "BackupViewer did not create it — loading would replace it"));
+            "Backup Viewer did not create it — loading would replace it"));
         }
         rows.appendChild(lab);
       });
@@ -138,7 +138,7 @@
         b.appendChild(BV.el("p", null,
           (n ? n + " loaded. " : "") + "<b>" + blocked.length + "</b> " +
           (blocked.length === 1 ? "camera was" : "cameras were") + " not loaded: a folder " +
-          "of that name is already in the simulator folder and BackupViewer did not " +
+          "of that name is already in the simulator folder and Backup Viewer did not " +
           "create it. Replacing it deletes whatever is in it — including a workspace " +
           "you built by hand."));
         var list = BV.el("div", { class: "sim-rows" });
@@ -161,7 +161,7 @@
         /* opening this modal takes over the one root, so the picker behind it is
            already gone; closing THIS one runs opts.onClose and lands back in
            settings, same as any other exit. */
-        var m2 = BV.modal("replace folders BackupViewer did not create?", b, opts);
+        var m2 = BV.modal("replace folders Backup Viewer did not create?", b, opts);
         keep.addEventListener("click", function () {
           m2.close(true);
           BV.toast(n ? (n + " loaded, " + blocked.length + " left alone")
