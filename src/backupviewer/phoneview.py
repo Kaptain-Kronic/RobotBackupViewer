@@ -118,7 +118,10 @@ class PhoneShare:
         with self._lock:
             for s in self._sessions.values():
                 if s.kind == "window":
-                    s.fetch = fetch         # re-point at the freshly-targeted window
+                    # re-point at the freshly-targeted window - label included,
+                    # or the phone page would still name the window we left
+                    s.fetch = fetch
+                    s.label = label
                     self._ensure_server()
                     return {"token": s.token, "port": self.port}
             s = _Session("", label, kind="window", ctype="image/png", fetch=fetch)
@@ -345,7 +348,7 @@ class _Handler(BaseHTTPRequestHandler):
         sess.phones.add(self.client_address[0])
         frame, age, err = self.share.frame_for(sess)
         if frame is None:
-            what = "the camera" if sess.kind == "camera" else "the Matrox window"
+            what = "the camera" if sess.kind == "camera" else f"the {sess.label} window"
             msg = f"no frame from {what} yet ({err or 'no fetch attempted'})"
             self._send(503, "text/plain; charset=utf-8", msg.encode("utf-8"),
                        {"Retry-After": "1"})

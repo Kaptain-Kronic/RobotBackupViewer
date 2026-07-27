@@ -206,6 +206,10 @@ body { overflow: hidden; }
 .solo #topbar-cubes, .solo #sessionbar, .solo #btn-compare, .solo #jobstrip { display: none !important; }
 .solo #logo { display: flex; }
 
+/* a popped-out CV-X window IS the remote overlay - the app shell behind it
+   never shows (and must not flash during boot) */
+.cvxwin #app { display: none !important; }
+
 .tab-btn {
   appearance: none;
   background: none;

@@ -1,10 +1,11 @@
 /* phoneview.js - hand a phone a live picture over a QR handoff.
 
-   BV.openViewfinder() mirrors the Matrox window (this app's own window, with
-   the remote overlay up) to a phone: no rectangle to pick, no extra window -
-   the PC grabs the app window's content live and the phone shows exactly that,
-   following it if you move or resize it. Scan the QR, close this (keeps
-   sharing), and the phone shows the Matrox.
+   BV.openViewfinder() mirrors THIS window (the app window with a camera remote
+   up, or a popped-out remote / backup) to a phone: no rectangle to pick, no
+   extra window - the PC grabs that window's content live and the phone shows
+   exactly that, following it if you move or resize it. Scan the QR, close this
+   (keeps sharing), and the phone shows the camera. Which window is decided by
+   BV.windowKey(), so the button mirrors the window it was pressed in.
 
    BV.openPhoneView(ip, label) is the camera-direct variant (relays the MTX
    HMI frame without touching the screen), kept for callers that want it.
@@ -39,10 +40,11 @@
     }).catch(function (e) { BV.toast("phone view: " + e.message); });
   };
 
-  /* mirror the Matrox window: the QR is ready immediately - no pick step */
+  /* mirror THIS window (whatever it currently shows - a camera remote, the
+     backup you're reading): the QR is ready immediately - no pick step */
   BV.openViewfinder = function () {
-    BV.api.call("viewfinder_start").then(function (d) {
-      show("Matrox window", d, true);
+    BV.api.call("viewfinder_start", { window: BV.windowKey() }).then(function (d) {
+      show(d.mirroring || "this window", d, true);
     }).catch(function (e) { BV.toast("phone view: " + e.message); });
   };
 
@@ -147,8 +149,8 @@
       "or turn on windows <b>mobile hotspot</b>, join it from the phone, and pick the " +
       "hotspot address above. " +
       (windowMode
-        ? "the phone mirrors the matrox window — scan, then <b>close (keeps sharing)</b> " +
-          "so the camera fills the window again. "
+        ? "the phone mirrors this window — scan, then <b>close (keeps sharing)</b> " +
+          "so what you're watching fills the window again. "
         : "the pc relays the camera, so the phone never needs the robot network. ") +
       "the first share may pop a windows firewall prompt — allow it."));
 

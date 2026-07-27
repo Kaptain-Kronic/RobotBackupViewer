@@ -82,6 +82,28 @@ window.BV = {};
     toastTimer = setTimeout(function () { toastEl.classList.remove("show"); }, ms || 1800);
   };
 
+  /* Fullscreen, the only way that works here - one path for every caller.
+
+     NOT the web Fullscreen API: WebView2 grants requestFullscreen (no error,
+     fullscreenElement gets set) but only stretches the element inside the same
+     window, and our overlays are already inset:0 - so the button appeared to do
+     nothing at all. Fullscreen belongs to the HOST window (pywebview
+     toggle_fullscreen), which Python owns, so Python owns the state too; this
+     window asks about itself via BV.windowKey(). */
+  BV.fullscreen = (function () {
+    var on = false;
+    function toggle() {
+      return BV.api.call("toggle_fullscreen", { window: BV.windowKey() })
+        .then(function (r) { on = !!(r && r.fullscreen); return on; })
+        .catch(function (e) { BV.toast("fullscreen: " + e.message); return on; });
+    }
+    return {
+      active: function () { return on; },
+      toggle: toggle,
+      exit: function () { return on ? toggle() : Promise.resolve(false); },
+    };
+  })();
+
   /* clipboard with the WebView2-safe fallback; every report/copy button in the
      app (scan report, backup log, future exports) shares this one path */
   BV.copyText = function (text, okMsg) {

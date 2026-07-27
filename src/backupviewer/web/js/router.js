@@ -341,6 +341,11 @@
     paintBadge();
   }
 
+  /* the phone lives in the top bar so it reaches ANY screen, not just a camera
+     remote: whatever this window shows, the phone in your hand shows too */
+  document.getElementById("btn-phone").addEventListener("click", function () {
+    BV.openViewfinder();
+  });
   document.getElementById("btn-cog").addEventListener("click", function () { BV.uiPrefs.modal(); });
   document.getElementById("btn-help").addEventListener("click", function () { BV.helpOverlay(); });
 
@@ -380,6 +385,20 @@
   /* ---- boot ---- */
   BV.api.ready.then(function (bridged) {
     if (!bridged) { buildTabbar(); emptyState(); updateStatus(); return; }
+    /* a popped-out CV-X window is nothing but the remote: no backup, no tabs,
+       no routing - load the theme so the overlay is dressed, then adopt the
+       session that already exists and fill the window with it */
+    if (BV.cvxWin) {
+      document.title = "CV-X remote · " + (BV.cvxWin.label || "");
+      BV.theme.load().catch(function () {}).then(function () {
+        return BV.api.call("get_settings").catch(function () { return null; });
+      }).then(function (settings) {
+        BV.state.settings = settings || {};
+        BV.uiPrefs.apply(BV.state.settings);
+        BV.openCvxRemote("", BV.cvxWin.label, { adopt: BV.cvxWin.sid, owned: true });
+      });
+      return;
+    }
     BV.api.call("get_version").then(function (v) {
       BV.state.version = v;
       updateStatus();

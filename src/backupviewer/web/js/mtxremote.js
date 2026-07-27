@@ -69,20 +69,21 @@
       closed = true;
       open = false;
       document.removeEventListener("keydown", onKey);
-      if (document.fullscreenElement) { try { document.exitFullscreen(); } catch (e) {} }
+      BV.fullscreen.exit();               /* never leave a borderless window behind */
       overlay.remove();
     }
     closeBtn.addEventListener("click", close);
 
     function onKey(e) {
-      if (e.key === "Escape" && !document.fullscreenElement) { e.preventDefault(); close(); }
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      /* esc backs out one step at a time: window first, then the remote */
+      if (BV.fullscreen.active()) BV.fullscreen.exit();
+      else close();
     }
     document.addEventListener("keydown", onKey);
 
-    fsBtn.addEventListener("click", function () {
-      if (document.fullscreenElement) { try { document.exitFullscreen(); } catch (e) {} }
-      else { try { overlay.requestFullscreen(); } catch (e) {} }
-    });
+    fsBtn.addEventListener("click", function () { BV.fullscreen.toggle(); });
     rlBtn.addEventListener("click", function () {
       var t = tabs[current];
       if (t && t.frame) { hint.style.display = ""; t.frame.src = daUrl(t.url); }

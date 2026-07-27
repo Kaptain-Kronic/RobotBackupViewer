@@ -136,6 +136,30 @@
   Explorer, the taskbar, and the window's title bar. Ships as a
   multi-resolution `.ico` (16 through 256) so every size Windows asks for is a
   real entry rather than a scaled-down 256.
+- **The phone button moved to the top bar, where it reaches every screen.**
+  📱 used to live only on the Matrox remote's bar, so mirroring a screen to
+  the phone meant being inside that one overlay. It now sits beside compare
+  and mirrors *this* window — a camera remote, a backup you're reading,
+  whatever is on it — and a popped-out window mirrors itself instead of the
+  main one. The window is named by key, never by title, so only windows this
+  app opened can ever be shared.
+- **Fullscreen actually goes fullscreen.** On both remote bars the button did
+  nothing at all, and the reason is a trap: WebView2 *grants*
+  `requestFullscreen()` — no error, `fullscreenElement` gets set — but it only
+  stretches the element inside the same window, and a remote overlay is
+  already `inset:0`, so there was nothing left to stretch. Fullscreen belongs
+  to the host window, so it now goes through pywebview and takes the whole
+  screen, borderless. `esc` backs out one step at a time: the window first,
+  then the remote. Closing a remote never leaves a borderless window behind.
+- **The CV-X remote's bar carries the same options as the Matrox one.** It
+  had fullscreen and close; it now also has reload, open in window and phone.
+  - *reload* hangs up and dials the same camera again, in that order and
+    under the same session id — the controller keeps exactly one remote slot,
+    so letting go first is the whole point.
+  - *open in window* moves the remote into its own OS window with the mouse
+    still live: it **adopts** the running session rather than dialling again,
+    so the slot is never asked for twice. Ownership transfers — closing that
+    window is what ends the session, and closing the app takes it along.
 
 ## v1.3.1 — the honesty pass
 - **A disabled DCS zone no longer draws as an enabled one.** The zone parser
