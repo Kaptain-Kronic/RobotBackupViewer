@@ -92,10 +92,15 @@ window.BV = {};
      window asks about itself via BV.windowKey(). */
   BV.fullscreen = (function () {
     var on = false;
+    var busy = null;   /* the in-flight toggle - a double esc/click must not
+                          fire twice and land the window back where it started */
     function toggle() {
-      return BV.api.call("toggle_fullscreen", { window: BV.windowKey() })
+      if (busy) return busy;
+      busy = BV.api.call("toggle_fullscreen", { window: BV.windowKey() })
         .then(function (r) { on = !!(r && r.fullscreen); return on; })
-        .catch(function (e) { BV.toast("fullscreen: " + e.message); return on; });
+        .catch(function (e) { BV.toast("fullscreen: " + e.message); return on; })
+        .then(function (v) { busy = null; return v; });
+      return busy;
     }
     return {
       active: function () { return on; },

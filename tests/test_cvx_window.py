@@ -195,6 +195,32 @@ def test_window_close_after_a_failed_reload_still_closes(api, monkeypatch):
     assert api.cvx_remote_window_close(sid)["ok"] is True and w.destroyed is True
 
 
+def test_failed_reload_rebind_stops_the_redialed_session(api, monkeypatch):
+    """A pop-out whose reload failed re-dials under a NEW session id. The
+    registry rebinds to it, and closing the window - by its ✕ or the OS
+    titlebar - stops THAT session: the camera's one remote slot must never
+    stay held by a window that is gone."""
+    sid = _open(api)
+    api.cvx_remote_window({"session_id": sid, "label": "cam"})
+    w = api._cvx_windows[sid]
+    monkeypatch.setattr(FakeSession, "fail", True)
+    api.cvx_remote_reload(sid)                       # dies; the sid is popped
+    monkeypatch.setattr(FakeSession, "fail", False)
+    new_sid = _open(api, ip="192.0.2.31")            # the window re-dials fresh
+    assert api.cvx_remote_window_rebind(sid, new_sid)["ok"] is True
+    assert api._cvx_windows.get(new_sid) is w
+    assert sid not in api._cvx_windows
+    assert api.cvx_remote_window_close(new_sid)["ok"] is True
+    assert new_sid not in api._cvx                   # the live session stopped
+    assert w.destroyed is True
+
+
+def test_rebind_refuses_an_unknown_target_session(api):
+    sid = _open(api)
+    api.cvx_remote_window({"session_id": sid, "label": "cam"})
+    assert api.cvx_remote_window_rebind(sid, "nope")["error"]["code"] == "NO_SESSION"
+
+
 # -- fullscreen: the HOST window, not the web fullscreen api -----------------------
 # WebView2 grants requestFullscreen but only stretches the element inside the
 # same window, and the overlays are already inset:0 - so the bars' fullscreen

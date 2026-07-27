@@ -237,6 +237,14 @@
         return;
       }
       sid = r.session_id;
+      /* an owned window that lost its session and re-dialed owns a NEW id -
+         the window registry must follow it, or closing the window stops
+         nothing and the camera's one remote slot stays held until app exit */
+      if (opts.owned && winKey && sid && sid !== winKey) {
+        BV.api.call("cvx_remote_window_rebind", winKey, sid).then(function () {
+          winKey = sid;
+        }).catch(function () {});
+      }
       if (r.ip) ip = r.ip;
       if (r.screen) { SCREEN_W = r.screen.w; SCREEN_H = r.screen.h; fit(); }
       img.src = r.stream_url + "?t=" + Date.now();

@@ -2105,9 +2105,34 @@ class Api:
         w = webview.create_window(title, url, js_api=self,
                                   width=1100, height=880, min_size=(640, 520))
         self._cvx_windows[sid] = w
-        # closing the window is what really ends the remote session
-        w.events.closed += (lambda: self._close_cvx_window(sid))
+        # closing the window is what really ends the remote session. The hook
+        # resolves the sid by REVERSE lookup at close time, not by capture: a
+        # failed reload re-dials under a new id and rebinds the registry, and a
+        # captured id would then stop the dead session instead of the live one.
+        w.events.closed += (lambda: self._close_cvx_window_obj(w))
         return {"title": title}
+
+    @_endpoint
+    def cvx_remote_window_rebind(self, old_sid: str, new_sid: str):
+        """A pop-out whose reload failed re-dials under a NEW session id; the
+        window registry (and the window's fullscreen state) must follow it, or
+        closing the window stops nothing and the camera's single remote slot
+        stays held until app exit."""
+        if new_sid not in self._cvx:
+            raise ApiError("NO_SESSION", "unknown remote session")
+        w = self._cvx_windows.pop(old_sid, None)
+        if w is None:
+            raise ApiError("NOT_FOUND", "that window is not registered")
+        self._cvx_windows[new_sid] = w
+        if old_sid in self._fullscreen:
+            self._fullscreen.discard(old_sid)
+            self._fullscreen.add(new_sid)
+        return True
+
+    def _close_cvx_window_obj(self, w):
+        sid = next((k for k, v in self._cvx_windows.items() if v is w), None)
+        if sid is not None:
+            self._close_cvx_window(sid)
 
     @_endpoint
     def cvx_remote_window_close(self, session_id: str):
@@ -2249,14 +2274,20 @@ class Api:
     # that. The caller names the window it is IN by key, never by title: only
     # windows this app created can be mirrored, never some other app's.
 
-    _MAIN_TITLE = "FANUC Backup Viewer"       # app.py's create_window title
+    _MAIN_TITLE = "Backup Viewer"             # app.py's create_window title
 
     def _window_title(self, key: str | None) -> str:
         """Resolve a viewfinder window key to the title screengrab looks up.
         None/"main" is the app window; anything else must be a session WE popped
         out (a backup sid or a CV-X session id)."""
         if not key or key == "main":
-            return self._MAIN_TITLE
+            # the LIVE title, not the constant: FindWindowW is exact-match and
+            # a hardcoded copy already went stale once (the v1.4 branding
+            # rename silently broke the main-window mirror)
+            try:
+                return self._window.title or self._MAIN_TITLE
+            except Exception:  # noqa: BLE001 - window backend without .title
+                return self._MAIN_TITLE
         w = self._popped_window(key)
         if w is None:
             raise ApiError("PHONE_VIEW", "that window is not open")
