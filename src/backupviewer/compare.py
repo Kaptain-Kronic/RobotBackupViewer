@@ -29,6 +29,13 @@ _REF_TAIL = re.compile(r"\b([A-Z]+\[\d+):[^\]]*\]")
 # an IO ref carrying THREE fields (num:status:comment): only the IO-status
 # view writes these, so one anywhere means the file was saved with it ON
 _IO_STATUS_REF = re.compile(r"\b[A-Z]+\[\d+:[^:\]]*:[^\]]*\]")
+# content-free lines: blank, a bare '!', or a '!*****' banner. TP programs are
+# full of them, and they must never ANCHOR an alignment - a blank pairing with
+# a distant blank staggers everything between into giant gap runs, and typing
+# Enter mid-edit suddenly re-anchors the whole diff (field-reported: "press
+# enter and the diff freaks out"). They may still ride along INSIDE a matched
+# block (difflib extends matches over adjacent equal junk).
+_JUNK_LINE = re.compile(r"^\s*(?:!\**\s*)?$")
 
 
 def normalize_tp_refs(text: str) -> str:
@@ -67,7 +74,8 @@ def align_program_lines(a_body: list[dict], b_body: list[dict],
         b_keys = [normalize_tp_refs(t) for t in b_texts]
     else:
         a_keys, b_keys = a_texts, b_texts
-    sm = difflib.SequenceMatcher(a=a_keys, b=b_keys, autojunk=False)
+    sm = difflib.SequenceMatcher(a=a_keys, b=b_keys, autojunk=False,
+                                 isjunk=lambda t: bool(_JUNK_LINE.match(t)))
     rows: list[dict] = []
     stats = {"same": 0, "equiv": 0, "change": 0, "a_only": 0, "b_only": 0}
 
@@ -91,8 +99,18 @@ def align_program_lines(a_body: list[dict], b_body: list[dict],
             for k in range(n):
                 ai = i1 + k if i1 + k < i2 else None
                 bi = j1 + k if j1 + k < j2 else None
-                row("change" if ai is not None and bi is not None
-                    else ("a_only" if ai is not None else "b_only"), ai, bi)
+                if ai is None:
+                    row("b_only", ai, bi)
+                elif bi is None:
+                    row("a_only", ai, bi)
+                elif a_texts[ai] == b_texts[bi]:
+                    # junk lines never anchor, so equal blanks/banners land in
+                    # replace runs paired positionally - still honestly "same"
+                    row("same", ai, bi)
+                elif a_keys[ai] == b_keys[bi]:
+                    row("equiv", ai, bi)
+                else:
+                    row("change", ai, bi)
         elif op == "delete":
             for k in range(i1, i2):
                 row("a_only", k, None)

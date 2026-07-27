@@ -63,3 +63,43 @@ def test_io_status_shown():
     # the toggle is whole-program save-time state: one 3-field ref means ON
     assert compare.io_status_shown("WAIT DI[3:OFF:Part]=ON")
     assert not compare.io_status_shown("WAIT DI[3:Part]=ON\nR[21:CNT]=1")
+
+
+def test_align_blank_lines_never_anchor():
+    """Two unrelated programs sharing only a blank: without junk handling the
+    blank ANCHORS and staggers everything around it into giant one-sided runs
+    (field-reported as 'massive blank space'). Junked, the regions pair
+    positionally - and the blank still honestly reads as same."""
+    a = [{"n": i + 1, "text": t} for i, t in enumerate(["!AAA", "A1", "", "A2", "A3"])]
+    b = [{"n": i + 1, "text": t} for i, t in enumerate(["!BBB", "B1", "", "B2", "B3"])]
+    out = compare.align_program_lines(a, b)
+    kinds = [r["kind"] for r in out["rows"]]
+    assert "a_only" not in kinds and "b_only" not in kinds
+    assert kinds[2] == "same"
+
+
+def test_align_enter_adds_one_gap_without_restructuring():
+    """Pressing Enter mid-program adds ONE one-sided blank row; the rest of
+    the alignment must not move (the live pane diff recomputes per keystroke)."""
+    base = ["L1", "DO[1]=ON", "L2", "", "L3"]
+    edited = ["L1", "DO[1]=ON", "", "L2", "", "L3"]
+    a = [{"n": i + 1, "text": t} for i, t in enumerate(edited)]
+    b = [{"n": i + 1, "text": t} for i, t in enumerate(base)]
+    out = compare.align_program_lines(a, b)
+    assert out["stats"] == {"same": 5, "equiv": 0, "change": 0,
+                            "a_only": 1, "b_only": 0}
+
+
+def test_align_banner_comments_do_not_anchor():
+    a = [{"n": 1, "text": "!*************"}, {"n": 2, "text": "REAL A"}]
+    b = [{"n": 1, "text": "!*************"}, {"n": 2, "text": "DIFFERENT B"}]
+    out = compare.align_program_lines(a, b)
+    assert [r["kind"] for r in out["rows"]] == ["same", "change"]
+
+
+def test_align_identical_with_blanks_stays_all_same():
+    body = [{"n": i + 1, "text": t} for i, t in enumerate(
+        ["!****", "", "DO[1]=ON", "", "WAIT 1", "", "END"])]
+    out = compare.align_program_lines(body, [dict(r) for r in body])
+    assert out["stats"]["same"] == 7
+    assert sum(out["stats"].values()) == 7

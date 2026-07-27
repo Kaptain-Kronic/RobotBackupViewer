@@ -1069,8 +1069,20 @@
         d.rows.forEach(function (r, i) {
           if (r.kind !== "same" && r.kind !== "equiv") pd.idx.push(i);
         });
-        eds[0].setGaps(gapsFor(d.rows, "a"));
-        eds[1].setGaps(gapsFor(d.rows, "b"));
+        /* re-seating gaps moves content; pin the FOCUSED editor's caret line
+           to its on-screen position so the text never jumps mid-keystroke
+           (the mirror lock carries the other side along) */
+        eds.forEach(function (ed, i) {
+          var focused = ed.code === document.activeElement ||
+                        ed.code.contains(document.activeElement);
+          var ln = focused ? ed.caretLine() : null;
+          var before = ln ? ed.lineTop(ln) : 0;
+          ed.setGaps(gapsFor(d.rows, i === 0 ? "a" : "b"));
+          if (ln) {
+            var shift = ed.lineTop(ln) - before;
+            if (shift) ed.el.querySelector(".lsed-scroll").scrollTop += shift;
+          }
+        });
         decorateDiff(eds, d.rows);
         lockScroll(eds);
         syncDiffUi();

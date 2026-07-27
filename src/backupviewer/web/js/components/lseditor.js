@@ -425,6 +425,16 @@
       pushHistory(false);
     }
 
+    /* 1-based line the caret sits on (text space - gaps invisible), or null
+       when the selection is elsewhere. The pane diff pins this line's pixel
+       position across a gap re-seat so the text never jumps under the caret. */
+    function caretLine() {
+      var caret = caretOffsets();
+      if (!caret) return null;
+      var t = lastText === null ? getText() : lastText;
+      return t.slice(0, caret.start).split("\n").length;
+    }
+
     function focusLine(n) {
       var lines = (lastText === null ? getText() : lastText).split("\n");
       var pos = 0;
@@ -445,6 +455,7 @@
       focusLine: focusLine,
       setGaps: setGaps,        /* [{after: 1-based line (0 = top), n: rows}] */
       lineTop: lineTop,        /* 1-based line -> px offset inside the scroller */
+      caretLine: caretLine,    /* 1-based caret line (text space), or null */
     };
   };
 })();

@@ -1334,6 +1334,9 @@ def probe(window):
                 {key:'z',ctrlKey:true,bubbles:true,cancelable:true}));
             out.undoRestored=ed.getText().split('\\n').length===4;
             out.gapSurvivedUndo=!!ed.code.querySelector('.lsed-gap');
+            /* caretLine reports text space - the gaps above it are invisible */
+            ed.focusLine(3);
+            out.caretLine=ed.caretLine();
             ed.setGaps([]);
             out.cleared=!ed.el.querySelector('.lsed-gap');
             host.remove();
@@ -1348,6 +1351,8 @@ def probe(window):
               "(Chromium's atomic island delete would read as a dead key)")
         check("gaps.undo_restores_text", g.get("undoRestored") is True)
         check("gaps.survive_undo_repaint", g.get("gapSurvivedUndo") is True)
+        check("gaps.caret_line_text_space", g.get("caretLine") == 3,
+              f"({g.get('caretLine')!r} — the gap above must not offset it)")
         check("gaps.clear_removes_all", g.get("cleared") is True)
 
         print()
