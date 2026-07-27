@@ -75,7 +75,11 @@
             'width:fit-content;height:fit-content">image unavailable</span>';
         });
       if (ftop) loadImage(pair.top).then(function (uri) { ftop.src = uri; })
-        .catch(function () {});
+        .catch(function () {
+          ftop.style.display = "none";
+          overlay.appendChild(BV.el("span", { class: "dim", style:
+            "position:absolute;top:0.7rem;left:0.8rem" }, "height layer unavailable"));
+        });
 
       /* pan/zoom state: the image stays centered at scale 1; translate happens
          BEFORE scale so the zoom-around-cursor math stays linear */
@@ -240,7 +244,13 @@
           stack.appendChild(top);
           figure.appendChild(stack);
           showImage(ov.base);
-          loadImage(ov.top).then(function (uri) { top.src = uri; }).catch(function () {});
+          loadImage(ov.top).then(function (uri) { top.src = uri; }).catch(function () {
+            /* a missing height half must SAY so — a live slider quietly
+               crossfading to nothing would read as "flat part", a claim */
+            top.style.opacity = "0";
+            slider.disabled = true;
+            readout.textContent = "height unavailable";
+          });
 
           var mix = pst.mix === undefined ? 100 : Number(pst.mix);
           top.style.opacity = String(mix / 100);

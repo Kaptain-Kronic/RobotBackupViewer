@@ -2036,6 +2036,13 @@ class Api:
         on disk."""
         if p.suffix.lower() != ".bmp":
             return None
+        # scope: only files the CV-X index vouches for (cv-x/ tree, header
+        # checked). The decode itself would accept virtually any plain 24-bpp
+        # BMP - a Matrox SavedImages preview, a stray screenshot in a backup -
+        # and serve it as false-color height garbage. The packed-range claim
+        # is proven for the camera's own files, so it applies to exactly those.
+        if p not in s.cvx_image_files():
+            return None
         try:
             data = p.read_bytes()
         except OSError as e:

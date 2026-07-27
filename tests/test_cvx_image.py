@@ -242,6 +242,20 @@ def test_the_intensity_half_renders_too(cvx_backup):
     assert got["mime"] == "image/png" and got["kind"] == cvx_image.INTENSITY
 
 
+def test_a_plain_bmp_outside_the_camera_tree_is_never_reinterpreted(cvx_backup):
+    """The height decode would accept virtually any plain 24-bpp BMP, so
+    provenance is the claim's limit: the SAME bytes outside cv-x/ are served
+    raw. A Matrox preview or a stray screenshot rendered as false-color height
+    would be wrong data - worse than no data."""
+    stray = cvx_backup / "CAM1" / "grabbed.bmp"
+    stray.write_bytes(height_bmp([[1000, 2000], [3000, 4000]]))
+    api = Api()
+    sid = api.open_backup(str(cvx_backup))["data"]["sid"]
+    got = api.get_image("grabbed.bmp", sid)["data"]
+    assert got["mime"] == "image/bmp"
+    assert "kind" not in got
+
+
 def test_a_lone_height_image_still_shows_without_an_overlay(tmp_path):
     d = tmp_path / "CAM1" / "SD1" / "cv-x" / "setting" / "002"
     d.mkdir(parents=True)
