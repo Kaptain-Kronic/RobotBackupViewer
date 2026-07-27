@@ -107,6 +107,34 @@ one click backs up the robot + all its cameras together.
   was fiddlier than the plant wants. Mirroring the whole window is what
   landed: one click, no placing.
 
+- ✅ **A CV-X backup opens in the simulator** — the pull lands under `SD1/`
+  with the simulator's `workspace.xml` beside it, so the camera folder in a
+  backup *is* a workspace (format read off 52 real files, reproduced
+  byte-for-byte; see `CVX_FTP_LAYOUT.md`).
+- ✅ **Load cameras into the simulator** — the simulator reads ONE flat base
+  path, so ⚙ → preferences gained a `simulator folder` row (copy-path button +
+  a camera picker) that copies chosen cameras' latest workspaces side by side
+  into it. On demand, not automatic: ~100 MB each. Naming follows the shop's
+  station convention and refuses to let two stations claim one folder.
+- ✅ **CV-X self-naming** — a camera discovered as a bare IP renames itself from
+  the names of its inspection programs (`parsers/cvx_inspect.py`), through the
+  same `library.teach_camera_name` Matrox uses. 85% of real cameras yield a
+  station tag; the rest yield the part name the tech typed.
+- ✅ **The simulator folder will not eat a workspace we did not write** — the
+  export keeps a ledger (`.backupviewer-exports.json`, at the base path, never
+  inside a workspace) of the folders it created. Replacing one of those is
+  routine; anything else raises `ForeignWorkspace`, comes back from `sim_export`
+  in `blocked` rather than as an error, and is only destroyed after an explicit
+  "replace them". A missing or corrupt ledger fails toward asking.
+- 📋 **Export OLD pre-`SD1/` backups as workspaces** — they have no
+  `workspace.xml`, so they can't be offered in the picker. Must COPY into the
+  flat folder (restructuring a taken backup is off the table); the export
+  primitive already exists, it needs the wrapper that synthesises the missing
+  manifest from the backup's recorded host.
+- 📋 **Pull `/SD1/cv-x/workspace/`** — the camera stores simulator workspaces
+  on its own SD card and our backup currently misses them. Cheap: one more
+  target in `keyence_enumerate`, gated like `box/` since size is unknown.
+
 - 🔨 **Discovery** — agreed direction: probe the DesignAssistant web portal
   (:80/:443) and EtherNet/IP ListIdentity (UDP 44818, Matrox vendor ID) for
   the newer Iris GTX — the old FTP/SMB port gates only find Keyence CV-X and

@@ -328,6 +328,50 @@
           }).catch(function (e) { BV.toast(e.message); });
         });
 
+        /* ---- the CV-X simulator's flat folder ----
+           The simulator takes ONE base path and lists the workspace folders
+           directly inside it - it will not walk the library's plant/line/dated
+           tree. So this is an explicit export: pick cameras, and their latest
+           workspaces land side by side in here. The path is a copy button
+           because its whole job is to be pasted into the simulator. */
+        section(into, "cv-x simulator");
+        var simRow = row(into, "simulator folder");
+        var simWrap = BV.el("div", { class: "set-path" });
+        var simVal = BV.el("span", { class: "set-path-val dim" }, "…");
+        var simCopy = BV.el("button", { class: "btn", title: "copy this path for the simulator" }, "copy");
+        var simChange = BV.el("button", { class: "btn" }, "change…");
+        var simLoad = BV.el("button", { class: "btn" }, "load cameras…");
+        simWrap.appendChild(simVal);
+        simWrap.appendChild(simCopy);
+        simWrap.appendChild(simChange);
+        simWrap.appendChild(simLoad);
+        simRow.appendChild(simWrap);
+
+        var simPath = "";
+        function showSim(p) {
+          simPath = p || "";
+          simVal.textContent = simPath || "(default)";
+          simVal.title = simPath;
+        }
+        BV.api.call("get_sim_root").then(function (r) { showSim(r && r.path); }).catch(function () {});
+
+        simCopy.addEventListener("click", function () {
+          if (simPath) BV.copyText(simPath, "path copied — paste it as the simulator's base path");
+        });
+        simChange.addEventListener("click", function () {
+          BV.api.call("pick_sim_root").then(function (p) {
+            if (!p) return null;
+            return BV.api.call("set_sim_root", p).then(function (r) {
+              showSim(r && r.path);
+              BV.toast("simulator folder set");
+            });
+          }).catch(function (e) { BV.toast(e.message); });
+        });
+        /* the picker takes over the one modal root, so hand it a way back here */
+        simLoad.addEventListener("click", function () {
+          BV.simExport(function () { BV.uiPrefs.modal("preferences"); });
+        });
+
         section(into, "updates");
         /* the boot-time github ping runs only in the packaged exe (source runs
            stay offline); this switch turns even that off. The about box's

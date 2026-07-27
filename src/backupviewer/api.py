@@ -28,6 +28,7 @@ from . import cvx_remote
 from . import discover
 from . import ftpbackup
 from . import healthscan
+from . import keyence_workspace
 from . import keyencebackup
 from . import library
 from . import modeldb
@@ -86,6 +87,25 @@ def _endpoint(fn):
             log.exception("api %s failed", fn.__name__)
             return {"ok": False, "error": {"code": "INTERNAL", "message": f"{type(e).__name__}: {e}"}}
     return wrapper
+
+
+def _tree_size(root) -> tuple:
+    r"""(file count, total bytes) under `root`, walked through the \\?\ prefix so a
+    deep camera tree is measured rather than silently reported as empty (the same
+    MAX_PATH trap that once emptied the photos index). Best effort: an unreadable
+    file is skipped, never raised - this only feeds a size label."""
+    files = total = 0
+    try:
+        for dirpath, _dirs, names in os.walk(ftpbackup.long_path(root)):
+            for n in names:
+                try:
+                    total += os.path.getsize(os.path.join(dirpath, n))
+                    files += 1
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return files, total
 
 
 def _require_ip(spec: dict) -> str:
@@ -2357,6 +2377,113 @@ class Api:
             return None
         return result[0] if isinstance(result, (list, tuple)) else result
 
+    # -- the CV-X simulator's flat folder ------------------------------------
+    # The simulator takes ONE base path and lists the workspace folders directly
+    # inside it - it does not walk our plant/line/dated tree. So loading cameras
+    # into it is an explicit export: pick cameras, their latest workspaces are
+    # copied side by side, overwriting the previous copy of the same camera.
+
+    @_endpoint
+    def get_sim_root(self):
+        """The flat folder the simulator's base path should point at."""
+        return {"path": settings.sim_root()}
+
+    @_endpoint
+    def set_sim_root(self, path: str):
+        p = (path or "").strip()
+        if not p:
+            raise ApiError("BAD_PATH", "a folder path is required")
+        settings.set_value("sim_root", p)
+        return {"path": p}
+
+    @_endpoint
+    def pick_sim_root(self):
+        import webview
+
+        start = settings.sim_root()
+        result = self._window.create_file_dialog(
+            webview.FOLDER_DIALOG, directory=start if Path(start or ".").exists() else ""
+        )
+        if not result:
+            return None
+        return result[0] if isinstance(result, (list, tuple)) else result
+
+    def _sim_candidates(self) -> list:
+        """Every Keyence camera in the library whose LATEST backup holds simulator
+        workspaces, with the folder name each would take in the flat folder.
+
+        Reads the folders, not the library's claims: a camera shows up only if a
+        real workspace is on disk. Backups taken before the workspace layout have
+        no workspace.xml and are honestly absent rather than silently broken."""
+        items = []
+        for e in library.list_robots().get("robots", []):
+            if e.get("device_type") != "camera-keyence":
+                continue
+            latest = e.get("latest_path") or ""
+            if not latest or not Path(latest).is_dir():
+                continue
+            for ws in keyence_workspace.workspaces_in(Path(latest)):
+                items.append({
+                    "id": e.get("id", ""), "station": e.get("robot", ""),
+                    "line": e.get("line", ""), "plant": e.get("plant", ""),
+                    "label": ws.name if ws != Path(latest) else "",
+                    "src": str(ws), "taken": e.get("last_backup", ""),
+                })
+        planned = keyence_workspace.plan_exports(items)
+
+        root = Path(settings.sim_root())
+        for it in planned:
+            it["key"] = it["src"]
+            it["files"], it["bytes"] = _tree_size(it["src"])
+            it["ip"] = keyence_workspace.read_workspace_xml(
+                Path(it["src"]) / keyence_workspace.WORKSPACE_XML).get("ControllerIpAddress", "")
+            it["already"] = (root / it["name"]).is_dir()
+            # "already there" is two very different things: our own previous
+            # export (replace freely) or a folder somebody made by hand, which
+            # exporting would DESTROY. The picker must not blur them.
+            it["foreign"] = keyence_workspace.would_replace_foreign(root, it["name"])
+        return planned
+
+    @_endpoint
+    def sim_candidates(self):
+        return {"root": settings.sim_root(), "cameras": self._sim_candidates()}
+
+    @_endpoint
+    def sim_export(self, keys, replace_foreign: bool = False):
+        """Copy the chosen cameras' latest workspaces into the flat simulator
+        folder, replacing any previous copy of the same camera. Never touches a
+        backup - the source is read-only and the destination is swapped in whole,
+        so a failed copy leaves the old workspace intact.
+
+        A camera whose folder name is already taken by something this export did
+        NOT create is not copied; it comes back in `blocked` so the caller can
+        show exactly what would be destroyed and ask. Only a deliberate
+        replace_foreign=True goes through with it."""
+        wanted = {str(k) for k in (keys or [])}
+        if not wanted:
+            raise ApiError("NOTHING_PICKED", "pick at least one camera")
+        root = Path(settings.sim_root())
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            raise ApiError("BAD_PATH", f"cannot use {root}: {e}") from e
+
+        done, failed, blocked = [], [], []
+        for it in self._sim_candidates():
+            if it["key"] not in wanted:
+                continue
+            row = {"key": it["key"], "name": it["name"], "station": it["station"]}
+            try:
+                dest = keyence_workspace.export_workspace(
+                    it["src"], root, it["name"], replace_foreign=bool(replace_foreign))
+            except keyence_workspace.ForeignWorkspace:
+                blocked.append({**row, "path": str(root / it["name"])})
+                continue
+            (done if dest else failed).append({**row, "path": str(dest or "")})
+        if not done and failed and not blocked:
+            raise ApiError("EXPORT_FAILED", f"nothing copied ({len(failed)} failed)")
+        return {"root": str(root), "exported": done, "failed": failed, "blocked": blocked}
+
     @_endpoint
     def lib_rescan(self):
         """Rebuild the library from the folder tree (picks up copied-in folders)
@@ -2886,16 +3013,21 @@ class Api:
                 job.library_match(), job.library_backup(),
                 latest_path=job.snapshot().get("latest_path", ""),
             )
-            # A Matrox camera self-names from the backup it just pulled (newest
-            # saved-image sidecar) when its entry only carries a placeholder -
-            # the camera twin of a robot naming itself from SUMMARY.DG - and
-            # then auto-linking gets a fresh chance to seat it under its robot.
-            # The teach renames the camera's FOLDER along with the entry (files
-            # are law), so the name still stands after the next library rescan.
+            # A camera self-names from the backup it just pulled when its entry
+            # only carries a placeholder - the camera twin of a robot naming
+            # itself from SUMMARY.DG - and then auto-linking gets a fresh chance
+            # to seat it under its robot. The teach renames the camera's FOLDER
+            # along with the entry (files are law), so the name still stands
+            # after the next library rescan. Each camera kind reads its own
+            # evidence: Matrox the newest saved-image sidecar, Keyence the names
+            # of its inspection programs (a CV-X exposes no name over FTP).
             # Best-effort: identity work must never fail a finished backup.
-            if spec.get("device_type") == "camera-mtx":
+            namer = {"camera-mtx": mtxbackup.name_from_backup,
+                     "camera-keyence": keyencebackup.name_from_backup}.get(
+                         spec.get("device_type", ""))
+            if namer:
                 try:
-                    ident = mtxbackup.name_from_backup(job.snapshot().get("dated_path", ""))
+                    ident = namer(job.snapshot().get("dated_path", ""))
                     if ident.get("name"):
                         library.teach_camera_name(
                             entry["id"], ident["name"], ident.get("model", ""))

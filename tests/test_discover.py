@@ -35,6 +35,22 @@ def test_looks_like_backup_camera_markers(tmp_path):
     (cvx / "cv-x" / "setting").mkdir(parents=True)
     assert session.looks_like_backup(cvx) is True
 
+    # a CV-X simulator workspace: SD1/ AND workspace.xml together. This is the
+    # shape the simulator saves and the shape our own CV-X pull now lands in, so
+    # a workspace dropped in by hand joins the library like any other backup.
+    ws = tmp_path / "ws"
+    (ws / "SD1" / "cv-x" / "setting").mkdir(parents=True)
+    # SD1/ alone is not enough - cv-x/ is nested here, and the test is direct
+    assert session.looks_like_backup(ws) is False
+    (ws / "workspace.xml").write_text("<Workspace />", encoding="utf-8")
+    assert session.looks_like_backup(ws) is True
+
+    # ...but neither half alone is a backup: workspace.xml is an ordinary name
+    lone = tmp_path / "lone"
+    lone.mkdir()
+    (lone / "workspace.xml").write_text("<Workspace />", encoding="utf-8")
+    assert session.looks_like_backup(lone) is False
+
     # a Matrox export needs da/ AND Documents/ together...
     mtx = tmp_path / "mtx"
     (mtx / "da").mkdir(parents=True)
