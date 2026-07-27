@@ -9,17 +9,30 @@
   original is the pristine backup copy, which is exactly what the export
   re-applies your edits to. A clean program says "no changes — matches the
   backup" instead of showing an empty table, and unchanged programs in a set
-  are listed rather than silently dropped.
-- **Diff the split panes, live.** With two programs open side by side, "diff
-  panes" docks an aligned diff under the editors that recomputes as you type.
-  It compares on *identity*: `R[21]` vs `R[21:SERVO GUN WORK]`, or the
-  pendant's IO-status form `DI[10:OFF:Comment]` vs `DI[10:Comment]`, are the
-  same instruction saved under different display state — those rows read as
-  "display-only", never as changes, because a diff that cries wolf on every IO
-  line is worse than no diff. When the two files were saved under different
-  IO-status display, the strip says so. The strip scrolls on its own rather
-  than mirroring two editors scrolled apart; clicking a row lands both editors
-  on that instruction. The toggle only exists while the split does.
+  are listed rather than silently dropped — grouped per robot and folded
+  behind a count, so the changes are what fills the screen.
+- **The workspace splits like an editor should.** Up to four panes, split by
+  dropping a program on any edge of a pane — left/right side by side,
+  top/bottom stacked — with draggable seams both ways; the center of a pane
+  still means "into its tabs", an emptied pane folds away on its own, and
+  ctrl+W / ctrl+shift+T close and reopen tabs. The details panel's height is
+  yours to drag too, and a long program scrolls inside its editor — never the
+  whole window.
+- **Diff two programs inside their live editors.** "diff…" arms picking: the
+  next two clicks (open tabs or working-set rows) choose the pair, your
+  layout parks while a clean side-by-side pair presents itself, and closing
+  the diff puts everything back exactly. Differences are marked behind the
+  text as you type; where one side has lines the other lacks, the other side
+  shows real blank rows, so both editors sit aligned row for row and scroll
+  as one. It compares on *identity*: `R[21]` vs `R[21:SERVO GUN WORK]`, or
+  the pendant's IO-status form `DI[10:OFF:Comment]` vs `DI[10:Comment]`, are
+  the same instruction saved under different display state — those rows read
+  as "display-only", never as changes, because a diff that cries wolf on
+  every IO line is worse than no diff. Blank lines and `!****` banners never
+  anchor the alignment (they staggered unrelated regions into huge gaps),
+  and the line under your caret holds still when the diff re-settles. While
+  a diff is up the layout is locked — opening more panes mid-comparison
+  scrambled the restore, so now it says "close the diff first".
 - **A rename alone is an exportable change.** Renaming a program without
   touching its body used to leave the export button disabled — the rename
   exported fine, but only if something else was edited too. The button, the
