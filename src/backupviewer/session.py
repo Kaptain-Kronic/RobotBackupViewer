@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Callable
 
 from .ftpbackup import long_path
-from .parsers import TAB_REQUIREMENTS
+from .parsers import TAB_REQUIREMENTS, cvx_image
 from .parsers.common import read_text
 
 log = logging.getLogger(__name__)
@@ -298,7 +298,33 @@ class BackupSession:
         return out
 
     def has_photos(self) -> bool:
-        return bool(self.saved_image_files())
+        return bool(self.saved_image_files()) or bool(self.cvx_image_files())
+
+    # -- keyence camera -------------------------------------------------------
+
+    def cvx_image_files(self) -> list[Path]:
+        """Every readable CV-X image in the camera's `cv-x/setting/` tree: the
+        taught masters, and captured triggers when a tech had image logging on.
+
+        The header is checked, not just the extension - a name is not evidence
+        that a file is an image, and this is what decides whether the photos tab
+        appears. Cheap: a real CV-X carries a handful of these, 64 bytes each."""
+        def build():
+            out = []
+            for key, p in self.files.items():
+                parts = key.split("/")
+                if "CV-X" not in parts[:-1] or not key.endswith(".BMP"):
+                    continue
+                try:
+                    with open(p, "rb") as fh:      # indexed paths are already \\?\
+                        head = fh.read(64)
+                except OSError:
+                    continue
+                if cvx_image.header_kind(head):
+                    out.append(p)
+            return out
+
+        return self.cached("cvx_images", build)
 
     def _is_keyence(self) -> bool:
         """A Keyence CV-X backup: the camera's `cv-x/` tree (setting/, box/)."""

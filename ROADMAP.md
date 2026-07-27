@@ -144,6 +144,20 @@ one click backs up the robot + all its cameras together.
   on its own SD card and our backup currently misses them. Cheap: one more
   target in `keyence_enumerate`, gated like `box/` since size is unknown.
 
+- 🔨 **CV-X photos** — the photos tab now covers Keyence as well as Matrox.
+  A CV-X stores every scene twice, a grayscale photo and a height map of the
+  same moment, so the two pair into one record and the hero crossfades between
+  them on a slider. The height file is *not* a photo: 24-bpp BGR packing a
+  15-bit range value (`H = (G<<7)|(R<<4)|B`, all-zero = no data), read off real
+  files and pinned by tests — see `parsers/cvx_image.py`, which also records
+  what could NOT be proved (a true height of 0 is indistinguishable from no
+  data) and the dead end (the `.tbd` blobs carry no images: no signature, no
+  raster stride, `HND_L` at 7.32 bits/byte entropy). Rendered to PNG through
+  the phone view's stdlib encoder, decimated during the decode so a 12 MB
+  master costs ~0.4 s and the stack stays locked. What there is to show is
+  mostly taught masters; timestamped triggers only exist when a tech turned
+  image logging on. Landing on the `cvx-photos` branch.
+
 - 🔨 **Discovery** — agreed direction: probe the DesignAssistant web portal
   (:80/:443) and EtherNet/IP ListIdentity (UDP 44818, Matrox vendor ID) for
   the newer Iris GTX — the old FTP/SMB port gates only find Keyence CV-X and
