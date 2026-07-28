@@ -141,9 +141,13 @@ window.BV = {};
     m.appendChild(body);
     root.appendChild(m);
     root.classList.remove("hidden");
+    /* opts.seeThrough drops the scrim and its blur for THIS dialog: a panel
+       whose whole job is tuning the background cannot also be hiding it. */
+    root.classList.toggle("see-through", !!(opts && opts.seeThrough));
     function close(force) {
       if (force !== true && opts && opts.beforeClose && !opts.beforeClose()) return;
       root.classList.add("hidden");
+      root.classList.remove("see-through");
       root.innerHTML = "";
       document.removeEventListener("keydown", onKey, true);
       root.removeEventListener("mousedown", onBackdrop);

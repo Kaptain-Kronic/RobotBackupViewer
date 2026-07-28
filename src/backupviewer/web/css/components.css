@@ -270,6 +270,18 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
   display: flex; align-items: flex-start; justify-content: center;
   padding-top: 10vh;
 }
+/* A dialog that is TUNING the background cannot also be hiding it. Both the
+   scrim fill and the blur above are dropped here — the 60% fill is actually
+   the bigger offender, since a background effect at a sane intensity is
+   subtle by design and 60% of --bg over it leaves almost nothing.
+   Scoped rather than removed outright: that blur is the only thing the frost
+   slider can reach (a backdrop-filter makes an element the backdrop root for
+   its descendants, so .modal's own filter can never see past this scrim), and
+   deleting it globally would quietly kill frost for every dialog in the app. */
+#modal-root.see-through {
+  background: transparent;
+  backdrop-filter: none;
+}
 .modal {
   background: var(--overlay);          /* floats over content — see base.css */
   backdrop-filter: var(--glass-blur);

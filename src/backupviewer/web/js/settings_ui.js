@@ -177,6 +177,7 @@
     r.appendChild(holder);
   }
   function pct(v) { return v + "%"; }
+  function deg(v) { return v + "°"; }
 
   BV.uiPrefs = {
     FONT_OPTIONS: FONT_OPTIONS,
@@ -283,9 +284,53 @@
         });
         sliderRow(into, "intensity", 10, 100, 5, Math.round(BV.bgfx.intensity * 100), pct,
           function (v) { BV.bgfx.tune({ intensity: v / 100 }, true); });
-        sliderRow(into, "size", 50, 200, 10, Math.round(BV.bgfx.size * 100), pct,
+        sliderRow(into, "size", 50, 400, 10, Math.round(BV.bgfx.size * 100), pct,
           function (v) { BV.bgfx.tune({ size: v / 100 }, true); });
+        sliderRow(into, "speed", 10, 300, 10, Math.round(BV.bgfx.speed * 100), pct,
+          function (v) { BV.bgfx.tune({ speed: v / 100 }, true); });
+        /* density and variance fix counts and per-element properties when the
+           effect is seeded, so they cannot be applied mid-flight — they ask
+           for a re-seed, and sliderRow already commits on release rather than
+           per drag pixel, which is the whole reason that is not a slideshow */
+        sliderRow(into, "density", 25, BV.bgfx.denseMax(), 5,
+          Math.round(BV.bgfx.density * 100), pct,
+          function (v) { BV.bgfx.tune({ density: v / 100, reseed: true }, true); });
+        sliderRow(into, "variance", 0, 200, 5, Math.round(BV.bgfx.spread * 100), pct,
+          function (v) { BV.bgfx.tune({ spread: v / 100, reseed: true }, true); });
+        sliderRow(into, "hue drift", 0, 180, 5, Math.round(BV.bgfx.hue), deg,
+          function (v) { BV.bgfx.tune({ hue: v }, true); });
+
+        /* the active effect's OWN dials. Reynolds' three weights mean nothing
+           to a reaction-diffusion grid and its feed rate means nothing to a
+           flock, so these belong to the effect that owns them rather than to
+           a global panel that would have to pretend otherwise. */
+        var ownHost = BV.el("div", { class: "fx-own" });
+        into.appendChild(ownHost);
+        buildFxParams(ownHost);
+        fxBtn.addEventListener("click", function () {
+          setTimeout(function () { buildFxParams(ownHost); }, 0);
+        });
         into.appendChild(BV.el("div", { class: "acc-credit" }, BV.esc(FX_CREDIT)));
+      }
+
+      function buildFxParams(host) {
+        host.innerHTML = "";
+        var spec = BV.bgfx.paramSpec();
+        if (!spec.length) return;
+        section(host, BV.bgfx.activeName() + " settings");
+        var cur = BV.bgfx.params();
+        spec.forEach(function (p) {
+          var unit = p.unit === "%" ? pct : function (v) { return v + (p.unit || ""); };
+          sliderRow(host, p.name, p.lo, p.hi, p.step,
+            cur[p.k] != null ? cur[p.k] : p.def, unit,
+            function (v) { BV.bgfx.setParam(p.k, v, true); });
+        });
+        var rst = BV.el("button", { class: "btn" }, "reset");
+        rst.addEventListener("click", function () {
+          spec.forEach(function (p) { BV.bgfx.setParam(p.k, p.def, true); });
+          buildFxParams(host);
+        });
+        row(host, "").appendChild(rst);
       }
 
       /* ---- preferences ---- */
@@ -408,6 +453,9 @@
       });
 
       var modal = BV.modal("settings", body, {
+        /* the background controls live in here, and you cannot tune an effect
+           you cannot see: no scrim, no backdrop blur, for this dialog only */
+        seeThrough: true,
         /* the picker panel lives on <html> so it can't be clipped, which means
            it outlives this dialog unless we take it down with us */
         onClose: function () { if (themeRow) themeRow.closePanel(); },
