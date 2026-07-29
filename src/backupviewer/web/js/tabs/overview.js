@@ -401,7 +401,7 @@
       card._layout = layout;
 
       /* identity + software boxes are gone: the stapled hero already carries
-         that info (Wilson: serial no / controller id are noise) */
+         that info (field feedback: serial no / controller id are noise) */
 
       /* master counts */
       if (ov.mastering && ov.mastering.length) {
