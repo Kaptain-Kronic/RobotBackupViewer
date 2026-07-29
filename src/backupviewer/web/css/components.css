@@ -1433,11 +1433,14 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
   background: var(--glass);           /* frost-aware; solid --bg at frost 0 */
   backdrop-filter: var(--glass-blur);
   margin: -0.75rem -1.25rem 1.1rem; padding: 0.95rem 1.45rem 0.6rem;
-  display: flex; align-items: center; justify-content: space-between;
+  /* title + filter anchor LEFT; the action clusters push right via margin
+     (space-between made the filter's position depend on which clusters the
+     lens shows — cam mode hides .home-lib-selacts and the filter drifted) */
+  display: flex; align-items: center;
   gap: 0.5rem 1.2rem; flex-wrap: wrap;
 }
 .home-lib-head h2 { font-size: 1.5rem; color: var(--text); text-transform: lowercase; margin: 0; letter-spacing: -0.01em; }
-.home-lib-selacts { display: flex; align-items: center; gap: 0.35rem; }
+.home-lib-selacts { display: flex; align-items: center; gap: 0.35rem; margin-left: auto; }
 .home-lib-selacts .btn { padding: 0.22rem 0.6rem; font-size: 0.8rem; }
 .home-lib-selacts .btn:disabled { opacity: 0.45; cursor: default; }
 .lib-sel-count { font-size: 0.78rem; min-width: 5.2em; text-align: right; }
@@ -1453,6 +1456,9 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
    live tiles — hide them, keep filter / refresh / add reachable */
 .home-library.cam-mode .home-lib-selacts,
 .home-library.cam-mode .lib-sort { display: none; }
+/* with the selection row display:none its auto-margin is gone too - the
+   actions cluster takes over the push so the filter stays put across lenses */
+.home-library.cam-mode .home-lib-actions { margin-left: auto; }
 
 /* multi-cam grid: live camera tiles inside the same plant/line folders.
    display rides the .open rule: a flat display:grid here outranked the shared

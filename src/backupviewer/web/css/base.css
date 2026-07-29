@@ -229,7 +229,9 @@ body { overflow: hidden; }
 .tab-btn:disabled { color: var(--sub-alt); cursor: default; opacity: 0.55; }
 .tab-btn .tab-num { opacity: 0.5; font-size: 0.75em; margin-right: 0.3em; }
 
-#topbar-right { display: flex; gap: 0.3em; flex: none; }
+/* margin-left:auto, not a grown sibling, pins this to the right corner: the
+   sessionbar spacer is display:none until a backup is open */
+#topbar-right { display: flex; gap: 0.3em; flex: none; margin-left: auto; }
 
 .icon-btn {
   appearance: none;
