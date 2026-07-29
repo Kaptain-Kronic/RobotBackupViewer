@@ -10,6 +10,21 @@ the ONE dialog's two tabs and their row sets, the theme picker panel
 and not the dialog), that the two scale sliders commit on RELEASE, and that
 tuning and effect choices land in settings.json.
 
+NOT covered yet (noted, not built - see docs/proposals/ if this gets picked up):
+  * the six `simulations` effects get the generic build/no-throw/layer checks
+    for free (the fx.* loop reads EFFECTS live), but nothing asserts their
+    emergent behaviour - a boids flock that never flocks still passes.
+  * the per-effect param racks: nothing switches to an effect that HAS a
+    `params` rack and asserts the .fx-own section appears, that its rows match
+    that effect's spec, that a slider writes bgfx_params.<id>.<k> to settings,
+    that `live:false` params re-seed while `live:true` ones apply in flight,
+    or that switching effects swaps the rack instead of stacking it.
+  * real `dt`: the frame-count->wall-clock fix is what stopped 144Hz running
+    everything 2.4x fast, and it is untestable here - this window has no
+    requestAnimationFrame at all, so no frames ever advance. Covering it needs
+    a step() the effects can be driven through with an injected dt, which is a
+    bgfx.js change, not a probe change.
+
 Fully synthetic and identifier-clean: empty library in a temp folder,
 APPDATA redirected there BEFORE importing the app.
 Run: python tests/ui_bgfx_probe.py
@@ -66,7 +81,10 @@ def probe(window):
         time.sleep(4)  # boot
 
         check("boot.bgfx_present", js(window, "!!BV.bgfx"))
-        check("boot.effect_count", js(window, "BV.bgfx.EFFECTS.length") == 13,
+        # 19 = off + 5 house + 7 odysseus + 6 simulations. A literal on purpose:
+        # this is the "did the table quietly lose an effect" anchor, so it has
+        # to be updated deliberately when one is added or retired.
+        check("boot.effect_count", js(window, "BV.bgfx.EFFECTS.length") == 19,
               f"(got {js(window, 'BV.bgfx.EFFECTS.length')})")
         check("boot.defaults_off", js(window, "BV.bgfx.activeId") == "none")
         # paint-order regression guard: the layers sit at z-index -1, which is
@@ -130,10 +148,14 @@ def probe(window):
         check("settings.tabs", disp.get("tabs") == ["display", "preferences"], f"({disp.get('tabs')})")
         check("settings.display_sections",
               disp.get("heads") == ["theme", "interface", "background"], f"({disp.get('heads')})")
-        # opacity + frost belong with the interface knobs, not the effect sliders
+        # opacity + frost belong with the interface knobs, not the effect sliders.
+        # The background block ends with the six GLOBAL dials; an effect's own
+        # dials render into the separate .fx-own host under their own heading,
+        # and `rain` (set above) has no rack - so this list is the globals only.
         check("settings.display_rows",
               disp.get("rows") == ["theme", "font", "borders", "text size", "toolbar size",
-                                   "panel opacity", "frost", "effect", "intensity", "size"],
+                                   "panel opacity", "frost", "effect", "intensity", "size",
+                                   "speed", "density", "variance", "hue drift"],
               f"({disp.get('rows')})")
         # the theme row: ＋ FIRST, then the picker, tight and right-aligned with
         # the control column above it
@@ -159,7 +181,7 @@ def probe(window):
         check("settings.credit_line",
               js(window, "[...document.querySelectorAll('.modal .acc-credit')].some(function(c){return c.textContent.indexOf('odysseus') >= 0;})"))
 
-        # find a slider by its ROW LABEL, not its index — the display tab has six
+        # find a slider by its ROW LABEL, not its index — the display tab has ten
         # and a reordering must not silently retarget these checks
         def slider(label, value, event="input"):
             js(window, f"""(function(){{
@@ -170,8 +192,10 @@ def probe(window):
                 i.dispatchEvent(new Event('{event}', {{bubbles: true}}));
             }})()""")
 
+        # 4 interface (text size, toolbar size, panel opacity, frost) + the 6
+        # global background dials. `rain` contributes none of its own.
         nsliders = js(window, "document.querySelectorAll('.modal.settings-win input[type=range]').length")
-        check("settings.display_sliders", nsliders == 6, f"(got {nsliders})")
+        check("settings.display_sliders", nsliders == 10, f"(got {nsliders})")
 
         # the intensity slider drives the live value and persists (debounced)
         slider("intensity", 40)
@@ -222,10 +246,13 @@ def probe(window):
               js(window, "BV.bgfx.activeId") == "petals",
               f"(got {js(window, 'BV.bgfx.activeId')})")
 
-        # the effect dropdown lists every effect incl. off
+        # the effect dropdown lists every effect incl. off. Compared against the
+        # live table rather than a literal: "the menu shows all of them" is the
+        # actual invariant, and boot.effect_count above already pins the count.
         js(window, "document.querySelector('.modal .btn.fx-pick').click()")
         nitems = poll(window, "document.querySelectorAll('.ctx-menu .ctx-item').length")
-        check("theme.fx_menu_items", nitems == 13, f"(got {nitems})")
+        nfx = js(window, "BV.bgfx.EFFECTS.length")
+        check("theme.fx_menu_items", nitems == nfx, f"(got {nitems}, of {nfx})")
         # Esc dismisses the MENU and leaves the dialog standing. It used to take
         # the dialog with it: BV.menu's Esc was a document-capture listener and
         # the dialog's, registered first, won.
