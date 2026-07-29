@@ -58,7 +58,8 @@ html.frosted .lib-robot,
 html.frosted .cam-tile,
 html.frosted .v3-row,
 html.frosted .stab,
-html.frosted #jobstrip { backdrop-filter: var(--glass-blur); }
+html.frosted #chrome-top,
+html.frosted #chrome-bottom { backdrop-filter: var(--glass-blur); }
 
 .card h3 {
   margin: 0 0 0.6rem;
@@ -88,13 +89,19 @@ html.frosted #jobstrip { backdrop-filter: var(--glass-blur); }
    scrolling view, spans edge to edge, covers content scrolling beneath */
 .hero.stick {
   position: sticky;
-  top: -0.8rem;            /* cancel #view's top padding */
+  /* sticky offsets resolve against the scrollport INSET BY #view's padding,
+     and that padding already contains the floating slab's height - adding
+     var(--chrome-top) here counts the slab twice (the "invisible block"
+     bug). -0.8rem = cancel the 0.75rem breathing room, nothing more. */
+  top: -0.8rem;
   z-index: 5;
   background: var(--glass);           /* frost-aware; solid --bg at frost 0 */
   backdrop-filter: var(--glass-blur);
   border-left: 3px solid var(--accent);
   margin: -0.75rem -1.25rem 0.35rem;
   padding: 1.05rem 1.45rem 0.7rem;
+  /* the fused panel's one bottom line (same as .home-lib-head) */
+  box-shadow: 0 1px 0 var(--edge-soft, var(--edge));
 }
 .hero .robot-name { font-size: 1.7rem; font-weight: 700; color: var(--text); letter-spacing: -0.02em; }
 .hero .robot-model { font-size: 1.05rem; color: var(--accent); }
@@ -924,7 +931,7 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .ov-side {
   display: flex; flex-direction: column; gap: 0.9rem; min-width: 0;
   position: sticky;
-  top: 0;
+  top: 0;   /* padding-inset: 0 already sits below the floating slab */
   align-self: stretch;
   max-height: calc(var(--view-h, 60rem) - 1.4rem);
   overflow-y: auto; min-height: 0;
@@ -1053,7 +1060,8 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 /* ---- compare ---- */
 .cmp-head {
   display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem 1.4rem;
-  /* stapled like the overview hero: always know which robot is which */
+  /* stapled like the overview hero: always know which robot is which
+     (top offset is padding-inset - see .hero.stick) */
   position: sticky;
   top: -0.8rem;
   z-index: 5;
@@ -1061,6 +1069,7 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
   border-left: 3px solid var(--accent);
   margin: -0.75rem -1.25rem 0.35rem;
   padding: 1.05rem 1.45rem 0.7rem;
+  box-shadow: 0 1px 0 var(--edge-soft, var(--edge));
 }
 .cmp-side { display: flex; flex-direction: column; gap: 0.1rem; }
 /* changed-program rows: one plain statement instead of two date cells */
@@ -1429,9 +1438,12 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .home-lib-loading { margin: 0.4rem 0 0.7rem; max-width: 30rem; }
 
 .home-lib-head {
+  /* top offset is padding-inset - see .hero.stick */
   position: sticky; top: -0.8rem; z-index: 5;
   background: var(--glass);           /* frost-aware; solid --bg at frost 0 */
   backdrop-filter: var(--glass-blur);
+  /* the one permanent hairline: rows are always beneath this bar */
+  box-shadow: 0 1px 0 var(--edge-soft, var(--edge));
   margin: -0.75rem -1.25rem 1.1rem; padding: 0.95rem 1.45rem 0.6rem;
   /* title + filter anchor LEFT; the action clusters push right via margin
      (space-between made the filter's position depend on which clusters the
@@ -1439,7 +1451,6 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
   display: flex; align-items: center;
   gap: 0.5rem 1.2rem; flex-wrap: wrap;
 }
-.home-lib-head h2 { font-size: 1.5rem; color: var(--text); text-transform: lowercase; margin: 0; letter-spacing: -0.01em; }
 .home-lib-selacts { display: flex; align-items: center; gap: 0.35rem; margin-left: auto; }
 .home-lib-selacts .btn { padding: 0.22rem 0.6rem; font-size: 0.8rem; }
 .home-lib-selacts .btn:disabled { opacity: 0.45; cursor: default; }

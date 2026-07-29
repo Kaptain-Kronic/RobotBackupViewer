@@ -8,6 +8,9 @@
 </head>
 <body>
 <div id="app">
+  <!-- the top chrome is ONE frosted slab floating over #view (scroll-under):
+       #view pads itself by the slab's measured height (router.js) -->
+  <div id="chrome-top">
   <header id="topbar">
     <!-- the app's navigation. A solo pop-out shows the wordmark instead (CSS,
          keyed on body.solo): it has nowhere to navigate TO, and the missing
@@ -60,12 +63,16 @@
   </header>
   <nav id="tabbar" aria-label="tabs"></nav>
   <div id="toolbar" class="hidden"></div>
+  </div>
   <main id="view" tabindex="-1"></main>
+  <!-- bottom slab: jobstrip + statusbar, same floating frost -->
+  <div id="chrome-bottom">
   <div id="jobstrip" class="hidden"></div>
   <footer id="statusbar">
     <span id="status-left"></span>
     <span id="status-right"></span>
   </footer>
+  </div>
 </div>
 <div id="modal-root" class="hidden"></div>
 

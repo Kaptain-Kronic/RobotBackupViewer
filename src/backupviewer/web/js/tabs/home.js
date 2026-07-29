@@ -239,7 +239,8 @@
      refreshes repaint only the body, so button state must self-maintain. */
   function buildLibraryHead() {
     var head = BV.el("div", { class: "home-lib-head" });
-    head.appendChild(BV.el("h2", null, "library"));
+    /* (no title h2 - the active topbar cube already names the screen, and the
+       filter box anchors the row's left edge) */
 
     /* find a robot fast: filters by robot name / model / IP / note text, and a
        matching plant or line name keeps its whole group. The tree re-renders

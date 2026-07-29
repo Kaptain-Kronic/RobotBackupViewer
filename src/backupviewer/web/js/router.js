@@ -173,7 +173,63 @@
   new MutationObserver(function () {
     toolbar.classList.toggle("hidden", !toolbar.firstElementChild ||
       !toolbar.firstElementChild.childElementCount);
+    scheduleMeasure();   /* the toggle just changed the slab's height */
   }).observe(toolbar, { childList: true, subtree: true });
+
+  /* ---- scroll-under chrome ----
+     The bars are frosted slabs floating over #view (base.css); #view pads
+     itself by their real heights, re-measured whenever they change (bars
+     wrap, the toolbar comes and goes, the jobstrip appears mid-run).
+     DELIVERY RULE (paid for): ResizeObserver/rAF ticks are throttled to
+     death in hidden windows and were seen going stale in the live app -
+     every re-measure here rides a MutationObserver microtask or an explicit
+     call, which always deliver. The var going stale is exactly the
+     "invisible unfrosted block pushing content down" bug. */
+  var chromeTop = document.getElementById("chrome-top");
+  function underChrome() {
+    /* hairlines only while content is actually beneath a slab */
+    var st = view.scrollTop;
+    document.body.classList.toggle("under-top", st > 1);
+    document.body.classList.toggle("under-bottom",
+      st + view.clientHeight < view.scrollHeight - 1);
+    /* a pinned sticky header touching the slab fuses with it: the slab's
+       hairline yields, the pair reads as ONE panel with ONE bottom line
+       (the header's own) */
+    var head = view.querySelector(".home-lib-head, .hero.stick, .cmp-head");
+    var fused = false;
+    if (head) {
+      var r = head.getBoundingClientRect();
+      var topH = chromeTop.offsetHeight;
+      fused = r.top <= topH + 2 && r.bottom > topH;
+    }
+    document.body.classList.toggle("chrome-fused", fused);
+  }
+  function measureChrome() {
+    /* only the top slab floats; the bottom bar is in flow and needs no var */
+    document.documentElement.style.setProperty("--chrome-top",
+      chromeTop.offsetHeight + "px");
+    underChrome();
+  }
+  /* coalesce measure storms (a route rebuilds the tabbar node by node) into
+     one microtask - it also lands AFTER same-tick MutationObserver class
+     toggles, so it always sees the settled slab */
+  var chromePending = false;
+  function scheduleMeasure() {
+    if (chromePending) return;
+    chromePending = true;
+    Promise.resolve().then(function () { chromePending = false; measureChrome(); });
+  }
+  BV.chrome = {
+    measure: measureChrome,
+    top: function () { return chromeTop.offsetHeight; },
+  };
+  /* anything that changes what the slab holds re-measures it: class flips
+     (tabbar hidden), node churn (session chips, tab rebuilds) */
+  new MutationObserver(scheduleMeasure).observe(chromeTop,
+    { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
+  window.addEventListener("resize", measureChrome);
+  view.addEventListener("scroll", underChrome, { passive: true });
+  measureChrome();
 
   function isShell(tab) { return !!(tab && tab.shell); }
 
@@ -254,6 +310,7 @@
     view.appendChild(slot);
     tab.render(slot, tslot, parts.slice(1));
     updateStatus();
+    measureChrome();   /* tab switches change the tabbar/toolbar rows */
   }
 
   BV.openBackupFlow = function () {
@@ -377,6 +434,7 @@
      the new row height and em column widths */
   BV.state.on("uiprefs", function () {
     if (BV.state.manifest) route();
+    measureChrome();   /* chrome-fs changes bar heights on shell screens too */
   });
 
   /* a found update re-renders the statusbar (the pill lives in rightStatusHtml) */

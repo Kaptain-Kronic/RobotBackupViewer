@@ -114,7 +114,42 @@ body { overflow: hidden; }
   display: flex;
   flex-direction: column;
   height: 100vh;
+  position: relative;   /* the chrome slabs anchor to the app box */
 }
+
+/* ---- scroll-under chrome ----
+   The bars are two frosted slabs FLOATING over #view: content scrolls under
+   them and shows through the frost. #view pads itself by their measured
+   heights (--chrome-top/--chrome-bottom, set by router.js - the slabs wrap
+   and change height per tab, so CSS can't know). One backdrop-filter per
+   slab, gated by html.frosted like every other frost surface. */
+#chrome-top {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 9;
+  background: var(--glass);           /* frost-aware; solid --bg at frost 0 */
+}
+/* the bottom bar sits IN FLOW: the view ends above it, so the last row can
+   never hide under it and the scrollbar's bottom end stays grabbable - only
+   the top edge gets the scroll-under treatment */
+#chrome-bottom {
+  flex: none; position: relative;
+  background: var(--glass);
+}
+/* the hairline lives on the slab's content edge and only exists while
+   content is actually sliding under (body.under-* from router.js) - at rest
+   the chrome stays lineless */
+#chrome-top::after, #chrome-bottom::before {
+  content: ""; position: absolute; left: 0; right: 0; height: 1px;
+  background: var(--edge-soft, var(--edge));
+  opacity: 0; transition: opacity var(--trans);
+  pointer-events: none;
+}
+#chrome-top::after { bottom: 0; }
+#chrome-bottom::before { top: 0; }
+body.under-top #chrome-top::after { opacity: 1; }
+body.under-bottom #chrome-bottom::before { opacity: 1; }
+/* a sticky header pinned against the slab supplies the panel's bottom line
+   itself - the slab's own hairline yields (must follow the rules above) */
+body.chrome-fused #chrome-top::after { opacity: 0; }
 
 /* ---- topbar ----
    Chrome is pinned to --chrome-fs (the "chrome scale" setting), NOT the root
@@ -310,15 +345,24 @@ body { overflow: hidden; }
 #view {
   flex: 1 1 auto;
   overflow: auto;
-  padding: 0.75rem 1.25rem 1.25rem;
+  /* the top slab floats over the view, so top padding = slab height + the
+     old breathing room; the fallback covers the pre-measure frame */
+  padding: calc(var(--chrome-top, 3.2em) + 0.75rem) 1.25rem 1.25rem;
   outline: none;
   position: relative;
 }
+/* the scrollbar's thumb range starts below the floating slab - a track
+   margin is the one way to inset a native scrollbar */
+#view::-webkit-scrollbar-track { margin-top: var(--chrome-top, 0px); }
 /* tabs are handed the .view-slot, not #view, so they tag the SLOT - match on
    that. The old `#view.no-pad` could never fire once the slot was introduced,
-   which quietly killed edge-to-edge on every full-width table tab. */
+   which quietly killed edge-to-edge on every full-width table tab.
+   no-pad zeroes the BREATHING room, never the chrome offsets: an inner-scroll
+   screen (VTable etc.) must start below the top slab, not under it. */
 #view.no-pad,
-#view:has(> .no-pad) { padding: 0; }
+#view:has(> .no-pad) {
+  padding: var(--chrome-top, 3.2em) 0 0;
+}
 
 /* ---- statusbar ---- */
 #statusbar {
@@ -340,8 +384,8 @@ body { overflow: hidden; }
   position: relative;   /* the details panel anchors to the strip, no coordinate math */
   display: flex; align-items: center; gap: 0.9em;
   flex: none; padding: 0.5em 1.6em;
-  border-top: 1px solid var(--edge-soft, transparent);
-  background: var(--panel); font-size: calc(var(--chrome-fs, 15px) * 0.78);
+  /* background + frost come from the #chrome-bottom slab it lives in */
+  font-size: calc(var(--chrome-fs, 15px) * 0.78);
   color: var(--sub);
 }
 #jobstrip .jobstrip-run {
