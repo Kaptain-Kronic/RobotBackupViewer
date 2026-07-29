@@ -1115,7 +1115,11 @@ def probe(window):
         check("photos.raw_sticks_across_photos", mode == "raw", f"(got {mode!r})")
 
         # ---- fullscreen: click image, wheel zoom, drag pan, guarded close ----
-        js(window, "document.querySelector('#photo-hero > div').click()")
+        # the zoom-in click lives on the FIGURE, which the CV-X crossfade work
+        # (c8b3584) wrapped in a flex column - so the hero's direct child is the
+        # column now and the figure is one level deeper. Clicking the column did
+        # nothing and nothing noticed, because nothing runs this file.
+        js(window, "document.querySelector('#photo-hero > div > div').click()")
         fs0 = poll(window, """(function(){
             var o=document.querySelector('.photo-fsov');
             return (o && o.querySelector('img') && o.querySelector('button')) ? 'y' : '';
@@ -1148,7 +1152,7 @@ def probe(window):
         check("fs.backdrop_click_closes", fs.get("closed") is True)
 
         # X button closes too
-        js(window, "document.querySelector('#photo-hero > div').click()")
+        js(window, "document.querySelector('#photo-hero > div > div').click()")
         poll(window, "document.querySelector('.photo-fsov') ? 'y' : ''")
         js(window, "document.querySelector('.photo-fsov button').click()")
         check("fs.x_closes",
