@@ -13,3 +13,16 @@ testpaths = ["tests"]
 # the only sys.path bootstrap used to live in conftest.py, which is untracked -
 # so a fresh clone collected 0 tests. keep this here, not in a conftest.
 pythonpath = ["src"]
+markers = [
+    "probe: boots the real app in a hidden WebView2 and asserts on real DOM (slow)",
+]
+# the probes are ~2.5 minutes; the unit suite is ~40 seconds. A suite slow
+# enough to stop running is worse than one that skips its slowest part, so the
+# bare `pytest` stays fast and the probes are asked for (a command-line -m
+# beats this one):
+#   python -m pytest tests                            unit only, the default
+#   python -m pytest tests -m probe                   the nine probes
+#   python -m pytest tests -m "probe or not probe"    EVERYTHING
+# the everything form is spelled that way, not -m "", because PowerShell drops
+# an empty argument before pytest ever sees it.
+addopts = "-m 'not probe'"
