@@ -158,7 +158,7 @@
     var swapBtn = BV.el("button", { class: "btn", title: "swap which backup is the baseline" }, "swap a↔b");
     toolbar.appendChild(swapBtn);
     var changeBtn = BV.el("button", { class: "btn" }, "change backup");
-    changeBtn.addEventListener("click", function () { BV.compareFlow(); });
+    changeBtn.addEventListener("click", function () { BV.compareFlow(changeBtn); });
     toolbar.appendChild(changeBtn);
     var clearBtn = BV.el("button", { class: "btn" }, "clear");
     clearBtn.addEventListener("click", function () {
@@ -478,9 +478,10 @@
     }).catch(function (e) { BV.toast(e.message); });
   }
 
-  /* topbar entry: offer Library (saved robot) or Folder (file dialog) */
-  BV.compareFlow = function () {
-    BV.menu(document.getElementById("btn-compare"), [
+  /* toolbar entry: offer Library (saved robot) or Folder (file dialog).
+     The caller passes its button as the menu anchor. */
+  BV.compareFlow = function (anchor) {
+    BV.menu(anchor, [
       { label: "from library", onClick: compareFromLibrary },
       { label: "from folder", onClick: compareFromFolder },
     ]);

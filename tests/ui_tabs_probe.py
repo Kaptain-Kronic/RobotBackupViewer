@@ -192,7 +192,7 @@ def probe(window):
             check("popout.pinned_manifest", got == sid1, f"(got {got!r})")
             check("popout.chrome_hidden",
                   w2.evaluate_js("""getComputedStyle(document.getElementById('sessionbar')).display === 'none'
-                    && getComputedStyle(document.getElementById('btn-compare')).display === 'none'"""))
+                    && !document.getElementById('btn-compare')"""))
             # a pop-out shows the WORDMARK where the main window shows cubes -
             # the swap is the deliberate "which window is the main one?" tell
             check("popout.wordmark_instead_of_cubes",

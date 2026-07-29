@@ -253,43 +253,59 @@
       },
     });
     _filterBox.input.value = _filter;    /* a remount keeps the active filter */
-    head.appendChild(_filterBox.el);
+    /* the filter lives in the topbar's search slot (all screens keep their
+       search top-right); idempotent because loadLibrary can rebuild the
+       shell without a route() pass */
+    var slot = document.getElementById("topbar-search");
+    [].forEach.call(slot.querySelectorAll(".screen-search"),
+      function (n) { n.remove(); });
+    _filterBox.el.classList.add("screen-search");
+    slot.appendChild(_filterBox.el);
 
     /* (the two lenses on the same library - backup rows vs live camera tiles -
        are flipped by the topbar's book/camera cubes now, not by a control
        inside the screen they change) */
 
+    /* the selection count is the only always-visible selection UI now — the
+       selection ACTIONS live in the functions… menu below */
     var selActs = BV.el("div", { class: "home-lib-selacts" });
     selActs.appendChild(BV.el("span", { class: "lib-sel-count dim" }, ""));
-    var bk = BV.el("button", { class: "btn lib-act-backup", title: "back up the selected robots" },
-      "backup");
-    bk.addEventListener("click", function () { startLineBackup(_visibleRobots); });
-    var hd = BV.el("button", { class: "btn lib-act-hide", title: "hide the selected robots from view" },
-      "hide");
-    hd.addEventListener("click", function () { hideSelectedInLine(_visibleRobots); });
-    var sc = BV.el("button", { class: "btn lib-act-scan",
-      title: "scan the selected robots' backups — DCS options, signatures, mastering, unused programs, or a find" },
-      "scan");
-    sc.addEventListener("click", function () {
-      var sel = _visibleRobots.filter(function (r) { return _cl.has(r.id); });
-      if (!sel.length) { BV.toast("select robots first"); return; }
-      BV.scanUI.open(sel);
-    });
-    selActs.appendChild(bk);
-    selActs.appendChild(hd);
-    selActs.appendChild(sc);
     head.appendChild(selActs);
 
     var headActs = BV.el("div", { class: "home-lib-actions" });
-    /* manage backups is NOT a selection action (its health panels + fix names /
-       merge / move / auto-link need no robots picked) — it lives with the
-       library actions so the multi-cam lens keeps it reachable (cam-mode hides
-       the selection row, and manage is also where auto-link cameras lives) */
-    var mb = BV.el("button", { class: "btn lib-act-manage",
-      title: "backup health (last run, retries, partial + stale backups) and robot tidy-up (fix names, merge, move)" },
-      "manage backups");
-    mb.addEventListener("click", function () {
-      if (BV.manageUI) BV.manageUI.open();
+    /* ONE dropdown for everything you can DO to the library: the selection
+       actions (backup/hide/scan, greyed without a selection), the tidy-up
+       flows that lived in the manage-backups modal, and the last-backup
+       report. Items are built at open time so counts and gating are live. */
+    var fnBtn = BV.el("button", { class: "btn lib-act-functions",
+      title: "library functions — backup, hide, scan, tidy-ups, the last-backup report" },
+      "functions…");
+    fnBtn.addEventListener("click", function () {
+      var sel = _visibleRobots.filter(function (r) { return _cl.has(r.id); });
+      var n = sel.length;
+      var tag = n ? " (" + n + ")" : "";
+      /* same label honesty as the old button: an all-hidden selection unhides */
+      var unhide = n > 0 && sel.every(function (r) { return r.hidden; });
+      BV.menu(fnBtn, [
+        { label: "backup" + tag, disabled: !n,
+          onClick: function () { startLineBackup(_visibleRobots); } },
+        { label: (unhide ? "unhide" : "hide") + tag, disabled: !n,
+          onClick: function () { hideSelectedInLine(_visibleRobots); } },
+        { label: "scan" + tag, disabled: !n,
+          onClick: function () { BV.scanUI.open(sel); } },
+        { label: "fix names" + tag, disabled: !n,
+          onClick: function () { BV.libActions.fixNames(); } },
+        { label: "merge", disabled: n !== 2,
+          onClick: function () { BV.libActions.merge(); } },
+        { label: "move to…" + tag, disabled: !n,
+          onClick: function () { BV.libActions.moveTo(); } },
+        { label: "link cameras",
+          onClick: function () {
+            BV.libActions.autoLink().catch(function (e) { BV.toast(e.message); });
+          } },
+        { label: "last backup…",
+          onClick: function () { if (BV.manageUI) BV.manageUI.open({ report: true }); } },
+      ]);
     });
     var sortBtn = BV.el("button", { class: "btn lib-sort", title: "library sort order" },
       "sort: " + SORT_LABELS[sortMode()]);
@@ -348,7 +364,7 @@
         { label: "manually", onClick: function () { editRobotModal(null, true); } },
       ]);
     });
-    headActs.appendChild(mb);
+    headActs.appendChild(fnBtn);
     headActs.appendChild(sortBtn);
     headActs.appendChild(cancelAll);
     headActs.appendChild(_showHiddenBtn);
@@ -987,11 +1003,14 @@
     }
     /* a camera floats with its own star or its linked robot's — the same
        robots the ★ strip pins in the backup lens lead their line here */
+    /* favorites still lead, but within each group the tiles follow the same
+       sort button as the backup lens (name / ip / date) */
+    var base = robotComparator();
     var cmp = function (a, b) {
       var fa = (a.favorite || favIds[a.linked_robot_id]) ? 0 : 1;
       var fb = (b.favorite || favIds[b.linked_robot_id]) ? 0 : 1;
       if (fa !== fb) return fa - fb;
-      return nameCmp(a, b);
+      return base(a, b);
     };
     var res = _camTree.render(body, { robots: cams }, { q: _filter, cmp: cmp });
     if (_filterBox) _filterBox.setCount(_filter ? res.shown : undefined, res.total);
@@ -1123,28 +1142,15 @@
     return lineRobots.filter(function (r) { return _cl.has(r.id); });
   }
 
-  /* the sticky toolbar follows the selection: counter + button enablement.
-     (checkbox + line tri-state repaints are the shared checklist's job —
-     this runs as its onChange) */
+  /* the sticky toolbar follows the selection: just the counter now — the
+     selection ACTIONS moved into the functions… menu, which reads the live
+     selection each time it opens (checkbox + line tri-state repaints are the
+     shared checklist's job — this runs as its onChange) */
   function syncToolbar() {
     if (!_libWrap) return;
-    var selRobots = _visibleRobots.filter(function (r) { return _cl.has(r.id); });
-    var selN = selRobots.length;
+    var selN = _visibleRobots.filter(function (r) { return _cl.has(r.id); }).length;
     var count = _libWrap.querySelector(".lib-sel-count");
     if (count) count.textContent = selN ? selN + " selected" : "";
-    ["backup", "hide", "scan"].forEach(function (k) {
-      var b = _libWrap.querySelector(".lib-act-" + k);
-      if (b) b.disabled = selN === 0;
-    });
-    /* (manage backups sits with the library actions, never selection-gated) */
-    var hd = _libWrap.querySelector(".lib-act-hide");
-    if (hd) {
-      /* the button says what it will DO: all-hidden selection -> unhide */
-      var unhide = selN > 0 && selRobots.every(function (r) { return r.hidden; });
-      hd.textContent = unhide ? "unhide" : "hide";
-      hd.title = unhide ? "unhide the selected robots"
-                        : "hide the selected robots from view";
-    }
   }
 
   /* the manage-backups modal (manage_ui.js) drives the selected-robot flows

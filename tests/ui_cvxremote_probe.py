@@ -72,8 +72,8 @@ def probe(window, api):
         order = json.loads(js(window, """JSON.stringify(
             [].map.call(document.querySelectorAll('#topbar-right .icon-btn'),
                         function(b){ return b.id; }))""") or "[]")
-        check("topbar.phone_sits_after_compare",
-              order == ["btn-compare", "btn-phone", "btn-cog", "btn-help"], f"({order})")
+        check("topbar.trio_order",
+              order == ["btn-phone", "btn-cog", "btn-help"], f"({order})")
         # the trio is drawn svg now (icons.js data-icon injection), not emoji
         check("topbar.trio_is_svg", js(window, """
             ['btn-phone','btn-cog','btn-help'].every(function(id){

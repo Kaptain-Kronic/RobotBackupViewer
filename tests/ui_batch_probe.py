@@ -666,7 +666,7 @@ def probe(window):
         check("cam.lens_flips", bool(poll(window,
               "!!document.querySelector('.home-library.cam-mode')")))
         check("cam.filter_placeholder", js(window,
-              "document.querySelector('.home-lib-head .search-box input').placeholder")
+              "document.querySelector('#topbar-search .screen-search input').placeholder")
               == "filter cameras…")
         # the lens toggle lives in the TOPBAR now, not inside the screen it changes
         check("cam.no_head_seg",
@@ -677,17 +677,17 @@ def probe(window):
                 && !document.getElementById('cube-lib').classList.contains('active');
         })()""")))
 
-        # fix 1: the selection row hides, but manage backups stays reachable
-        # (it moved in with the library actions — auto-link lives inside it)
+        # fix 1: the selection count hides, but the functions… dropdown (the
+        # selection actions + tidy-ups + last-backup report) stays reachable
         head = js(window, """JSON.stringify((function(){
             var sel=document.querySelector('.home-lib-selacts');
-            var mb=document.querySelector('.home-lib-actions .lib-act-manage');
+            var fb=document.querySelector('.home-lib-actions .lib-act-functions');
             return { selacts: getComputedStyle(sel).display,
-                     manage: mb ? getComputedStyle(mb).display : 'missing' };
+                     fns: fb ? getComputedStyle(fb).display : 'missing' };
         })())""")
         head = json.loads(head or "{}")
         check("cam.selacts_hidden", head.get("selacts") == "none", f"({head})")
-        check("cam.manage_reachable", head.get("manage") not in ("none", "missing", None),
+        check("cam.functions_reachable", head.get("fns") not in ("none", "missing", None),
               f"({head})")
 
         # fix 7: deliberate fold policy — plants open, lines folded, so the
@@ -780,14 +780,14 @@ def probe(window):
         # (CELL-01CAM01 is linked to RB010R01B01 from the picker test above)
         js(window, """(function(){
             document.getElementById('cube-cam').click();
-            var inp=document.querySelector('.home-lib-head .search-box input');
+            var inp=document.querySelector('#topbar-search .screen-search input');
             inp.value='RB010R01B01';
             inp.dispatchEvent(new Event('input',{bubbles:true}));
         })()""")
         # the filter is debounced (150 ms) and hidden windows throttle timers
         # to ~1 s — poll for the applied state instead of sleeping
         match = poll(window, """(function(){
-            var c=document.querySelector('.home-lib-head .match-count').textContent;
+            var c=document.querySelector('#topbar-search .match-count').textContent;
             if(c!=='1') return null;   /* debounce hasn't fired yet */
             return JSON.stringify({ tiles: document.querySelectorAll('.cam-tile').length,
                                     count: c });
@@ -796,7 +796,7 @@ def probe(window):
         check("cam.filter_matches_linked_robot_name",
               match.get("tiles") == 1 and match.get("count") == "1", f"({match})")
         js(window, """(function(){
-            var inp=document.querySelector('.home-lib-head .search-box input');
+            var inp=document.querySelector('#topbar-search .screen-search input');
             inp.value='zzz-no-such';
             inp.dispatchEvent(new Event('input',{bubbles:true}));
         })()""")
@@ -804,14 +804,14 @@ def probe(window):
             var e=document.querySelector('.home-lib-body .empty-lib');
             if(!e) return null;        /* throttled debounce hasn't fired yet */
             return JSON.stringify({ note: e.textContent,
-                count: document.querySelector('.home-lib-head .match-count').textContent });
+                count: document.querySelector('#topbar-search .match-count').textContent });
         })()""")
         nomatch = json.loads(nomatch or "{}")
         check("cam.no_match_says_cameras",
               "no cameras match" in (nomatch.get("note") or ""), f"({nomatch})")
         check("cam.no_match_counter", nomatch.get("count") == "0/1", f"({nomatch})")
         js(window, """(function(){
-            var inp=document.querySelector('.home-lib-head .search-box input');
+            var inp=document.querySelector('#topbar-search .screen-search input');
             inp.value='';
             inp.dispatchEvent(new Event('input',{bubbles:true}));
         })()""")
@@ -837,7 +837,7 @@ def probe(window):
             var e=document.querySelector('.home-lib-body .empty-lib');
             if(!e || e.textContent.indexOf('hidden')<0) return null;
             return JSON.stringify({ note: e.textContent,
-                count: document.querySelector('.home-lib-head .match-count').textContent,
+                count: document.querySelector('#topbar-search .match-count').textContent,
                 toggle: document.querySelector('.lib-show-hidden').textContent });
         })()""")
         empty = json.loads(empty or "{}")
@@ -905,12 +905,12 @@ def probe(window):
             if(!lib || !document.querySelector('.cam-tile')) return null;
             return JSON.stringify({
               selacts: getComputedStyle(document.querySelector('.home-lib-selacts')).display,
-              manage: getComputedStyle(document.querySelector('.lib-act-manage')).display });
+              fns: getComputedStyle(document.querySelector('.lib-act-functions')).display });
         })()""")
         remount = json.loads(remount or "{}")
         check("cam.remount_lands_in_lens", remount.get("selacts") == "none", f"({remount})")
-        check("cam.remount_manage_reachable",
-              remount.get("manage") not in ("none", "missing", None), f"({remount})")
+        check("cam.remount_functions_reachable",
+              remount.get("fns") not in ("none", "missing", None), f"({remount})")
 
         # ---- a cube reaches its lens from ANOTHER screen in one click ----
         # the lens has to be set BEFORE the route: buildLibraryHead() and
@@ -994,15 +994,30 @@ def probe(window):
         check("scan.modal_closes", bool(poll(window,
               "document.getElementById('modal-root').classList.contains('hidden')")))
 
-        # ---- link cameras: moved off the library head into manage backups ----
+        # ---- link cameras: lives in the functions… dropdown now ----
         check("manage.link_cams_not_in_head",
               not js(window, "!!document.querySelector('.lib-link-cams')"))
-        js(window, "document.querySelector('.lib-act-manage').click()")
-        mb = poll(window, """(function(){
-            var b=document.querySelector('.mb-actbar .mb-link-cams');
-            return b ? b.textContent : '';
+        js(window, "document.querySelector('.lib-act-functions').click()")
+        mi = poll(window, """(function(){
+            var items=[].slice.call(document.querySelectorAll('.ctx-menu .ctx-item'));
+            return items.some(function(b){return b.textContent.trim()==='link cameras';})
+                ? 'y' : '';
         })()""")
-        check("manage.link_cams_in_modal", mb == "link cameras", f"(got {mb!r})")
+        check("fns.link_cams_in_menu", mi == "y")
+        # the "last backup…" entry opens the REPORT alone — no actions bar
+        js(window, """(function(){
+            var items=[].slice.call(document.querySelectorAll('.ctx-menu .ctx-item'));
+            items.filter(function(b){return b.textContent.indexOf('last backup')===0;})[0].click();
+        })()""")
+        mb = poll(window, """(function(){
+            var m=document.querySelector('.mb-modal');
+            if(!m || !m.querySelector('.mb-partial')) return '';
+            return JSON.stringify({ actbar: !!m.querySelector('.mb-actbar'),
+                                    partial: true });
+        })()""")
+        mb = json.loads(mb or "{}")
+        check("fns.report_opens_without_actbar",
+              mb.get("actbar") is False and mb.get("partial") is True, f"({mb})")
         js(window, "document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))")
         check("manage.modal_closes", bool(poll(window,
               "document.getElementById('modal-root').classList.contains('hidden')")))

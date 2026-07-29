@@ -238,7 +238,7 @@ body.chrome-fused #chrome-top::after { opacity: 0; }
    could never reach their screens. It shows the WORDMARK in their place: the
    swap is the deliberate "this is not the main window" tell, and ctrl+e still
    raises the main window's workspace from here. */
-.solo #topbar-cubes, .solo #sessionbar, .solo #btn-compare, .solo #jobstrip { display: none !important; }
+.solo #topbar-cubes, .solo #sessionbar, .solo #jobstrip { display: none !important; }
 .solo #logo { display: flex; }
 
 /* a popped-out CV-X window IS the remote overlay - the app shell behind it
@@ -267,6 +267,7 @@ body.chrome-fused #chrome-top::after { opacity: 0; }
 /* margin-left:auto, not a grown sibling, pins this to the right corner: the
    sessionbar spacer is display:none until a backup is open */
 #topbar-right { display: flex; gap: 0.3em; flex: none; margin-left: auto; }
+#topbar-search { display: flex; align-items: center; }
 
 .icon-btn {
   appearance: none;

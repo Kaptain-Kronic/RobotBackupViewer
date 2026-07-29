@@ -290,6 +290,7 @@ window.BV = {};
         BV.esc(it.label) +
         (it.action ? '<span class="ctx-act" title="' + BV.esc(it.action.title || "") + '">' +
           BV.esc(it.action.label) + "</span>" : ""));
+      if (it.disabled) b.disabled = true;   /* e.g. selection-gated rows */
       b.addEventListener("click", function (e) {
         e.stopPropagation();
         if (handle) handle.close();

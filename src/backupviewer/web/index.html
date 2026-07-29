@@ -51,11 +51,15 @@
     </div>
     <nav id="sessionbar" aria-label="open backups" class="hidden"></nav>
     <div id="topbar-right">
-      <div class="search-box" id="global-search" title="search the whole backup (ctrl+k)">
-        <span class="si">⌕</span>
-        <input type="text" placeholder="search backup…" spellcheck="false">
+      <!-- every screen's search lives HERE: backup screens use the global
+           box below, shell screens mount their own filter box beside it
+           (class screen-search, cleared by route()) -->
+      <div id="topbar-search">
+        <div class="search-box" id="global-search" title="search the whole backup (ctrl+k)">
+          <span class="si">⌕</span>
+          <input type="text" placeholder="search backup…" spellcheck="false">
+        </div>
       </div>
-      <button class="icon-btn" id="btn-compare" title="compare with another backup">compare</button>
       <button class="icon-btn ico" id="btn-phone" data-icon="phone" title="mirror this window to your phone (QR)"></button>
       <button class="icon-btn ico" id="btn-cog" data-icon="gear" title="settings — theme, interface, library (t)"></button>
       <button class="icon-btn ico" id="btn-help" data-icon="help" title="shortcuts (?)"></button>

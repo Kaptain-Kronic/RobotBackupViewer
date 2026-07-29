@@ -1465,10 +1465,11 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 
 /* multi-cam lens: the backup-selection controls and sort make no sense over
    live tiles — hide them, keep filter / refresh / add reachable */
-.home-library.cam-mode .home-lib-selacts,
-.home-library.cam-mode .lib-sort { display: none; }
+/* cam tiles aren't selectable, so the count hides - but sort stays: both
+   lenses carry the same action row (functions… · sort · refresh · + add) */
+.home-library.cam-mode .home-lib-selacts { display: none; }
 /* with the selection row display:none its auto-margin is gone too - the
-   actions cluster takes over the push so the filter stays put across lenses */
+   actions cluster takes over the push so the row stays put across lenses */
 .home-library.cam-mode .home-lib-actions { margin-left: auto; }
 
 /* multi-cam grid: live camera tiles inside the same plant/line folders.
@@ -1649,6 +1650,8 @@ button.btn.danger:disabled { opacity: 0.5; cursor: default; }
   color: var(--text); font-size: 0.86rem; padding: 0.4rem 0.7rem; border-radius: 6px; cursor: pointer;
   display: flex; align-items: center; gap: 0.6rem;
 }
+.ctx-item:disabled { opacity: 0.45; cursor: default; }
+.ctx-item:disabled:hover { background: none; }
 /* optional trailing action pill on a menu row (its own click target) */
 .ctx-item .ctx-act {
   margin-left: auto; font-size: 0.72rem; line-height: 1.4; padding: 0 0.45rem;

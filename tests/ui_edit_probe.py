@@ -168,7 +168,7 @@ def probe(window):
               all(v >= 8 for v in json.loads(cubes_box or "[0]")),
               f"(drawn bounds {cubes_box} of 24 user units — a collapsed path reads 0)")
         check("shell.chrome_hidden",
-              bool(js(window, "document.getElementById('btn-compare').classList.contains('hidden')")))
+              bool(js(window, "document.getElementById('global-search').classList.contains('hidden')")))
 
         # ---- populate the working set from BOTH robots (same program name) ----
         # robot ids come from a library SCAN, not from folder names - go through

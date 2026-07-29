@@ -27,9 +27,13 @@
   }
 
   BV.manageUI = {
-    open: function () {
+    /* opts.report: the report alone (last run / partials / stale) - the
+       tidy-up actions live in the library's functions… menu, which is also
+       the only caller, so the full actbar variant is legacy-shaped */
+    open: function (opts) {
+      var report = !!(opts && opts.report);
       var host = BV.el("div", { class: "mb-host" });
-      var modal = BV.modal("manage backups", host);
+      var modal = BV.modal(report ? "last backup" : "manage backups", host);
       modal.el.classList.add("mb-modal");
 
       host.innerHTML = '<div class="dim" style="padding:.5rem 0">loading…</div>';
@@ -67,6 +71,7 @@
 
         /* ---- actions bar: the tidy-up flows, on top and ready to fire (grey
            without a selection - they take no room and never hide) ---- */
+        if (!report) {
         var sel = (BV.libActions && BV.libActions.selected()) || [];
         var bar = BV.el("div", { class: "mb-actbar" });
         bar.appendChild(BV.el("span", { class: "hs-cat-title" },
@@ -95,6 +100,7 @@
         });
         bar.appendChild(lk);
         host.appendChild(bar);
+        }
 
         /* ---- partial backups: a slim full-width strip - one quiet line when
            clean, the first thing in view when a pull died mid-download ---- */

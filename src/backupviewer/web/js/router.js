@@ -239,9 +239,7 @@
      once a robot is open, so the tabbar must be hidden here by ROUTE instead. */
   function setTopbarChrome(shell) {
     var s = document.getElementById("global-search");
-    var c = document.getElementById("btn-compare");
     if (s) s.classList.toggle("hidden", shell);
-    if (c) c.classList.toggle("hidden", shell);
     if (tabbar) tabbar.classList.toggle("hidden", shell);
     /* the SESSION tab strip stays through shell screens (browser behavior -
        home is just a screen); it only un-highlights there */
@@ -295,6 +293,10 @@
     /* remember where this backup's tab is, so switching back lands there */
     if (!isShell(tab) && BV.session) BV.session.noteHash(location.hash);
     view.classList.remove("no-pad");
+    /* a shell screen may have mounted its own filter box in the topbar
+       search slot - it dies with the screen */
+    [].forEach.call(document.querySelectorAll("#topbar-search .screen-search"),
+      function (n) { n.remove(); });
     /* drop any persist-scroll ownership before resetting: the scroll-to-0 below
        fires a scroll event, and without this the OUTGOING tab's key would catch
        it and overwrite its own saved position with 0 (BV.persistScroll) */
@@ -334,11 +336,7 @@
     else location.hash = "#home";
   };
 
-  document.getElementById("btn-compare").addEventListener("click", function () {
-    if (!BV.state.manifest) { BV.toast("open a backup first"); return; }
-    if (BV.state.compare) location.hash = "#compare";
-    else BV.compareFlow();
-  });
+  /* (compare moved into the overview toolbar - overview.js) */
 
   /* ---- the three cubes: library · multi-cam · workspace ----
      These are the app's navigation, in the slot the wordmark used to hold (it
