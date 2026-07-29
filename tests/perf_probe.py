@@ -271,7 +271,11 @@ def main():
     window = webview.create_window("perf probe", url=str(resource_path("web/index.html")),
                                    js_api=api, width=1400, height=900, hidden=True)
     api.bind(window)
-    webview.start(lambda: probe(window, args.rows), window, gui="edgechromium")
+    # NO second positional here: pywebview passes `args` INTO the callback, and
+    # this one takes none. It used to be `..., window, ...`, which raised
+    # TypeError inside the GUI thread - the probe body never ran, the window was
+    # never destroyed, and the process hung until it was killed by hand.
+    webview.start(lambda: probe(window, args.rows), gui="edgechromium")
     sys.exit(1 if FAILURES else 0)
 
 
