@@ -65,7 +65,7 @@
       title: "move this remote into its own window" }, "open in window");
     var phBtn = BV.el("button", { class: "btn",
       title: "mirror this window to your phone (QR) — watch the live screen " +
-        "at the camera" }, "📱 phone");
+        "at the camera" }, BV.icon("phone") + " phone");
     var fsBtn = BV.el("button", { class: "btn", title: "fullscreen (f)" }, "fullscreen");
     var closeBtn = BV.el("button", { class: "btn", title: "close (esc)" }, "✕ close");
     bar.appendChild(title); bar.appendChild(status); bar.appendChild(spacer);

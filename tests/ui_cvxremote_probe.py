@@ -59,7 +59,7 @@ def bar_buttons(window):
         var b = document.querySelector('.cvx-remote .cvx-bar');
         if (!b) return '';
         return JSON.stringify([].map.call(b.querySelectorAll('button'),
-            function(x){ return x.textContent; }));
+            function(x){ return x.textContent.trim(); }));
     })()""") or "[]")
 
 
@@ -74,6 +74,10 @@ def probe(window, api):
                         function(b){ return b.id; }))""") or "[]")
         check("topbar.phone_sits_after_compare",
               order == ["btn-compare", "btn-phone", "btn-cog", "btn-help"], f"({order})")
+        # the trio is drawn svg now (icons.js data-icon injection), not emoji
+        check("topbar.trio_is_svg", js(window, """
+            ['btn-phone','btn-cog','btn-help'].every(function(id){
+              return !!document.querySelector('#' + id + ' svg.bv-ico'); })"""))
         check("topbar.window_key_is_main", js(window, "BV.windowKey()") is None)
         js(window, "BV._vfCalls = 0; BV.openViewfinder = function(){ BV._vfCalls++; };")
         js(window, "document.getElementById('btn-phone').click()")
@@ -83,8 +87,10 @@ def probe(window, api):
         js(window, f"BV.openCvxRemote('{CAM_IP}', 'probe cam')")
         btns = bar_buttons(window)
         check("cvx.bar_matches_matrox",
-              btns == ["⟳ reload", "open in window", "📱 phone", "fullscreen", "✕ close"],
+              btns == ["⟳ reload", "open in window", "phone", "fullscreen", "✕ close"],
               f"({btns})")
+        check("cvx.phone_btn_has_icon", js(window,
+            "!!document.querySelectorAll('.cvx-bar .btn')[2].querySelector('svg.bv-ico')"))
         sid = poll(window, """(function(){
             var i = document.querySelector('.cvx-remote img');
             var m = i && /\\/cvx\\/([^?]+)/.exec(i.src);
@@ -148,7 +154,7 @@ def probe(window, api):
               and js(win2, "getComputedStyle(document.getElementById('app')).display") == "none")
         btns2 = bar_buttons(win2)
         check("popout.bar_drops_open_in_window",
-              btns2 == ["⟳ reload", "📱 phone", "fullscreen", "✕ close"], f"({btns2})")
+              btns2 == ["⟳ reload", "phone", "fullscreen", "✕ close"], f"({btns2})")
         check("popout.adopted_not_redialled",
               api._cvx.get(sid) is live and FakeSession.dials == dials_before,
               f"({FakeSession.dials})")

@@ -246,6 +246,14 @@ body { overflow: hidden; }
 }
 .icon-btn:hover { color: var(--text); background: var(--bg2); }
 .icon-btn.accent:hover { color: var(--accent); }
+/* the svg utility buttons (phone / gear / help): drawn strokes in the cubes'
+   language, sized between the old 0.8em text glyphs and the 2.1em cubes */
+.icon-btn.ico {
+  font-size: 1em;
+  width: 1.8em; height: 1.8em; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.icon-btn.ico .bv-ico { width: 1.15em; height: 1.15em; display: block; }
 
 /* ---- the three cubes: library · multi-cam · workspace ----
    The app's navigation, in the slot the wordmark used to hold. Chrome, so

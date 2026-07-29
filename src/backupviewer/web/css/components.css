@@ -227,6 +227,12 @@ select.sel, button.btn {
 button.btn:hover { color: var(--accent); }
 button.btn.primary { background: var(--accent); color: var(--bg); font-weight: 600; }
 button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
+/* an inline BV.icon() glyph riding in a text label ("[icon] remote"):
+   sized to the surrounding font, nudged onto the text baseline */
+.bv-ico { width: 1.05em; height: 1.05em; vertical-align: -0.18em; }
+/* the monitor+cursor is mostly negative space, so at text size it reads as
+   lint - it rides larger than the solid-silhouette glyphs (phone) around it */
+.bv-ico-remote { width: 1.45em; height: 1.45em; vertical-align: -0.42em; }
 
 /* segmented sub-tab control - wraps instead of overflowing its parent */
 .seg { display: flex; flex-wrap: wrap; gap: 0.1rem; background: var(--bg2); border: 1px solid var(--edge); border-radius: var(--radius); padding: 0.15rem; min-width: 0; max-width: 100%; }
