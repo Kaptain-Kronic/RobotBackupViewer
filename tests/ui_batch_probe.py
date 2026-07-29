@@ -13,23 +13,13 @@ settings/library are never touched — camera entries use unroutable TEST-NET
 Run: python tests/ui_batch_probe.py
 """
 import json
-import os
 import sys
-import tempfile
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).parents[1]
-sys.path.insert(0, str(ROOT / "src"))
+from probeutil import FAILURES, check, exit_code, isolate, js, poll, report
 
-# the strip head prints a ★ — don't let a cp1252 console kill the probe
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-
-# isolate EVERYTHING before any backupviewer import: settings.json and
-# library.json resolve under APPDATA at call time
-_TMP = Path(tempfile.mkdtemp(prefix="bv_probe_"))
-os.environ["APPDATA"] = str(_TMP / "appdata")
-os.environ["BV_NO_WATCHER"] = "1"
+_TMP = isolate("bv_probe_")
 
 import webview  # noqa: E402
 
@@ -37,7 +27,6 @@ from backupviewer import settings as bv_settings  # noqa: E402
 from backupviewer.api import Api  # noqa: E402
 from backupviewer.app import resource_path  # noqa: E402
 
-FAILURES = []
 
 # --- synthetic library tree (identifier-clean: RB/CELL fakes, TEST-NET IPs) ---
 
@@ -194,27 +183,6 @@ def build_tree(lib: Path) -> None:
         "device_type": "camera-mtx", "files": 7, "bytes": 200,
         "source": "smb", "complete": True,
     }), encoding="utf-8")
-
-
-def check(name, cond, detail=""):
-    status = "ok" if cond else "FAIL"
-    print(f"[{status}] {name} {detail}")
-    if not cond:
-        FAILURES.append(name)
-
-
-def js(window, expr):
-    return window.evaluate_js(expr)
-
-
-def poll(window, expr, tries=24, delay=0.25):
-    val = None
-    for _ in range(tries):
-        val = js(window, expr)
-        if val:
-            return val
-        time.sleep(delay)
-    return val
 
 
 def probe(window):
@@ -1414,8 +1382,7 @@ def probe(window):
               poll(window, "location.hash==='#files' ? 'y' : ''") == "y",
               f"(hash={js(window, 'location.hash')!r})")
 
-        print()
-        print("FAILURES:", FAILURES if FAILURES else "none")
+        report()
     except Exception as e:  # noqa: BLE001
         print("[FAIL] probe crashed:", type(e).__name__, e)
         FAILURES.append("crash")
@@ -1439,7 +1406,7 @@ def main():
     )
     api.bind(window)
     webview.start(probe, window, gui="edgechromium")
-    sys.exit(1 if FAILURES else 0)
+    sys.exit(exit_code())
 
 
 if __name__ == "__main__":

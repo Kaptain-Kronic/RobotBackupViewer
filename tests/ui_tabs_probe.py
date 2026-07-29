@@ -12,20 +12,13 @@ library, APPDATA redirected before any backupviewer import.
 Run: python tests/ui_tabs_probe.py
 """
 import json
-import os
 import sys
-import tempfile
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).parents[1]
-sys.path.insert(0, str(ROOT / "src"))
+from probeutil import FAILURES, check, exit_code, isolate, js, poll, report
 
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-
-_TMP = Path(tempfile.mkdtemp(prefix="bv_tabs_probe_"))
-os.environ["APPDATA"] = str(_TMP / "appdata")
-os.environ["BV_NO_WATCHER"] = "1"
+_TMP = isolate("bv_tabs_probe_")
 
 import webview  # noqa: E402
 
@@ -33,7 +26,6 @@ from backupviewer import settings as bv_settings  # noqa: E402
 from backupviewer.api import Api  # noqa: E402
 from backupviewer.app import resource_path  # noqa: E402
 
-FAILURES = []
 ROBOTS = ["RB010R01B01", "RB020R01B01", "RB030R01B01"]
 
 
@@ -47,27 +39,6 @@ def build_tree(lib: Path) -> None:
             json.dumps({"robot": rb, "line": "LINE01", "plant": "FakePlant",
                         "taken": "2026-01-01T12:00:00", "complete": True}),
             encoding="utf-8")
-
-
-def check(name, cond, detail=""):
-    status = "ok" if cond else "FAIL"
-    print(f"[{status}] {name} {detail}")
-    if not cond:
-        FAILURES.append(name)
-
-
-def js(window, expr):
-    return window.evaluate_js(expr)
-
-
-def poll(window, expr, tries=24, delay=0.25):
-    val = None
-    for _ in range(tries):
-        val = js(window, expr)
-        if val:
-            return val
-        time.sleep(delay)
-    return val
 
 
 def open_robot(window, name, prev_sid=""):
@@ -268,8 +239,7 @@ def probe(window):
                 time.sleep(0.3)
             check("popout.close_drops_session", gone)
 
-        print()
-        print("FAILURES:", FAILURES if FAILURES else "none")
+        report()
     except Exception as e:  # noqa: BLE001
         print("[FAIL] probe crashed:", type(e).__name__, e)
         FAILURES.append("crash")
@@ -298,7 +268,7 @@ def main():
     window._bv_api = api
     api.bind(window)
     webview.start(probe, window, gui="edgechromium")
-    sys.exit(1 if FAILURES else 0)
+    sys.exit(exit_code())
 
 
 if __name__ == "__main__":

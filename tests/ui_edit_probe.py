@@ -20,20 +20,11 @@ library, APPDATA redirected before any backupviewer import.
 Run: python tests/ui_edit_probe.py
 """
 import json
-import os
 import sys
-import tempfile
 import time
-from pathlib import Path
+from probeutil import FAILURES, check, exit_code, isolate, js, poller, report
 
-ROOT = Path(__file__).parents[1]
-sys.path.insert(0, str(ROOT / "src"))
-
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-
-_TMP = Path(tempfile.mkdtemp(prefix="bv_ws_probe_"))
-os.environ["APPDATA"] = str(_TMP / "appdata")
-os.environ["BV_NO_WATCHER"] = "1"
+_TMP = isolate("bv_ws_probe_")
 
 import webview  # noqa: E402
 
@@ -41,7 +32,8 @@ from backupviewer import settings as bv_settings  # noqa: E402
 from backupviewer.api import Api  # noqa: E402
 from backupviewer.app import resource_path  # noqa: E402
 
-FAILURES = []
+# this probe waits longer than the shared default
+poll = poller(tries=30, delay=0.25)
 ROBOTS = ["RB010R01B01", "RB020R01B01"]
 PROG = "MAIN.LS"
 DEST = _TMP / "export"
@@ -73,28 +65,8 @@ PROG_BYTES = (
 SNAPS = {}
 
 
-def check(name, cond, detail=""):
-    print(f"[{'ok' if cond else 'FAIL'}] {name} {detail}")
-    if not cond:
-        FAILURES.append(name)
-
-
-def js(window, expr):
-    return window.evaluate_js(expr)
-
-
 def location_hash(window):
     return js(window, "location.hash.split('/')[0]")
-
-
-def poll(window, expr, tries=30, delay=0.25):
-    val = None
-    for _ in range(tries):
-        val = js(window, expr)
-        if val:
-            return val
-        time.sleep(delay)
-    return val
 
 
 # Splits are opened by DRAGGING onto a pane's edges, so the probe has to drive
@@ -1355,8 +1327,7 @@ def probe(window):
               f"({g.get('caretLine')!r} — the gap above must not offset it)")
         check("gaps.clear_removes_all", g.get("cleared") is True)
 
-        print()
-        print("FAILURES:", FAILURES if FAILURES else "none")
+        report()
     except Exception as e:  # noqa: BLE001
         print("[FAIL] probe crashed:", type(e).__name__, e)
         import traceback
@@ -1391,7 +1362,7 @@ def main():
     window._bv_api = api
     api.bind(window)
     webview.start(probe, window, gui="edgechromium")
-    sys.exit(1 if FAILURES else 0)
+    sys.exit(exit_code())
 
 
 if __name__ == "__main__":

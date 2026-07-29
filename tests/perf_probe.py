@@ -15,19 +15,11 @@ IPs, FakePlant). Run: python tests/perf_probe.py [--rows 2400]
 """
 import argparse
 import json
-import os
 import sys
-import tempfile
 import time
-from pathlib import Path
+from probeutil import FAILURES, check, exit_code, isolate, js, poller, report
 
-ROOT = Path(__file__).parents[1]
-sys.path.insert(0, str(ROOT / "src"))
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-
-_TMP = Path(tempfile.mkdtemp(prefix="bv_perf_"))
-os.environ["APPDATA"] = str(_TMP / "appdata")     # never touch the real settings
-os.environ["BV_NO_WATCHER"] = "1"
+_TMP = isolate("bv_perf_")
 
 import webview  # noqa: E402
 
@@ -35,7 +27,8 @@ from backupviewer import settings as bv_settings  # noqa: E402
 from backupviewer.api import Api  # noqa: E402
 from backupviewer.app import resource_path  # noqa: E402
 
-FAILURES = []
+# this probe waits longer than the shared default
+poll = poller(tries=60, delay=0.25)
 
 # what "still feels like an app" means here, in ms. Generous on purpose: these
 # are cliff detectors, not micro-benchmarks — and a plant PC is slower than a
@@ -50,29 +43,9 @@ BUDGET = {
 }
 
 
-def check(name, cond, detail=""):
-    print(f"[{'ok' if cond else 'FAIL'}] {name} {detail}")
-    if not cond:
-        FAILURES.append(name)
-
-
 def budget(name, ms):
     check(f"{name} <= {BUDGET[name]}ms", ms is not None and ms <= BUDGET[name],
           f"({ms}ms)")
-
-
-def js(window, expr):
-    return window.evaluate_js(expr)
-
-
-def poll(window, expr, tries=60, delay=0.25):
-    val = None
-    for _ in range(tries):
-        val = js(window, expr)
-        if val:
-            return val
-        time.sleep(delay)
-    return val
 
 
 def stub_js(rows):
@@ -247,8 +220,7 @@ def probe(window, rows):
         print("  " + json.dumps(pk))
         budget("picker_open", pk.get("ms"))
 
-        print()
-        print("FAILURES:", FAILURES if FAILURES else "none")
+        report()
     except Exception as e:  # noqa: BLE001
         print("[FAIL] probe crashed:", type(e).__name__, e)
         FAILURES.append("crash")
@@ -276,7 +248,7 @@ def main():
     # TypeError inside the GUI thread - the probe body never ran, the window was
     # never destroyed, and the process hung until it was killed by hand.
     webview.start(lambda: probe(window, args.rows), gui="edgechromium")
-    sys.exit(1 if FAILURES else 0)
+    sys.exit(exit_code())
 
 
 if __name__ == "__main__":

@@ -30,50 +30,17 @@ APPDATA redirected there BEFORE importing the app.
 Run: python tests/ui_bgfx_probe.py
 """
 import json
-import os
 import sys
-import tempfile
 import time
-from pathlib import Path
+from probeutil import FAILURES, check, exit_code, isolate, js, poll, report
 
-ROOT = Path(__file__).parents[1]
-sys.path.insert(0, str(ROOT / "src"))
-
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-
-# isolate settings/library under a temp APPDATA before any backupviewer import
-_TMP = Path(tempfile.mkdtemp(prefix="bv_bgfx_probe_"))
-os.environ["APPDATA"] = str(_TMP / "appdata")
-os.environ["BV_NO_WATCHER"] = "1"
+_TMP = isolate("bv_bgfx_probe_")
 
 import webview  # noqa: E402
 
 from backupviewer import settings as bv_settings  # noqa: E402
 from backupviewer.api import Api  # noqa: E402
 from backupviewer.app import resource_path  # noqa: E402
-
-FAILURES = []
-
-
-def check(name, cond, detail=""):
-    status = "ok" if cond else "FAIL"
-    print(f"[{status}] {name} {detail}")
-    if not cond:
-        FAILURES.append(name)
-
-
-def js(window, expr):
-    return window.evaluate_js(expr)
-
-
-def poll(window, expr, tries=24, delay=0.25):
-    val = None
-    for _ in range(tries):
-        val = js(window, expr)
-        if val:
-            return val
-        time.sleep(delay)
-    return val
 
 
 def probe(window):
@@ -455,8 +422,7 @@ def probe(window):
         check("keys.t_opens_display", opened == "display", f"(got {opened!r})")
         js(window, """document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))""")
 
-        print()
-        print("FAILURES:", FAILURES if FAILURES else "none")
+        report()
     except Exception as e:  # noqa: BLE001
         print("[FAIL] probe crashed:", type(e).__name__, e)
         FAILURES.append("crash")
@@ -480,7 +446,7 @@ def main():
     )
     api.bind(window)
     webview.start(probe, window, gui="edgechromium")
-    sys.exit(1 if FAILURES else 0)
+    sys.exit(exit_code())
 
 
 if __name__ == "__main__":
