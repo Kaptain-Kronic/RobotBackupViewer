@@ -143,15 +143,40 @@ human-in-the-loop tier, and it lands last.
 
 ## Testing — the definition of done
 
+### Verifying the app — the commands
+
+```powershell
+python -m pytest tests                            # unit only, ~40s — the default
+python -m pytest tests -m probe                   # the nine probes, ~2.5 min
+python -m pytest tests -m "probe or not probe"    # EVERYTHING, ~3.5 min
+```
+
+The last one is **the** verify command: it boots the real app nine times in a
+hidden WebView2 and asserts on real DOM. Spelled that way rather than `-m ""`
+because PowerShell drops an empty argument before pytest ever sees it. The
+default stays fast on purpose — a suite slow enough to stop being run is worse
+than one that skips its slowest part.
+
 - Parsers get **pytest** with synthetic fixtures that mirror real file
   shapes (self-contained, committed, identifier-clean).
 - UI gets the **hidden-window probe** pattern: boot pywebview hidden,
   drive it with `evaluate_js`, assert on real DOM. Probes that point at
-  real backups stay out of the repo.
+  real backups stay out of the repo. New probes go in `tests/`, take their
+  preamble from `tests/probeutil.py` (`isolate()` **before** any
+  `backupviewer` import), and get added to the list in `tests/test_probes.py`
+  — a probe nothing runs rots silently, which is how three of them broke.
+- **Never add a tracked `tests/conftest.py`.** The excluded one holds the
+  private `SampleBackup` fixtures; a tracked file of that name collides with
+  it. That is why `pythonpath` lives in `pyproject.toml`.
 - A feature is not done until it has run against a **real backup** and the
   numbers were checked against what the pendant/file actually says.
 - Probe environment quirks your code must survive: no `requestAnimationFrame`,
   no native scroll events, pointer capture can fail (wrap in try/catch).
+- **Assert the invariant, not the incidental number.** A check frozen to a
+  count drifts into a lie the day the code grows — `fx_menu_items` compares
+  against `BV.bgfx.EFFECTS.length` because "the menu lists every effect" is
+  the actual rule. Keep a literal only where the literal *is* the point (a
+  did-we-lose-one anchor), and say so in a comment.
 
 ## Windows / WebView2 gotchas (paid for already)
 
@@ -198,8 +223,11 @@ human-in-the-loop tier, and it lands last.
 - If the right implementation seems to require reworking something that
   already exists, stop and align first — agreeing on the seam beforehand is
   cheaper than reworking twice.
-- Run before calling anything done: `python -m pytest tests -q`, the
-  relevant probe, and the identifier/NUL sweep if you're committing.
+- Run before calling anything done:
+  `python -m pytest tests -m "probe or not probe"` (see **Verifying the app**),
+  and the identifier/NUL sweep if you're committing. Sweep the **commit
+  message** too, and print the term count — a sweep whose term set came out
+  empty passes everything.
 
 ## Quick reference — before you build X
 

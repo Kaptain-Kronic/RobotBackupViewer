@@ -165,7 +165,8 @@ shareable:
 Contributing or building alongside? Read [CLAUDE.md](CLAUDE.md) (project
 principles — also auto-loaded by Claude Code sessions in this repo) and
 [ROADMAP.md](ROADMAP.md) (what's planned, decided, and up for grabs).
-[CHANGELOG.md](CHANGELOG.md) tracks what already shipped.
+[CHANGELOG.md](CHANGELOG.md) tracks what already shipped, and
+[docs/INVENTORY.md](docs/INVENTORY.md) is a file-by-file map of the whole repo.
 
 ```
 src/backupviewer/
@@ -189,14 +190,28 @@ src/libraryimporter/
 
 ```powershell
 pip install pytest
-python -m pytest tests -q
+python -m pytest tests                            # unit only, ~40s
+python -m pytest tests -m probe                   # the UI probes, ~2.5 min
+python -m pytest tests -m "probe or not probe"    # everything, ~3.5 min
 ```
 
 The included tests (`test_ftpbackup.py`, `test_library.py`, `test_healthscan.py`,
-`test_backuplog.py`, `test_discover.py`) are self-contained — the FTP engine and health
-scan run end-to-end against in-memory fakes and synthetic fixtures. The broader parser/UI
-regression suite runs against a local backup fixture (real plant data, not
-distributed); those tests skip gracefully when it's absent.
+`test_backuplog.py`, `test_discover.py` and 35 more) are self-contained — the FTP engine
+and health scan run end-to-end against in-memory fakes and synthetic fixtures. A clean
+clone runs 585 of them with no setup beyond `pip install pytest`. A further 15 parser test
+files run against a local backup fixture (real plant data, not distributed) and are not
+published; they skip gracefully when it's absent.
+
+The **probes** are the other half: nine scripts that boot the real app in a hidden
+WebView2 window, drive it with `evaluate_js` and assert on real DOM — the library tree,
+the edit workspace, the camera remotes, the settings dialog, and a plant-scale
+performance budget over 2,400 synthetic robots. They are marked `probe` and skipped by
+default because they take about two and a half minutes; the third command above runs
+everything. Each is also runnable on its own:
+
+```powershell
+python tests/ui_tabs_probe.py
+```
 
 ## Packaging (share a single .exe)
 
