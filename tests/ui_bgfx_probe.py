@@ -66,7 +66,7 @@ def probe(window):
         time.sleep(4)  # boot
 
         check("boot.bgfx_present", js(window, "!!BV.bgfx"))
-        check("boot.effect_count", js(window, "BV.bgfx.EFFECTS.length") == 13,
+        check("boot.effect_count", js(window, "BV.bgfx.EFFECTS.length") == 19,
               f"(got {js(window, 'BV.bgfx.EFFECTS.length')})")
         check("boot.defaults_off", js(window, "BV.bgfx.activeId") == "none")
         # paint-order regression guard: the layers sit at z-index -1, which is
@@ -130,10 +130,13 @@ def probe(window):
         check("settings.tabs", disp.get("tabs") == ["display", "preferences"], f"({disp.get('tabs')})")
         check("settings.display_sections",
               disp.get("heads") == ["theme", "interface", "background"], f"({disp.get('heads')})")
-        # opacity + frost belong with the interface knobs, not the effect sliders
+        # opacity + frost belong with the interface knobs, not the effect sliders;
+        # speed/density/variance/hue drift are the per-effect params, and they
+        # trail the shared intensity/size so the shared knobs stay on top
         check("settings.display_rows",
               disp.get("rows") == ["theme", "font", "borders", "text size", "toolbar size",
-                                   "panel opacity", "frost", "effect", "intensity", "size"],
+                                   "panel opacity", "frost", "effect", "intensity", "size",
+                                   "speed", "density", "variance", "hue drift"],
               f"({disp.get('rows')})")
         # the theme row: ＋ FIRST, then the picker, tight and right-aligned with
         # the control column above it
@@ -159,7 +162,7 @@ def probe(window):
         check("settings.credit_line",
               js(window, "[...document.querySelectorAll('.modal .acc-credit')].some(function(c){return c.textContent.indexOf('odysseus') >= 0;})"))
 
-        # find a slider by its ROW LABEL, not its index — the display tab has six
+        # find a slider by its ROW LABEL, not its index — the display tab has ten
         # and a reordering must not silently retarget these checks
         def slider(label, value, event="input"):
             js(window, f"""(function(){{
@@ -171,7 +174,7 @@ def probe(window):
             }})()""")
 
         nsliders = js(window, "document.querySelectorAll('.modal.settings-win input[type=range]').length")
-        check("settings.display_sliders", nsliders == 6, f"(got {nsliders})")
+        check("settings.display_sliders", nsliders == 10, f"(got {nsliders})")
 
         # the intensity slider drives the live value and persists (debounced)
         slider("intensity", 40)
@@ -225,7 +228,7 @@ def probe(window):
         # the effect dropdown lists every effect incl. off
         js(window, "document.querySelector('.modal .btn.fx-pick').click()")
         nitems = poll(window, "document.querySelectorAll('.ctx-menu .ctx-item').length")
-        check("theme.fx_menu_items", nitems == 13, f"(got {nitems})")
+        check("theme.fx_menu_items", nitems == 19, f"(got {nitems})")
         # Esc dismisses the MENU and leaves the dialog standing. It used to take
         # the dialog with it: BV.menu's Esc was a document-capture listener and
         # the dialog's, registered first, won.

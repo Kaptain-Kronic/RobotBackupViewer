@@ -1,6 +1,17 @@
 # Changelog
 
 ## Unreleased
+- **The files tab extracts to USB.** Every row grew a checkbox — tick one,
+  shift-click a range, or take the header box, which selects exactly what the
+  filter shows (the `tp` chip plus one click is every TP file in the backup).
+  "⇪ extract" copies the ticked files byte-for-byte to a folder you choose,
+  under one folder named for the robot with each file's path kept beneath it,
+  so extracts from two robots in a row can never interleave. Same trust
+  contract as the editor's export (and the same folder pick + reveal, so both
+  remember the same last destination): never into a backup, `.part` → rename
+  landing so a yanked stick never leaves a half-written file pretending to be
+  whole, and each copy keeps the source's modified time — extracted evidence
+  still dates itself.
 - **Review your edits before they leave the tool.** A "review…" button beside
   export (and "review changes" on any program's ⋯ menu) shows original vs
   edited side by side — body lines aligned and highlighted, plus attribute
