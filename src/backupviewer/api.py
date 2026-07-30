@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -1860,6 +1861,90 @@ class Api:
             truncated = True
         return {"kind": "text", "name": p.name, "rel": s.rel(p), "size": size,
                 "text": text, "truncated": truncated}
+
+    @_endpoint
+    def files_extract(self, rels, dest, label: str = "", sid: str | None = None):
+        """Copy the ticked files of the open backup, byte-for-byte, to a folder
+        the user chose (typically a USB stick) - the files tab's sibling of the
+        editor's ws_export, sharing its trust contract: the backup is never
+        written, the destination must not be (or sit inside, or look like) a
+        backup, and every file lands .part -> os.replace so a yanked stick
+        never leaves a half-written file pretending to be whole.
+
+        Files go under ONE subfolder named after the robot (backup.json's word
+        for it, else the caller's hint, else the folder name - `_ws_label`),
+        keeping each file's path relative to the backup root, so extracting
+        from two robots in a row cannot interleave and two files that share a
+        basename in different subfolders cannot collide. Each copy keeps the
+        source's modified time: extracted evidence still dates itself.
+
+        `rels` resolve against the session's file INDEX by exact relative path
+        (never by basename search), so what is written is exactly the rows
+        that were ticked. Everything is validated before anything is written;
+        a failure mid-copy reports how far it got."""
+        if not rels:
+            raise ApiError("NO_FILES", "nothing is selected to extract")
+        if not dest:
+            raise ApiError("BAD_DEST", "an extract folder is required")
+        s = self._need_session(sid)
+        try:
+            d = Path(dest).resolve()
+        except OSError:
+            raise ApiError("BAD_DEST", "could not resolve the extract folder")
+        if looks_like_backup(d):
+            raise ApiError(
+                "BAD_DEST",
+                "that folder looks like a backup - the viewer never writes into "
+                "a backup")
+        try:
+            r = Path(s.root).resolve()
+        except OSError:
+            r = Path(s.root)
+        if d == r or library._within(d, r):
+            raise ApiError(
+                "BAD_DEST",
+                "choose a folder outside this backup - the viewer never writes "
+                "into a backup")
+        lab = self._ws_label(Path(s.root), label)
+        pairs: list[tuple[Path, str, Path]] = []   # (source, rel, target)
+        seen: set[str] = set()
+        for rel in rels:
+            key = str(rel or "").replace("\\", "/").strip("/").upper()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            p = s.files.get(key)
+            if p is None or not p.is_file():
+                raise ApiError("NOT_FOUND", f"file not found in the backup: {rel}")
+            canon = s.rel(p)                       # index casing, posix
+            pairs.append((p, canon, d.joinpath(lab, *canon.split("/"))))
+        if not pairs:
+            raise ApiError("NO_FILES", "nothing is selected to extract")
+        written: list[str] = []
+        total = 0
+        for p, canon, target in pairs:
+            part = ftpbackup.long_path(str(target) + ".part")
+            try:
+                st = p.stat()
+                os.makedirs(ftpbackup.long_path(str(target.parent)), exist_ok=True)
+                shutil.copyfile(str(p), part)
+                os.utime(part, ns=(st.st_atime_ns, st.st_mtime_ns))
+                os.replace(part, ftpbackup.long_path(str(target)))
+            except OSError as ex:
+                try:
+                    os.remove(part)
+                except OSError:
+                    pass
+                raise ApiError(
+                    "WRITE_FAILED",
+                    f"{target.name}: {ex.strerror or ex} - {len(written)} of "
+                    f"{len(pairs)} files were extracted before the failure")
+            written.append(lab + "/" + canon)
+            total += st.st_size
+        self._last_export_dest = str(d)
+        settings.set_value("last_export_folder", str(d))
+        return {"dest": str(d), "root": lab, "files": written,
+                "count": len(written), "bytes": total}
 
     # -- matrox camera photos --------------------------------------------------------
     # A Matrox DA camera saves each inspection as a jpg (preview) + png (full) +
