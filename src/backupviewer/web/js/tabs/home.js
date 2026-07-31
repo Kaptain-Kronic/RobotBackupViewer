@@ -14,6 +14,7 @@
   "use strict";
 
   var _libWrap = null;          /* the mounted library container, for in-place refresh */
+  var _tslot = null;            /* the toolbar slot: the library's action row lives there */
   var _cl = BV.checklist({ onChange: syncToolbar });   /* selected robots (shared checklist) */
   var _robots = [];             /* last loaded library list, for client-side collision checks */
   var _lastAbsorbMsg = "";      /* absorption toast dedupe (same folders every rescan) */
@@ -85,6 +86,10 @@
     if (!_libWrap || !document.body.contains(_libWrap)) return;
     var cam = viewMode() === "multicam";
     _libWrap.classList.toggle("cam-mode", cam);
+    /* the action row lives in the toolbar slot now, outside .home-library -
+       the count hides over live tiles by direct class, not an ancestor rule */
+    var sel = _tslot && _tslot.querySelector(".home-lib-selacts");
+    if (sel) sel.classList.toggle("hidden", cam);
     if (_filterBox) _filterBox.input.placeholder = cam ? "filter cameras…" : "filter robots…";
   }
 
@@ -162,6 +167,7 @@
   /* ---- screen ---- */
 
   function render(view, toolbar, params) {
+    _tslot = toolbar;
     _libWrap = BV.el("div", { class: "home-library" });
     view.appendChild(_libWrap);
     loadLibrary();
@@ -191,7 +197,7 @@
     var stopProgress = null;
     if (!body) {                                 /* first paint: build the shell once */
       _libWrap.innerHTML = "";
-      _libWrap.appendChild(buildLibraryHead());
+      buildLibraryHead();                        /* fills the topbar's toolbar slot */
       body = BV.el("div", { class: "home-lib-body" });
       _libWrap.appendChild(body);
       var loading = BV.el("div", { class: "home-lib-loading" },
@@ -238,9 +244,11 @@
      plants scroll — the per-line button rows are gone. Built once per mount;
      refreshes repaint only the body, so button state must self-maintain. */
   function buildLibraryHead() {
-    var head = BV.el("div", { class: "home-lib-head" });
-    /* (no title h2 - the active topbar cube already names the screen, and the
-       filter box anchors the row's left edge) */
+    /* the library's action row rides the shared toolbar slot inside the
+       topbar row - there is no in-view header bar anymore. Idempotent
+       because loadLibrary can rebuild the shell without a route() pass. */
+    var head = _tslot;
+    head.innerHTML = "";
 
     /* find a robot fast: filters by robot name / model / IP / note text, and a
        matching plant or line name keeps its whole group. The tree re-renders
@@ -1149,7 +1157,7 @@
   function syncToolbar() {
     if (!_libWrap) return;
     var selN = _visibleRobots.filter(function (r) { return _cl.has(r.id); }).length;
-    var count = _libWrap.querySelector(".lib-sel-count");
+    var count = _tslot && _tslot.querySelector(".lib-sel-count");
     if (count) count.textContent = selN ? selN + " selected" : "";
   }
 

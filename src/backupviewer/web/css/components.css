@@ -89,10 +89,10 @@ html.frosted #chrome-bottom { backdrop-filter: var(--glass-blur); }
    scrolling view, spans edge to edge, covers content scrolling beneath */
 .hero.stick {
   position: sticky;
-  /* sticky offsets resolve against the scrollport INSET BY #view's padding,
-     and that padding already contains the floating slab's height - adding
-     var(--chrome-top) here counts the slab twice (the "invisible block"
-     bug). -0.8rem = cancel the 0.75rem breathing room, nothing more. */
+  /* sticky offsets resolve against the scrollport inset by #view's own
+     padding - -0.8rem cancels the 0.75rem breathing room, nothing more
+     (never add chrome heights here: that double-counts, the old
+     "invisible block" bug) */
   top: -0.8rem;
   z-index: 5;
   background: var(--glass);           /* frost-aware; solid --bg at frost 0 */
@@ -1433,46 +1433,21 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 }
 
 /* ---- home / library (the main menu) ---- */
-/* the ONE action row, pinned while the plant tree scrolls (same sticky recipe
-   as .hero.stick: negative top cancels #view's padding, full-bleed margins +
-   opaque background stop rows peeking past its edges) */
+/* the library's action row (count · functions… · sort · refresh · + add)
+   lives in the topbar's toolbar slot - home.js fills it per mount, and the
+   count hides over live tiles by direct class (syncHeadMode), so there is
+   no in-view header bar anymore */
 /* boot/rescan scan progress (the membar drawn by renderScanBar lives inside) */
 .home-lib-loading { margin: 0.4rem 0 0.7rem; max-width: 30rem; }
 
-.home-lib-head {
-  /* top offset is padding-inset - see .hero.stick */
-  position: sticky; top: -0.8rem; z-index: 5;
-  background: var(--glass);           /* frost-aware; solid --bg at frost 0 */
-  backdrop-filter: var(--glass-blur);
-  /* the one permanent hairline: rows are always beneath this bar */
-  box-shadow: 0 1px 0 var(--edge-soft, var(--edge));
-  margin: -0.75rem -1.25rem 1.1rem; padding: 0.95rem 1.45rem 0.6rem;
-  /* title + filter anchor LEFT; the action clusters push right via margin
-     (space-between made the filter's position depend on which clusters the
-     lens shows — cam mode hides .home-lib-selacts and the filter drifted) */
-  display: flex; align-items: center;
-  gap: 0.5rem 1.2rem; flex-wrap: wrap;
-}
-.home-lib-selacts { display: flex; align-items: center; gap: 0.35rem; margin-left: auto; }
-.home-lib-selacts .btn { padding: 0.22rem 0.6rem; font-size: 0.8rem; }
-.home-lib-selacts .btn:disabled { opacity: 0.45; cursor: default; }
-.lib-sel-count { font-size: 0.78rem; min-width: 5.2em; text-align: right; }
+.home-lib-selacts { display: flex; align-items: center; gap: 0.35rem; }
+.lib-sel-count { font-size: 0.78rem; text-align: right; }
 .home-lib-actions { display: flex; align-items: center; gap: 0.4rem; flex: none; }
-.lib-add-robot { font-size: 0.92rem; padding: 0.4rem 0.85rem; }
 .lib-cancel-all { color: var(--error); }
 .lib-cancel-all:hover { color: var(--error); background: color-mix(in srgb, var(--error) 14%, var(--bg2)); }
 .empty-lib { color: var(--sub); font-size: 0.9rem; padding: 0.8rem 0.2rem; }
 
 /* (the backup <-> multi-cam toggle lives in the topbar cubes now) */
-
-/* multi-cam lens: the backup-selection controls and sort make no sense over
-   live tiles — hide them, keep filter / refresh / add reachable */
-/* cam tiles aren't selectable, so the count hides - but sort stays: both
-   lenses carry the same action row (functions… · sort · refresh · + add) */
-.home-library.cam-mode .home-lib-selacts { display: none; }
-/* with the selection row display:none its auto-margin is gone too - the
-   actions cluster takes over the push so the row stays put across lenses */
-.home-library.cam-mode .home-lib-actions { margin-left: auto; }
 
 /* multi-cam grid: live camera tiles inside the same plant/line folders.
    display rides the .open rule: a flat display:grid here outranked the shared
@@ -1654,6 +1629,8 @@ button.btn.danger:disabled { opacity: 0.5; cursor: default; }
 }
 .ctx-item:disabled { opacity: 0.45; cursor: default; }
 .ctx-item:disabled:hover { background: none; }
+/* "you are here" (the screens menu): same vocabulary as .cube.active */
+.ctx-item.active { color: var(--accent); }
 /* optional trailing action pill on a menu row (its own click target) */
 .ctx-item .ctx-act {
   margin-left: auto; font-size: 0.72rem; line-height: 1.4; padding: 0 0.45rem;

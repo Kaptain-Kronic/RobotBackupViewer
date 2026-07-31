@@ -83,7 +83,7 @@
     if (typing()) return;
 
     /* positional tabs follow the number row past 9: 1-9, then - and = (the
-       same list buildTabbar badges from, so key and badge always agree —
+       same list the screens menu badges from, so key and badge always agree —
        hidden always-on tabs like search/compare can never soak up a number) */
     if (!e.ctrlKey && !e.altKey) {
       var idx = -1;

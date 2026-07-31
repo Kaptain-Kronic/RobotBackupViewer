@@ -50,6 +50,10 @@
       <span class="logo-text">backup<span class="logo-accent">viewer</span></span>
     </div>
     <nav id="sessionbar" aria-label="open backups" class="hidden"></nav>
+    <!-- ONE button stands in for the tab strip: it names the current screen,
+         its dropdown is the map (badges + availability), the number keys
+         stay the fast path (router.js syncScreens) -->
+    <button id="screens-btn" class="hidden" title="screens (1-9, 0, -, =)"></button>
     <div id="topbar-right">
       <!-- every screen's search lives HERE: backup screens use the global
            box below, shell screens mount their own filter box beside it
@@ -65,7 +69,8 @@
       <button class="icon-btn ico" id="btn-help" data-icon="help" title="shortcuts (?)"></button>
     </div>
   </header>
-  <nav id="tabbar" aria-label="tabs"></nav>
+  <!-- row 2: the current screen's OWN controls, directly above the content
+       they modify (navigation above, context below - never interleaved) -->
   <div id="toolbar" class="hidden"></div>
   </div>
   <main id="view" tabindex="-1"></main>

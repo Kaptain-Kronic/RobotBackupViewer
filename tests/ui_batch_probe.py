@@ -1369,28 +1369,34 @@ def probe(window):
                     dcs:true,sysvars:true,mhvalves:true,photos:true,files:true,view3d:true}};
             BV.route();
         })()""")
+        # the strip became the screens dropdown - same number-row contract,
+        # asserted on the menu's rows ("<badge> · <label>", keyboard order)
+        js(window, "document.getElementById('screens-btn').click()")
         badges = poll(window, """(function(){
-            var f=document.querySelector('#tab-files .tab-num');
-            if(!f) return null;
-            var v3=document.getElementById('tab-view3d');
+            var rows=[].slice.call(document.querySelectorAll('.ctx-menu .ctx-item'));
+            if(!rows.length) return null;
             return JSON.stringify({
-              files: f.textContent,
-              photos: document.querySelector('#tab-photos .tab-num').textContent,
-              view3d: v3.querySelector('.tab-num').textContent,
-              kbOrder: v3.previousElementSibling.id==='tab-photos'
-                    && v3.nextElementSibling.id==='tab-files',
+              labels: rows.map(function(b){return b.textContent.trim();}),
               pos: BV.positionalTabs().map(function(t){return t.id;}),
             });
         })()""")
         badges = json.loads(badges or "{}")
-        check("keys.tenth_tab_badge_dash", badges.get("files") == "-", f"({badges})")
-        check("keys.ninth_badge_9", badges.get("photos") == "9")
-        check("keys.view3d_badge_0", badges.get("view3d") == "0")
-        check("keys.zero_sits_between_9_and_dash", badges.get("kbOrder") is True,
-              f"({badges})")
+        lbl = badges.get("labels") or []
+
+        def at(prefix):
+            hits = [i for i, s in enumerate(lbl) if s.startswith(prefix)]
+            return hits[0] if hits else -1
+        i9, i0, idash = at("9 · photos"), at("0 · "), at("- · files")
+        check("keys.ninth_badge_9", i9 >= 0, f"({lbl})")
+        check("keys.view3d_badge_0", i0 >= 0, f"({lbl})")
+        check("keys.tenth_tab_badge_dash", idash >= 0, f"({lbl})")
+        check("keys.zero_sits_between_9_and_dash",
+              0 <= i9 < i0 < idash, f"({lbl})")
         check("keys.positional_list",
               badges.get("pos", [])[-1:] == ["files"] and len(badges.get("pos", [])) == 10,
               f"({badges.get('pos')})")
+        js(window, "document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))")
+        time.sleep(0.3)
         js(window, """document.activeElement && document.activeElement.blur();
             document.dispatchEvent(new KeyboardEvent('keydown', {key:'-', bubbles:true}))""")
         check("keys.dash_opens_tenth",

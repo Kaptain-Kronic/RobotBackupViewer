@@ -2,7 +2,6 @@
 (function () {
   "use strict";
 
-  var tabbar = document.getElementById("tabbar");
   var view = document.getElementById("view");
   var toolbar = document.getElementById("toolbar");
   var statusL = document.getElementById("status-left");
@@ -38,15 +37,21 @@
     });
   };
 
-  function buildTabbar() {
-    tabbar.innerHTML = "";
-    /* shell screens (home/backup) own the whole window - no viewer tabs in the
-       bar until a robot is actually open */
-    if (!BV.state.manifest) return;
-    /* display order = the keyboard's number row, exactly: 1..9, then 0 (the
-       pinned 3d view), then - and =. With ten-plus positional tabs the 3d tab
-       moves in FRONT of the tenth so its 0 badge sits between 9 and -; with
-       nine or fewer it stays at the end, right after the last digit. */
+  /* ---- the screens button ----
+     ONE dropdown stands in for the old tab strip: the strip could never
+     share the top row with chips + search (it alone outgrew the window),
+     and it put screen NAVIGATION under the screen CONTROLS. The button
+     names where you are ("5 · programs"), the menu is the map - same
+     number badges, same disabled-dim honesty for tabs this backup lacks -
+     and the number-row keys stay the fast path (keys.js reads the same
+     list, so key and badge can never drift). */
+  var screensBtn = document.getElementById("screens-btn");
+
+  /* display order = the keyboard's number row, exactly: 1..9, then 0 (the
+     pinned 3d view), then - and =. With ten-plus positional tabs the 3d tab
+     moves in FRONT of the tenth so its 0 badge sits between 9 and -; with
+     nine or fewer it stays at the end, right after the last digit. */
+  function screenList() {
     var tabs = BV.tabs.filter(function (t) { return !t.hidden; });
     var v3 = tabs.find(function (t) { return t.id === "view3d"; });
     if (v3) {
@@ -60,26 +65,38 @@
       tabs.splice(at, 0, v3);
     }
     var n = 0;
-    tabs.forEach(function (tab) {
+    return tabs.map(function (tab) {
       var enabled = BV.tabEnabled(tab);
       /* the 3d view is pinned to the 0 key, so its badge shows 0 and it
          never consumes a positional number-row slot */
       var badge = "";
       if (enabled) badge = tab.id === "view3d" ? "0" : BV.tabKeyBadge(n++);
-      var b = BV.el("button", { class: "tab-btn", id: "tab-" + tab.id },
-        (badge ? '<span class="tab-num">' + badge + "</span>" : "") + BV.esc(tab.label));
-      b.disabled = !enabled;
-      if (!enabled) b.title = "not available in this backup";
-      b.addEventListener("click", function () { location.hash = "#" + tab.id; });
-      tabbar.appendChild(b);
+      return { tab: tab, badge: badge, enabled: enabled };
     });
   }
 
-  function setActive(tabId) {
-    tabbar.querySelectorAll(".tab-btn").forEach(function (b) {
-      b.classList.toggle("active", b.id === "tab-" + tabId);
-    });
+  function syncScreens(tabId) {
+    if (!BV.state.manifest || !tabId) { screensBtn.innerHTML = ""; return; }
+    var cur = null;
+    screenList().forEach(function (e) { if (e.tab.id === tabId) cur = e; });
+    screensBtn.innerHTML =
+      (cur && cur.badge ? '<span class="tab-num">' + cur.badge + "</span>" : "") +
+      BV.esc(cur ? cur.tab.label : "screens") +
+      '<span class="scr-caret">▾</span>';
   }
+
+  screensBtn.addEventListener("click", function () {
+    var curId = location.hash.slice(1).split("/")[0];
+    BV.menu(screensBtn, screenList().map(function (e) {
+      return {
+        label: (e.badge ? e.badge + " · " : "") + e.tab.label,
+        disabled: !e.enabled,
+        title: e.enabled ? "" : "not available in this backup",
+        active: e.tab.id === curId,
+        onClick: function () { location.hash = "#" + e.tab.id; },
+      };
+    }));
+  });
 
   /* the credit is a clickable pill: it's the app's only "who made this / how do
      I reach you" affordance, so it has to LOOK clickable without shouting over
@@ -173,74 +190,48 @@
   new MutationObserver(function () {
     toolbar.classList.toggle("hidden", !toolbar.firstElementChild ||
       !toolbar.firstElementChild.childElementCount);
-    scheduleMeasure();   /* the toggle just changed the slab's height */
   }).observe(toolbar, { childList: true, subtree: true });
 
-  /* ---- scroll-under chrome ----
-     The bars are frosted slabs floating over #view (base.css); #view pads
-     itself by their real heights, re-measured whenever they change (bars
-     wrap, the toolbar comes and goes, the jobstrip appears mid-run).
-     DELIVERY RULE (paid for): ResizeObserver/rAF ticks are throttled to
-     death in hidden windows and were seen going stale in the live app -
-     every re-measure here rides a MutationObserver microtask or an explicit
-     call, which always deliver. The var going stale is exactly the
-     "invisible unfrosted block pushing content down" bug. */
+  /* ---- chrome edges ----
+     The chrome sits IN FLOW above #view (content-scroll-under retired: rows
+     ghosting under glass cost three rounds of bugs and ate the scrollbar,
+     while the part that made the look - the background effect through the
+     frost - never needed it). What remains is honest edges: a hairline per
+     edge only while content is actually clipped there, and a sticky header
+     pinned against the chrome supplies the panel's one line itself. */
   var chromeTop = document.getElementById("chrome-top");
   function underChrome() {
-    /* hairlines only while content is actually beneath a slab */
     var st = view.scrollTop;
     document.body.classList.toggle("under-top", st > 1);
     document.body.classList.toggle("under-bottom",
       st + view.clientHeight < view.scrollHeight - 1);
-    /* a pinned sticky header touching the slab fuses with it: the slab's
-       hairline yields, the pair reads as ONE panel with ONE bottom line
-       (the header's own) */
-    var head = view.querySelector(".home-lib-head, .hero.stick, .cmp-head");
+    /* builders REGISTER the fusing head (BV.chrome.fusedHead) - a per-scroll
+       querySelector against a plant-scale tree was real milliseconds */
+    var head = BV.chrome.fusedHead;
     var fused = false;
-    if (head) {
+    if (head && head.isConnected) {
       var r = head.getBoundingClientRect();
       var topH = chromeTop.offsetHeight;
       fused = r.top <= topH + 2 && r.bottom > topH;
     }
     document.body.classList.toggle("chrome-fused", fused);
   }
-  function measureChrome() {
-    /* only the top slab floats; the bottom bar is in flow and needs no var */
-    document.documentElement.style.setProperty("--chrome-top",
-      chromeTop.offsetHeight + "px");
-    underChrome();
-  }
-  /* coalesce measure storms (a route rebuilds the tabbar node by node) into
-     one microtask - it also lands AFTER same-tick MutationObserver class
-     toggles, so it always sees the settled slab */
-  var chromePending = false;
-  function scheduleMeasure() {
-    if (chromePending) return;
-    chromePending = true;
-    Promise.resolve().then(function () { chromePending = false; measureChrome(); });
-  }
   BV.chrome = {
-    measure: measureChrome,
-    top: function () { return chromeTop.offsetHeight; },
+    fusedHead: null,   /* the screen's chrome-fusing sticky header, if any */
   };
-  /* anything that changes what the slab holds re-measures it: class flips
-     (tabbar hidden), node churn (session chips, tab rebuilds) */
-  new MutationObserver(scheduleMeasure).observe(chromeTop,
-    { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
-  window.addEventListener("resize", measureChrome);
   view.addEventListener("scroll", underChrome, { passive: true });
-  measureChrome();
+  window.addEventListener("resize", underChrome);
+  underChrome();
 
   function isShell(tab) { return !!(tab && tab.shell); }
 
-  /* the search box + compare + the 1-9 tabbar are backup-viewer chrome - hide
-     them on the shell (home/backup) screens so the main menu's topbar is just
-     logo·⚙·?. buildTabbar() keys off "manifest present", which stays true
-     once a robot is open, so the tabbar must be hidden here by ROUTE instead. */
+  /* the search box + the screens button are backup-viewer chrome - hide them
+     on the shell (home/cam/edit) screens. "manifest present" stays true once
+     a robot is open, so they must be hidden here by ROUTE instead. */
   function setTopbarChrome(shell) {
     var s = document.getElementById("global-search");
     if (s) s.classList.toggle("hidden", shell);
-    if (tabbar) tabbar.classList.toggle("hidden", shell);
+    if (screensBtn) screensBtn.classList.toggle("hidden", shell);
     /* the SESSION tab strip stays through shell screens (browser behavior -
        home is just a screen); it only un-highlights there */
     if (BV.session) BV.session.setShell(shell);
@@ -252,14 +243,12 @@
 
     /* running outside the app shell (plain browser, no python bridge): keep the
        old "launch via run.py" hint instead of a home screen that can't load */
-    if (!BV.api.bridged) { buildTabbar(); setActive(null); updateStatus(); setTopbarChrome(true); emptyState(); return; }
+    if (!BV.api.bridged) { syncScreens(null); updateStatus(); setTopbarChrome(true); emptyState(); return; }
 
     var hash = location.hash.slice(1);
     var parts = hash.split("/");
     var tabId = parts[0] || (BV.state.manifest ? "overview" : "home");
     var tab = BV.tabs.find(function (t) { return t.id === tabId; });
-
-    buildTabbar();
 
     /* router-initiated redirects REPLACE the current history entry instead of
        pushing one. A pushed redirect turns history.back() into a trap: on a
@@ -286,13 +275,14 @@
         || BV.tabs[BV.tabs.length - 1];
       if (("#" + tab.id) !== location.hash) { location.replace("#" + tab.id); return; }
     }
-    setActive(tab.id);
+    syncScreens(isShell(tab) ? null : tab.id);
     setTopbarChrome(isShell(tab));
     /* every redirect path above returns, so the hash and tab.id agree by here */
     syncCubes();
     /* remember where this backup's tab is, so switching back lands there */
     if (!isShell(tab) && BV.session) BV.session.noteHash(location.hash);
     view.classList.remove("no-pad");
+    BV.chrome.fusedHead = null;   /* the incoming screen registers its own */
     /* a shell screen may have mounted its own filter box in the topbar
        search slot - it dies with the screen */
     [].forEach.call(document.querySelectorAll("#topbar-search .screen-search"),
@@ -312,7 +302,7 @@
     view.appendChild(slot);
     tab.render(slot, tslot, parts.slice(1));
     updateStatus();
-    measureChrome();   /* tab switches change the tabbar/toolbar rows */
+    underChrome();   /* fresh screen, fresh edge state */
   }
 
   BV.openBackupFlow = function () {
@@ -321,7 +311,6 @@
       return BV.api.call("open_backup", path).then(function (manifest) {
         BV.session.open(manifest);
         BV.state.setManifest(manifest);
-        buildTabbar();
         BV.toast(manifest.robot_name ? manifest.robot_name + " · " + manifest.file_count + " files" : "backup opened");
         if (location.hash !== "#overview") location.hash = "#overview";
         else route();
@@ -432,7 +421,6 @@
      the new row height and em column widths */
   BV.state.on("uiprefs", function () {
     if (BV.state.manifest) route();
-    measureChrome();   /* chrome-fs changes bar heights on shell screens too */
   });
 
   /* a found update re-renders the statusbar (the pill lives in rightStatusHtml) */
@@ -440,7 +428,7 @@
 
   /* ---- boot ---- */
   BV.api.ready.then(function (bridged) {
-    if (!bridged) { buildTabbar(); emptyState(); updateStatus(); return; }
+    if (!bridged) { emptyState(); updateStatus(); return; }
     /* a popped-out CV-X window is nothing but the remote: no backup, no tabs,
        no routing - load the theme so the overlay is dressed, then adopt the
        session that already exists and fill the window with it */
@@ -479,7 +467,6 @@
         }
         BV.state.setManifest(manifest);
       }
-      buildTabbar();
       /* with a backup passed at startup, land in its viewer; otherwise the home
          menu. a deep-link hash (other than #home) is honoured when a backup is open. */
       var want = BV.solo

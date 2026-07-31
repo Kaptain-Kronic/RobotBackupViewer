@@ -286,11 +286,13 @@ window.BV = {};
     items.forEach(function (it) {
       /* it.action = {label,title,onClick}: a small trailing pill on the row with
          its own click (e.g. the date-picker's "vs" -> compare with that date) */
-      var b = BV.el("button", { class: "ctx-item" + (it.danger ? " danger" : "") },
+      var b = BV.el("button", { class: "ctx-item" + (it.danger ? " danger" : "") +
+        (it.active ? " active" : "") },
         BV.esc(it.label) +
         (it.action ? '<span class="ctx-act" title="' + BV.esc(it.action.title || "") + '">' +
           BV.esc(it.action.label) + "</span>" : ""));
       if (it.disabled) b.disabled = true;   /* e.g. selection-gated rows */
+      if (it.title) b.title = it.title;
       b.addEventListener("click", function (e) {
         e.stopPropagation();
         if (handle) handle.close();

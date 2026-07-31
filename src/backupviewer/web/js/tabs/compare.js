@@ -312,6 +312,7 @@
       sections = [];
 
       var head = BV.el("div", { class: "cmp-head" });
+      if (BV.chrome) BV.chrome.fusedHead = head;   /* fuses with the slab hairline */
       head.innerHTML = sideHtml(data.a, "a") +
         '<span class="cmp-vs">vs</span>' + sideHtml(data.b, "b") +
         '<span class="ov-chips" style="margin-left:auto"><span class="ov-chip">' +
