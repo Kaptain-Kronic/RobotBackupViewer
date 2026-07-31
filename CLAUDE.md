@@ -130,8 +130,14 @@ human-in-the-loop tier, and it lands last.
   `--edge`, `--sub`, `--ok/--warn/--error`, …). Never hardcode a color —
   derive from the variables (zone colors hue-rotate `--accent`, so all 28
   themes keep their character).
-- Labels lowercase; status shown as pills (`ok-soft` / `warn` / `err`);
-  disabled things render dim, not hidden.
+- Labels lowercase; status shown as pills (`ok-soft` / `warn` / `err`).
+- **Feature surfaces vanish when unusable; evidence never does.** A screen
+  this backup can't have, a lens with zero cameras behind it, an action with
+  nothing to act on — gone entirely, not greyed (no data → no display). But
+  anything that says something ABOUT a backup's contents is evidence and
+  stays honestly visible: empty/disabled entries listed behind the
+  show-empty toggle, and compare always shows a side's absence
+  (`non-existent`) — there, the absence IS the finding.
 - **Least input, most info.** A view scrolls only when it truly overflows —
   phantom scrollbars are bugs. Two-pane screens give each pane its own
   scroll. Every tab restores exactly how you left it (scroll, sort, folds,

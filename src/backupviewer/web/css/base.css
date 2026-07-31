@@ -186,9 +186,9 @@ body.chrome-fused #chrome-top::after { opacity: 0; }
 .logo-text { font-size: 1.05em; font-weight: 600; color: var(--text); letter-spacing: -0.02em; }
 .logo-accent { color: var(--accent); }
 
-/* the screens button (overview/frames/io/… behind one dropdown): names the
-   current screen, never outgrows the row like the old tab strip did.
-   Hidden by route on shell screens (setTopbarChrome). */
+/* the standalone screens button: SOLO POP-OUTS ONLY (no tab strip there) -
+   the main window's screens menu rides the active session tab instead.
+   Hidden by route everywhere else (setTopbarChrome). */
 #screens-btn {
   appearance: none;
   background: var(--bg2);
@@ -205,7 +205,6 @@ body.chrome-fused #chrome-top::after { opacity: 0; }
   flex: none;
 }
 #screens-btn:hover { color: var(--accent); }
-#screens-btn .tab-num { opacity: 0.5; font-size: 0.75em; margin-right: 0.4em; }
 #screens-btn .scr-caret { opacity: 0.5; font-size: 0.75em; margin-left: 0.5em; }
 
 /* ---- the backup tab strip (backuptabs.js) ---- */
@@ -236,6 +235,10 @@ body.chrome-fused #chrome-top::after { opacity: 0; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: 0.78em;
 }
+/* the breadcrumb segment on the ACTIVE tab ("· io ▾"): where you are inside
+   the backup, and the handle for the screens menu (backuptabs.js) */
+.stab-screen { color: var(--sub); font-size: 0.72em; white-space: nowrap; flex: none; }
+.stab.active:hover .stab-screen { color: var(--text); }
 .stab-x {
   appearance: none; background: none; border: none;
   color: var(--sub); cursor: pointer;

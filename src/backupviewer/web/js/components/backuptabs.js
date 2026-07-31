@@ -17,7 +17,8 @@
   "use strict";
 
   var bar = document.getElementById("sessionbar");
-  var onShell = false;   /* router tells us; shell routes highlight no tab */
+  var onShell = false;      /* router tells us; shell routes highlight no tab */
+  var screenLabel = null;   /* breadcrumb segment on the active tab ("io") */
 
   function find(sid) {
     return BV.session.list.find(function (t) { return t.sid === sid; });
@@ -128,6 +129,15 @@
     var t = find(BV.session.currentSid);
     if (t) t.lastHash = hash;
   };
+  /* the active tab is a BREADCRUMB: "DD… · io ▾". The router feeds the
+     screen name per route (null on shell screens - the segment vanishes,
+     tabs read as pure robot names there). Clicking the active tab opens
+     the screens menu; every other click still switches tabs. */
+  BV.session.setScreen = function (label) {
+    if (screenLabel === label) return;
+    screenLabel = label;
+    render();
+  };
   BV.session.setShell = function (shell) {
     if (onShell === shell) return;
     onShell = shell;
@@ -196,6 +206,10 @@
       var el = BV.el("div", { class: "stab" + (active ? " active" : ""), title: t.sid });
       el.dataset.sid = t.sid;
       el.appendChild(BV.el("span", { class: "stab-label" }, BV.esc(t.label)));
+      if (active && screenLabel) {
+        el.appendChild(BV.el("span", { class: "stab-screen",
+          title: "screens (1-9, 0, -, =)" }, "· " + BV.esc(screenLabel) + " ▾"));
+      }
       var x = BV.el("button", { class: "stab-x", title: "close" }, "✕");
       x.addEventListener("click", function (e) {
         e.stopPropagation();
@@ -205,6 +219,8 @@
       el.addEventListener("click", function () {
         if (_dr.isRecentDrag()) return;
         if (onShell || t.sid !== BV.session.currentSid) BV.session.switchTo(t.sid);
+        /* clicking the tab you are already ON asks "where within?" */
+        else if (screenLabel && BV.screensMenu) BV.screensMenu(el);
       });
       el.addEventListener("auxclick", function (e) {
         if (e.button === 1) BV.session.close(t.sid);

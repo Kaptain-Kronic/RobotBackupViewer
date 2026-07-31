@@ -86,10 +86,8 @@
     if (!_libWrap || !document.body.contains(_libWrap)) return;
     var cam = viewMode() === "multicam";
     _libWrap.classList.toggle("cam-mode", cam);
-    /* the action row lives in the toolbar slot now, outside .home-library -
-       the count hides over live tiles by direct class, not an ancestor rule */
-    var sel = _tslot && _tslot.querySelector(".home-lib-selacts");
-    if (sel) sel.classList.toggle("hidden", cam);
+    /* (the selection count hides itself whenever the selection is empty -
+       syncToolbar - which covers the cam lens for free: tiles can't select) */
     if (_filterBox) _filterBox.input.placeholder = cam ? "filter cameras…" : "filter robots…";
   }
 
@@ -274,11 +272,12 @@
        are flipped by the topbar's book/camera cubes now, not by a control
        inside the screen they change) */
 
-    /* the selection count is the only always-visible selection UI now — the
-       selection ACTIONS live in the functions… menu below */
-    var selActs = BV.el("div", { class: "home-lib-selacts" });
+    /* the selection count trails the row and exists only while something is
+       selected (appended after headActs below) - an empty-but-visible
+       container still costs a flex gap, which nudged the buttons on one
+       lens and not the other */
+    var selActs = BV.el("div", { class: "home-lib-selacts hidden" });
     selActs.appendChild(BV.el("span", { class: "lib-sel-count dim" }, ""));
-    head.appendChild(selActs);
 
     var headActs = BV.el("div", { class: "home-lib-actions" });
     /* ONE dropdown for everything you can DO to the library: the selection
@@ -379,6 +378,7 @@
     headActs.appendChild(rescanBtn);
     headActs.appendChild(addBtn);
     head.appendChild(headActs);
+    head.appendChild(selActs);
     syncHeadMode();   /* a remount lands in the persisted lens, head included */
     return head;
   }
@@ -1158,7 +1158,11 @@
     if (!_libWrap) return;
     var selN = _visibleRobots.filter(function (r) { return _cl.has(r.id); }).length;
     var count = _tslot && _tslot.querySelector(".lib-sel-count");
-    if (count) count.textContent = selN ? selN + " selected" : "";
+    if (count) {
+      count.textContent = selN ? selN + " selected" : "";
+      /* hide, don't blank: an empty flex item still costs the row a gap */
+      count.parentElement.classList.toggle("hidden", !selN);
+    }
   }
 
   /* the manage-backups modal (manage_ui.js) drives the selected-robot flows

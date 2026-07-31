@@ -76,27 +76,38 @@
   }
 
   function syncScreens(tabId) {
-    if (!BV.state.manifest || !tabId) { screensBtn.innerHTML = ""; return; }
     var cur = null;
-    screenList().forEach(function (e) { if (e.tab.id === tabId) cur = e; });
-    screensBtn.innerHTML =
-      (cur && cur.badge ? '<span class="tab-num">' + cur.badge + "</span>" : "") +
-      BV.esc(cur ? cur.tab.label : "screens") +
-      '<span class="scr-caret">▾</span>';
+    if (BV.state.manifest && tabId) {
+      screenList().forEach(function (e) { if (e.tab.id === tabId) cur = e; });
+    }
+    /* the ACTIVE SESSION TAB is the everyday host: it grows a breadcrumb
+       segment ("DD… · io ▾") and opens the menu (backuptabs.js). The
+       standalone button exists for solo pop-outs only - they have no tab
+       strip. Hotkey digits live in the menu ROWS alone. */
+    if (BV.session.setScreen) BV.session.setScreen(cur ? cur.tab.label : null);
+    screensBtn.innerHTML = cur
+      ? BV.esc(cur.tab.label) + '<span class="scr-caret">▾</span>'
+      : "";
   }
 
-  screensBtn.addEventListener("click", function () {
+  /* the screens menu, anchored wherever its host lives (active tab / solo
+     button). Screens this backup doesn't have are GONE, not greyed (the
+     feature-vs-evidence rule: an absent screen is a missing FEATURE here;
+     absence-as-EVIDENCE belongs to compare, which always shows it) - the
+     number badges are untouched, they were only ever assigned to enabled
+     screens */
+  BV.screensMenu = function (anchor) {
     var curId = location.hash.slice(1).split("/")[0];
-    BV.menu(screensBtn, screenList().map(function (e) {
-      return {
-        label: (e.badge ? e.badge + " · " : "") + e.tab.label,
-        disabled: !e.enabled,
-        title: e.enabled ? "" : "not available in this backup",
-        active: e.tab.id === curId,
-        onClick: function () { location.hash = "#" + e.tab.id; },
-      };
-    }));
-  });
+    return BV.menu(anchor, screenList().filter(function (e) { return e.enabled; })
+      .map(function (e) {
+        return {
+          label: (e.badge ? e.badge + " · " : "") + e.tab.label,
+          active: e.tab.id === curId,
+          onClick: function () { location.hash = "#" + e.tab.id; },
+        };
+      }));
+  };
+  screensBtn.addEventListener("click", function () { BV.screensMenu(screensBtn); });
 
   /* the credit is a clickable pill: it's the app's only "who made this / how do
      I reach you" affordance, so it has to LOOK clickable without shouting over
@@ -231,7 +242,9 @@
   function setTopbarChrome(shell) {
     var s = document.getElementById("global-search");
     if (s) s.classList.toggle("hidden", shell);
-    if (screensBtn) screensBtn.classList.toggle("hidden", shell);
+    /* solo pop-outs have no session tabs, so only THEY show the standalone
+       screens button; the main window's host is the active tab itself */
+    if (screensBtn) screensBtn.classList.toggle("hidden", shell || !BV.solo);
     /* the SESSION tab strip stays through shell screens (browser behavior -
        home is just a screen); it only un-highlights there */
     if (BV.session) BV.session.setShell(shell);

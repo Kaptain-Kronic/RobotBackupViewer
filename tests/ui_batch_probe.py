@@ -1370,8 +1370,11 @@ def probe(window):
             BV.route();
         })()""")
         # the strip became the screens dropdown - same number-row contract,
-        # asserted on the menu's rows ("<badge> · <label>", keyboard order)
-        js(window, "document.getElementById('screens-btn').click()")
+        # asserted on the menu's rows ("<badge> · <label>", keyboard order).
+        # BV.screensMenu is the shared builder behind both hosts (the active
+        # session tab in the main window, the standalone button in solo);
+        # this synthetic manifest has no session tab, so call it directly.
+        js(window, "BV.screensMenu(document.getElementById('topbar-cubes'))")
         badges = poll(window, """(function(){
             var rows=[].slice.call(document.querySelectorAll('.ctx-menu .ctx-item'));
             if(!rows.length) return null;
