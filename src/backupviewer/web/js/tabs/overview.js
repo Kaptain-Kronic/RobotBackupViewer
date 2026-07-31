@@ -275,7 +275,7 @@
     backups.forEach(function (b) { if (b.path === current) cur = b; });
     var label = fmtBackupDate((cur || backups[0]).taken);
     var btn = BV.el("button", { class: "btn ov-datepick", title: "switch to another dated backup" },
-      "🕓 " + BV.esc(label));
+      BV.esc(label));
     btn.addEventListener("click", function () {
       /* "latest" tags the newest COMPLETE snapshot - a partial (a pull that
          died mid-download) can sit newest in the list but is never "latest" */
@@ -304,7 +304,7 @@
     var path = man.current_path || "";
     if (!path) return null;
     var btn = BV.el("button", { class: "btn ov-openloc", title: "open this backup's folder in Explorer" },
-      "📂 open location");
+      "open location");
     btn.addEventListener("click", function () {
       if (BV.openLocation) BV.openLocation(path);
       else BV.api.call("open_path", path).catch(function (e) { BV.toast(e.message); });

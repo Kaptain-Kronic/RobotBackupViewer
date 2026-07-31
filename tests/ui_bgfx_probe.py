@@ -120,7 +120,8 @@ def probe(window):
         # dials render into the separate .fx-own host under their own heading,
         # and `rain` (set above) has no rack - so this list is the globals only.
         check("settings.display_rows",
-              disp.get("rows") == ["theme", "font", "borders", "text size", "toolbar size",
+              disp.get("rows") == ["theme", "font", "borders", "frosted chrome",
+                                   "text size", "toolbar size",
                                    "panel opacity", "frost", "effect", "intensity", "size",
                                    "speed", "density", "variance", "hue drift"],
               f"({disp.get('rows')})")

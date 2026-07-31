@@ -121,7 +121,7 @@
     follow(b, a);
 
     function paintLock() {
-      lock.textContent = self.linked ? "🔒" : "🔓";
+      lock.innerHTML = BV.icon(self.linked ? "lock" : "unlock");
       lock.title = self.linked
         ? "panes scroll together — click to scroll independently"
         : "panes scroll independently — click to link them";

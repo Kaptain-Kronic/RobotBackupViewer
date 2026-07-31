@@ -145,6 +145,11 @@ body { overflow: hidden; }
 }
 #chrome-top::after { bottom: 0; }
 #chrome-bottom::before { top: 0; }
+/* the "frosted chrome" toggle (⚙ display): opaque bars for anyone who wants
+   the frost elsewhere but a calm solid header/footer */
+html.chrome-solid #chrome-top, html.chrome-solid #chrome-bottom { background: var(--bg); }
+html.chrome-solid.frosted #chrome-top,
+html.chrome-solid.frosted #chrome-bottom { backdrop-filter: none; }
 body.under-top #chrome-top::after { opacity: 1; }
 body.under-bottom #chrome-bottom::before { opacity: 1; }
 /* a sticky header pinned against the slab supplies the panel's bottom line

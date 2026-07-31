@@ -996,16 +996,18 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
   user-select: none;
 }
 .mt-lock:hover { opacity: 1; }
+.mt-lock .bv-ico { width: 0.85rem; height: 0.85rem; display: block; }
 .multitable.mt-stack { grid-template-rows: 1fr 1fr; }
 .mt-pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+/* caps + a touch more breathing room: these name whole panes, not rows */
 .mt-label {
-  font-size: 0.92rem; color: var(--text); text-transform: lowercase;
-  padding: 0 0.2rem 0.35rem; user-select: none; font-weight: 600;
+  font-size: 0.85rem; color: var(--text); text-transform: uppercase;
+  letter-spacing: 0.05em; padding: 0.15rem 0.2rem 0.6rem;
+  user-select: none; font-weight: 600;
   text-align: center;
 }
-/* when labels exist, the lock drops below them so robot names / "di · inputs"
-   stay readable; the lock itself stays tiny */
-.multitable.mt-haslabels .mt-lock { top: 1.9rem; }
+/* the lock sits BETWEEN the pane headers (top of the divider) - dropping it
+   below them parked it on top of the panes' scrollbars */
 .mt-table { flex: 1 1 auto; min-height: 0; }
 
 /* ---- frames tab: collapsible section headers (tool/user/jog/payloads) ---- */

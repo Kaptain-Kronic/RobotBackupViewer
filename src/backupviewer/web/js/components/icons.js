@@ -28,6 +28,11 @@
     help: '<path d="M9.35 8.9 C9.35 6.95 10.55 5.8 12.15 5.8 C13.75 5.8 14.85 6.9 14.85 8.4 ' +
       'C14.85 9.9 13.9 10.55 12.95 11.2 C12.15 11.75 11.95 12.3 11.95 13.5 L11.95 13.9"/>' +
       '<path d="M11.95 17.3 L11.95 17.35"/>',
+    /* padlock pair for the MultiTable scroll link (closed = panes together) */
+    lock: '<rect x="5.5" y="10.5" width="13" height="9" rx="1.6"/>' +
+      '<path d="M8.5 10.5 L8.5 7.5 A3.5 3.5 0 0 1 15.5 7.5 L15.5 10.5"/>',
+    unlock: '<rect x="5.5" y="10.5" width="13" height="9" rx="1.6"/>' +
+      '<path d="M8.5 10.5 L8.5 7.5 A3.5 3.5 0 0 1 15.5 7.5 L15.5 8.9"/>',
     /* monitor + filled cursor: "drive that screen from here" */
     remote: '<rect x="3.2" y="4.8" width="17.6" height="12.4" rx="1.6"/>' +
       '<path d="M12 17.2 L12 19.6 M8.4 19.6 L15.6 19.6"/>' +
