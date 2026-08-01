@@ -1,8 +1,8 @@
 /* components/fk.js - BV.fk: FANUC forward kinematics over an imported
-   .def chain. The JS twin of parsers/kinematics.py (the probe holds the
-   two equal on real data); see that module's docstring for the chain
-   derivation and how the convention was proven against controllers'
-   own CURPOS reports.
+   .def chain. The JS twin of parsers/kinematics.py (tests/ui_fk_probe.py
+   holds the two equal to 1e-6 across builtin chains); see that module's
+   docstring for the chain derivation and how the convention was proven
+   against controllers' own CURPOS reports.
 
    Matrices are row-major 4x4 nested arrays, angles in degrees, mm. */
 (function () {

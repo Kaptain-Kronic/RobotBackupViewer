@@ -21,7 +21,7 @@ markers = [
 # bare `pytest` stays fast and the probes are asked for (a command-line -m
 # beats this one):
 #   python -m pytest tests                            unit only, the default
-#   python -m pytest tests -m probe                   the nine probes
+#   python -m pytest tests -m probe                   the ten probes
 #   python -m pytest tests -m "probe or not probe"    EVERYTHING
 # the everything form is spelled that way, not -m "", because PowerShell drops
 # an empty argument before pytest ever sees it.

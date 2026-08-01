@@ -4,7 +4,7 @@ The probes are the only thing that checks the app actually WORKS - real DOM in
 a real WebView2 - and until now pytest never ran any of them, because none of
 them is named test_*.py. This file is the missing wiring.
 
-Why a subprocess per probe rather than nine in-process pytest modules:
+Why a subprocess per probe rather than ten in-process pytest modules:
 
   * each probe pins APPDATA and BV_NO_WATCHER at import time and then imports
     backupviewer; two of them in one interpreter and the second one's sandbox
@@ -29,8 +29,8 @@ pyproject.toml, because ~2.5 minutes is long enough that a fast suite stops
 being run at all:
 
     python -m pytest tests                          # unit only, ~40s
-    python -m pytest tests -m probe                 # the nine probes, ~2.5 min
-    python -m pytest tests -m "probe or not probe"  # EVERYTHING, ~3.2 min
+    python -m pytest tests -m probe                 # the ten probes, ~2.5 min
+    python -m pytest tests -m "probe or not probe"  # EVERYTHING, ~3.5 min
 
 (the everything form is spelled out rather than -m "" because PowerShell drops
 an empty argument before pytest ever sees it.)
@@ -53,6 +53,7 @@ PROBES = [
     "ui_bgfx_probe.py",
     "ui_cvxremote_probe.py",
     "ui_edit_probe.py",
+    "ui_fk_probe.py",
     "ui_sim_export_probe.py",
     "ui_tabs_probe.py",
     "ui_updatecheck_probe.py",
