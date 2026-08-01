@@ -2,6 +2,12 @@
 
 Investigation only — no code was changed. Written 2026-07-28 against
 `home.js` at 2,277 lines (working tree, one uncommitted comment hunk).
+**Re-anchored 2026-07-31 against `main` @ `63f7196`** (`home.js` at 2,295
+lines): every line range, count and inline `file:line` cite below was
+re-derived against that revision. The two UI-chrome batches in between
+moved the library's action row into the topbar's toolbar slot and put the
+selection actions behind the functions… menu — the analysis and the
+phasing stand unchanged.
 
 > **Status.** Phase 0's first item is done (`perf_probe` runs again, and is
 > now collected). Its other two items — a flow probe for batch backup and for
@@ -20,30 +26,30 @@ whole file.
 
 | Lines | n | Responsibility | Kind |
 |---|---:|---|---|
-| 1–36 | 36 | module header + 23 module-level `_vars` | state |
-| 37–117 | 81 | sort mode, lens mode, the three comparators | state |
-| 118–161 | 44 | the two `BV.libTree` instances (`_tree`, `_camTree`) | shell |
-| 162–239 | 78 | `render` / `loadLibrary` / `watchScanProgress` | shell |
-| 240–398 | **159** | `buildLibraryHead` — the whole sticky toolbar row | shell |
-| 399–477 | 79 | `refresh` / `rerenderFromCache` / scroll anchoring | shell |
-| 478–517 | 40 | per-lens scroll memory, hidden-toggle label | shell |
-| 518–575 | 58 | the ★ favorites strip | lens (backup) |
-| 576–643 | 68 | `renderTree` — the lens fork lives here | shell |
-| 644–949 | **306** | robot row + row ⋯ menu + inline notes editor + `openRobot` | lens (backup) |
-| 950–1119 | **170** | multi-cam: `renderCamGrid`, `camTile`, `startCamRefresh` | lens (cam) |
-| 1120–1198 | 79 | selection helpers, `syncToolbar`, `BV.libActions`, hide | state |
-| 1199–1510 | **312** | tidy: fix-names, merge, move, three confirm-batch modals | flow |
-| 1511–1643 | **133** | batch FTP backup, shared-password prompt, row progress | flow |
-| 1644–1984 | **341** | add/edit robot modal + its private form kit | flow |
-| 1985–2022 | 38 | scan-progress bar helpers (shared with discover) | flow |
-| 2023–2277 | **255** | discover-on-network, two-step | flow |
+| 1–37 | 37 | module header + 24 module-level `_vars` | state |
+| 38–124 | 87 | sort mode, lens mode, the three comparators | state |
+| 125–166 | 42 | the two `BV.libTree` instances (`_tree`, `_camTree`) | shell |
+| 167–243 | 77 | `render` / `loadLibrary` / `watchScanProgress` | shell |
+| 244–422 | **179** | `buildLibraryHead` — the action row in the topbar's toolbar slot, functions… menu included | shell |
+| 423–511 | 89 | `refresh` / `rerenderFromCache` / scroll anchoring | shell |
+| 512–541 | 30 | per-lens scroll memory, hidden-toggle label | shell |
+| 542–599 | 58 | the ★ favorites strip | lens (backup) |
+| 600–667 | 68 | `renderTree` — the lens fork lives here | shell |
+| 668–977 | **310** | robot row + row ⋯ menu + inline notes editor + `openRobot` | lens (backup) |
+| 978–1148 | **171** | multi-cam: `renderCamGrid`, `camTile`, `startCamRefresh` | lens (cam) |
+| 1149–1228 | 80 | selection helpers, `syncToolbar`, `BV.libActions`, hide | state |
+| 1229–1530 | **302** | tidy: fix-names, merge, move, three confirm-batch modals | flow |
+| 1531–1663 | **133** | batch FTP backup, shared-password prompt, row progress | flow |
+| 1664–2004 | **341** | add/edit robot modal + its private form kit | flow |
+| 2005–2042 | 38 | scan-progress bar helpers (shared with discover) | flow |
+| 2043–2295 | **253** | discover-on-network, two-step | flow |
 
 Rolled up:
 
-- **flows: ~1,079 lines (47%)** — dialogs and job launchers
-- **shell: ~468 lines (21%)** — mount, fetch, head, repaint, scroll
-- **lens rendering: ~534 lines (23%)** — robot rows, favorites, cam tiles
-- **shared state: ~196 lines (9%)**
+- **flows: ~1,067 lines (47%)** — dialogs and job launchers
+- **shell: ~485 lines (21%)** — mount, fetch, head, repaint, scroll
+- **lens rendering: ~539 lines (23%)** — robot rows, favorites, cam tiles
+- **shared state: ~204 lines (9%)**
 
 ---
 
@@ -81,7 +87,7 @@ machinery behind it.
 ### The lens half is the weakest seam in the file
 
 The two lenses are not two screens. They are one screen with a fork in
-`renderTree` at line 614. They share: the fetched listing (`_lastData`),
+`renderTree` at line 638. They share: the fetched listing (`_lastData`),
 the filter box *and its match counter*, the sort comparator, the hidden
 toggle and its lens-scoped count, the scroll-anchor mechanism, the ★
 concept (a starred robot floats its cameras in the cam lens too), and the
@@ -111,16 +117,17 @@ the whole win. The shell/lens framing is the part I would drop.
 
 ## 3. State that genuinely spans the lenses, and who should own it
 
-23 module-level `_vars`. Grouped by what would have to happen to each:
+24 module-level `_vars`. Grouped by what would have to happen to each:
 
-**Owned by the shell (both lenses read it) — 7 vars**
+**Owned by the shell (both lenses read it) — 8 vars**
 
 | var | refs | why it is shared |
 |---|---:|---|
 | `_libWrap` | 34 | the mounted container *and* the "am I still on screen?" guard — see §5 |
+| `_tslot` | 5 | the topbar's toolbar slot — the action row and selection count render there now, so both lenses (and `syncToolbar`) reach it |
 | `_lastData` / `_robots` | 16 | one fetch feeds both lenses; the cam lens reads the *full* list (unfiltered) to resolve linked-robot names and stars |
 | `_filter` / `_filterBox` | 17 | one box; both lenses write its match counter via `setCount` |
-| `_showHidden` / `_showHiddenBtn` | 11 | one toggle, but the *count* it displays is lens-scoped (`renderTree:608`) |
+| `_showHidden` / `_showHiddenBtn` | 11 | one toggle, but the *count* it displays is lens-scoped (`renderTree:632`) |
 | `_sortMode` / `_viewMode` | 10 | `_viewMode` is already public API (`BV.home`, read by `router.js`) |
 
 **Owned by the shell but per-lens by design — 3 vars**
@@ -135,7 +142,7 @@ losing it landed users *thousands of rows* off at plant scale.
 
 `_cl` (the shared `BV.checklist`), `_visibleRobots`, and `syncToolbar`.
 `_visibleRobots` is in *render order*, not cache order, because shift-click
-ranges must match what the user sees (`renderTree:632`). The cam lens
+ranges must match what the user sees (`renderTree:659`). The cam lens
 deliberately empties it. This trio is a unit and should move together into
 a `libselection` module that both the shell and the flows read — it is
 already half-exposed as `BV.libActions.selected()`.
@@ -198,7 +205,7 @@ Ranked by "would a probe catch it?"
   collects the input while every engine test stays green.
 - **The row ⋯ menu and `openRobot`** are only partly covered.
 - **Double-subscription.** `BV.state.on("library-dirty")` and
-  `BV.state.on("jobs")` are registered at module scope (365, 374). If a
+  `BV.state.on("jobs")` are registered at module scope (389, 398). If a
   split file also subscribes, you get two refreshes per event — invisible
   on a small library, a repeated full rescan at plant scale.
 - **The n² regression.** Losing `_liveTargets` / `_camCounts` as
@@ -270,8 +277,8 @@ a careful read, and the whole point of this pass was to stop doing that.
   invoked by buttons rather than implemented here" — this is right, it is
   47% of the file, and `manage_ui.js` + `BV.libActions` are the code
   already telling you so. This is the whole proposal.
-- The thing neither of us listed: **`buildLibraryHead` is 159 lines of
-  toolbar** that wires eleven buttons to code all over the file. It is the
+- The thing neither of us listed: **`buildLibraryHead` is 179 lines of
+  toolbar** that wires the action row to code all over the file. It is the
   natural *last* thing to move, because after phases 3–6 it becomes a
   declarative list of `{label, title, onClick: BV.libtidy.fixNames}` — and
   at that point it is not worth its own file.
