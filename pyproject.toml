@@ -25,4 +25,7 @@ markers = [
 #   python -m pytest tests -m "probe or not probe"    EVERYTHING
 # the everything form is spelled that way, not -m "", because PowerShell drops
 # an empty argument before pytest ever sees it.
-addopts = "-m 'not probe'"
+# -ra: skip/error REASONS print in every run's summary. 74 private-fixture
+# tests once skipped invisibly for ten days because a skip is just a number
+# without it; absence must be legible (tests/fixtureutil.py is the other half).
+addopts = "-ra -m 'not probe'"
