@@ -23,7 +23,7 @@ batch lands, or with `--check` to hear about drift).
 > When per-subsystem docs land, they supersede this file for their own area. This
 > map's remaining job is breadth: what exists, and where.
 
-**Scope.** 252 files / ~67,601 lines. Covers everything in the working tree except: the
+**Scope.** 253 files / ~68,255 lines. Covers everything in the working tree except: the
 `.git` internals, build outputs (`dist/`, `build/`, `__pycache__/`), the private
 `SampleBackup/` fixture tree, the `.rmd` model corpus (61 binary robot-model blobs
 that are input data, not source), and the two local-only real-plant reference files
@@ -55,8 +55,9 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `run.py` | 10 | dev launcher and pyinstaller entry script: puts src on sys.path, calls backupviewer.app.main | build/config | active |
 | `run_libraryimporter.py` | 10 | dev launcher and pyinstaller entry script for the companion libraryimporter app | LibraryImporter | active |
 | `split_diff_sandbox.html` | 878 | untracked ui mock of the 4-pane split tree and inline pane diff, with a mock aligner and review modal — untracked, git-excluded; grepped for "split_diff_sandbox" with no hits. its header says the js aligner is mock-only and the real one is compare.align_program_lines; the split tree, inline diff and pdiffview have all shipped | program editor | possibly-dead |
-| `docs/INVENTORY.md` | 621 | this file: dated file-level map of the repo plus the findings from the phase-1 documentation pass, with resolved items marked inline | docs | active |
+| `docs/INVENTORY.md` | 622 | this file: dated file-level map of the repo plus the findings from the phase-1 documentation pass, with resolved items marked inline | docs | active |
 | `docs/proposals/home-split.md` | 284 | investigation of tabs/home.js (2,277 lines) by responsibility, where the real seams are, what must become shared components first, and a phased sequence — no code changed | docs | active |
+| `docs/subsystems/backup-capture.md` | 649 | subsystem doc #2 (the backup/discovery jobs + shared plumbing): transport ground truth tagged live-run-vs-assumed, the gentle-with-equipment invariants, a dedicated failure-modes section, and the batch-flow coverage gap said plainly | docs | active |
 | `docs/subsystems/parsing.md` | 533 | subsystem doc #1 (parsers/ + session.py): ground truth marked verified-vs-assumed per fact, cross-file invariants, paid-for traps, honest coverage gaps — and the template later subsystem docs follow | docs | active |
 | `packaging/backupviewer.ico` | *75 KB* | multi-resolution app icon embedded in the exe and inherited by the pywebview window | build/config | active |
 | `packaging/backupviewer.spec` | 58 | pyinstaller onefile spec: bundles web/ and cvx_handshake/, edgechromium hidden imports, excludes paramiko | build/config | active |
@@ -185,7 +186,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/libraryimporter/web/js/checklist.js` | 100 | importer's copy of BV.checklist: shift-range multiselect controller with tri-state select-all group boxes | LibraryImporter | active |
 | `src/libraryimporter/web/js/importer.js` | 281 | the importer page logic: renders python's whole state, owns selection, runs seeding and the result panel | LibraryImporter | active |
 | `src/libraryimporter/web/js/util.js` | 41 | importer's BV namespace with just esc, el and toast, trimmed from the main app's util.js | LibraryImporter | active |
-| `tests/conftest.py` | 69 | pytest session fixtures pinning four exact snapshots inside the private library tree (primary/prev/secondary/partial), each through the fixtureutil gate, plus a text reader *(untracked, local-only)* | tests | active |
+| `tests/conftest.py` | 73 | pytest session fixtures pinning four exact snapshots inside the private library tree (primary/prev/secondary/partial), each through the fixtureutil gate, plus a text reader *(untracked, local-only)* | tests | active |
 | `tests/fixtureutil.py` | 70 | tracked half of the private-fixture plumbing: the require-or-error gate (missing fixture = error where the tree is expected, visible skip elsewhere) and runtime backup-root discovery | tests | active |
 | `tests/libraryimporter_probe.py` | 240 | end-to-end probe of the libraryimporter app: drop, checklist ranges, import, sidecars on disk | tests | active |
 | `tests/perf_probe.py` | 255 | plant-scale timing probe: 2400 stubbed rows with ms budgets for notes, stars, shift-range and picker — the library screen's only performance-cliff guard | tests | active |
@@ -273,14 +274,14 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 
 | subsystem | files | ~lines |
 |---|---:|---:|
-| tests | 71 | 18,683 |
+| tests | 71 | 18,687 |
 | shared/infra | 27 | 7,657 |
 | program editor | 8 | 6,383 |
 | theming | 34 | 5,646 |
 | backup parsing | 31 | 5,606 |
+| docs | 10 | 4,463 |
 | library | 4 | 4,271 |
 | 3D viewer | 16 | 3,832 |
-| docs | 9 | 3,813 |
 | cameras | 9 | 2,559 |
 | remote/mobile | 10 | 2,032 |
 | backup capture | 4 | 1,739 |
@@ -289,7 +290,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | compare engine | 5 | 1,355 |
 | tools/scripts | 4 | 941 |
 | build/config | 7 | 267 |
-| **total** | **252** | **67,601** |
+| **total** | **253** | **68,255** |
 
 > Counts are by *primary* subsystem only — a file appears once, so these add up to the
 > whole repo. The `tests` row is the largest because every probe and unit suite counts as

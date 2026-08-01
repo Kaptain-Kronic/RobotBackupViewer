@@ -5,7 +5,7 @@ Scope (v1, confirmed with the user): the controller's MD: device only - the
 ASCII set (.SV/.TP/.VR/.IO/.DG/.VA) the viewer already parses, which the
 controller synthesises on the fly when you GET from MD:. A true IMAGE backup
 needs TFTP + a controller reboot into the boot menu and is deliberately OUT of
-scope here. FR:/FRA: recursion is supported but off by default.
+scope here. FR:/FRA: recursion was cut as never-run dead code (f634c41).
 
 Engine ethics (it may be pointed at a running production robot):
   - ONE connection, no parallel GETs against a single controller
