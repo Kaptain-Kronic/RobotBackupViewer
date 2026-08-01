@@ -152,12 +152,12 @@ human-in-the-loop tier, and it lands last.
 ### Verifying the app — the commands
 
 ```powershell
-python -m pytest tests                            # unit only, ~40s — the default
-python -m pytest tests -m probe                   # the nine probes, ~2.5 min
-python -m pytest tests -m "probe or not probe"    # EVERYTHING, ~3.5 min
+python -m pytest tests                            # unit only, ~45s — the default
+python -m pytest tests -m probe                   # the ten probes, ~3 min
+python -m pytest tests -m "probe or not probe"    # EVERYTHING, ~4 min
 ```
 
-The last one is **the** verify command: it boots the real app nine times in a
+The last one is **the** verify command: it boots the real app ten times in a
 hidden WebView2 and asserts on real DOM. Spelled that way rather than `-m ""`
 because PowerShell drops an empty argument before pytest ever sees it. The
 default stays fast on purpose — a suite slow enough to stop being run is worse
@@ -174,6 +174,13 @@ than one that skips its slowest part.
 - **Never add a tracked `tests/conftest.py`.** The excluded one holds the
   private `SampleBackup` fixtures; a tracked file of that name collides with
   it. That is why `pythonpath` lives in `pyproject.toml`.
+- **Private fixtures fail loud, never silent.** Every private-tree fixture
+  goes through `tests/fixtureutil.py`: on a machine that should hold the tree
+  (the excluded conftest exists), a missing pin is an **error**; a clean clone
+  skips and *says so* (`test_fixture_gate` reports "0 backup roots present").
+  `BV_REQUIRE_SAMPLE=1/0` overrides either way. When the sample tree moves,
+  re-pin the conftest and re-baseline — 74 tests once skipped green for ten
+  days because absence looked like success.
 - A feature is not done until it has run against a **real backup** and the
   numbers were checked against what the pendant/file actually says.
 - Probe environment quirks your code must survive: no `requestAnimationFrame`,

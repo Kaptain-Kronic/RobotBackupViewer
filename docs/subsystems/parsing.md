@@ -3,7 +3,8 @@
 *Subsystem doc #1. Written 2026-07-31 against `main` @ `0dca2d0`, clean tree.
 Covers `src/backupviewer/parsers/` (28 files) plus `session.py`. Line-number
 cites are against that revision and drift with edits; the anchor commit is the
-reference.*
+reference. §5 invariant 10, §7 Coverage and §8 items 1–2 updated 2026-08-01
+after the fixture repair (`e99fc3b` · `8804f62` · `c502ad5`).*
 
 > **Template note.** This is the first subsystem doc and sets the shape:
 > sections 1–8 below, closing with **What this pass could not verify**. That
@@ -304,8 +305,9 @@ What must stay true, and what breaks if it doesn't:
    (§4), not plausibility.
 10. **The JS `fk.js` twin must equal `chain_frames`.** The math is
     duplicated in JS *deliberately* (posing the arm per frame in Python
-    would mean a bridge call per orbit tick); the docstring claims "the
-    probe holds them equal" — **currently false**, see §8.
+    would mean a bridge call per orbit tick); since `c502ad5`,
+    `tests/ui_fk_probe.py` holds the twins equal within 1e-6 per matrix
+    cell across builtin chains (measured agreement ~1e-13; §8 item 2).
 
 ## 6. Traps paid for
 
@@ -363,13 +365,20 @@ lessons; do not re-learn them.
 
 ## 7. Coverage
 
-Verified 2026-07-31: `python -m pytest tests -m "probe or not probe"` →
-**620 passed, 74 skipped, 3:31** on this machine.
+Verified 2026-08-01, after the fixture repair: `python -m pytest tests -m
+"probe or not probe"` → **701 passed, 0 skipped, 4:02** on this machine
+(immediately before the repair: 620 passed, 74 skipped). The clean-clone
+story was measured too, on a facsimile holding only the tracked+unexcluded
+file set: **596 passed, 2 skipped, 0 errors** — one of the two skips being
+the fixture gate's visible "0 backup roots present" line.
 
-**Tracked, direct** (run on any clone) — 115 tests across 10 files:
+**Tracked, direct** (run on any clone) — 122 tests across 11 files:
 `test_ls_edit` (31, incl. the byte-round-trip engine), `test_cvx_image` (29),
 `test_dcszones` (12), `test_kinematics` (11, synthetic `.def`; FK
 expectations hand-derived), `test_cvx_inspect` (10), `test_sysvar_merge` (9),
+`test_backup_formats` (7: format detection, recursive index, dupe-basename
+priority, per-format tabs, io-from-summary fallback — synthetic trees,
+the tracked successor to the retired real-corpus format tests),
 `test_magnet` (5), `test_mhvalves` (4), `test_label_xref` (2),
 `test_payloads` (2).
 
@@ -381,42 +390,58 @@ session; `test_discover` covers `looks_like_backup`/`find_backup_roots`;
 construct real `BackupSession`s over synthetic trees and assert manifests;
 `test_mtx_remote` covers `mtx_portal.find_da_pages`; `test_modeldb` re-uses
 the `.def` chain; `test_mtxbackup`'s self-naming path exercises
-`mtx_saved_image.parse_saved_image`.
+`mtx_saved_image.parse_saved_image`. Since the repair, `ui_fk_probe` (the
+tenth hidden-window probe) holds the `fk.js` JS twin equal to
+`chain_frames`, and `test_fixture_gate` unit-tests the private-fixture
+gate itself so the guard cannot silently rot either.
 
-**Git-excluded, direct** — 81 tests across 14 files that assert against the
-private real-backup fixture (and its real robot names and F-numbers — which
-is *why* they are excluded; correct firewalling, per CLAUDE.md):
-`test_alarms` (3), `test_dcs` (12), `test_frames` (6), `test_io` (6),
-`test_io_fallback` (4, incl. the FLG column split), `test_macros` (1),
-`test_programs` (7), `test_registers` (3), `test_session` (6),
-`test_session_formats` (6), `test_summary` (7), `test_sysvars` (5, incl.
-`record_tree` on KAREL structs), `test_va_tokenizer` (4, one synthetic),
-`test_v02_parsers` (11: callgraph, gmwizlog, mastering, styles, pendant
-names, search).
+**Git-excluded, direct** — 74 tests across 13 files that assert against the
+private real-backup fixtures (their real robot names and F-numbers are *why*
+they are excluded; correct firewalling, per CLAUDE.md): `test_alarms` (3),
+`test_dcs` (12, incl. the rich sections — cartesian position check, user
+models, CIP safety, stop-position prediction — which now live on the primary
+pin), `test_frames` (6), `test_io` (6), `test_io_fallback` (2, the FLG
+column split), `test_macros` (1), `test_programs` (7), `test_registers` (4,
+cartesian PRs via the second pin), `test_session` (6), `test_summary` (7),
+`test_sysvars` (5, incl. `record_tree` on KAREL structs),
+`test_va_tokenizer` (4, one synthetic), `test_v02_parsers` (11: callgraph,
+gmwizlog, mastering, styles, pendant names, search). The retired
+`test_session_formats` corpus lives on as logic in the tracked
+`test_backup_formats`; the excluded `test_compare` adds 5 more
+cross-backup integration tests over the same pins.
 
-**What a clean clone therefore does *not* verify**: the parsers' deepest
-coverage — real controller dumps through `summary_dg`, `io_dg`, `dcs`
-section classification, `frames`, `registers`, `alarms`, `gmwizlog`,
-`mastering`, `styles`, the `sysvars` display engine, and `BackupSession`'s
-index/classification against the three real backup formats. A clone sees
-those parsers tested only as far as healthscan's synthetic texts exercise
-them.
+The fixtures are four exact snapshots pinned in the excluded conftest
+inside the private library tree: the primary (a full MD pull that is also
+the tree's rich-DCS robot), the same robot one month earlier (compare's
+quiet case), a second robot type (compare's loud case, and the only pin
+with cartesian position registers), and a truncated pull with no `.VA`
+payload (compare's skipped-category honesty). Pins are exact paths on
+purpose — any "newest snapshot" rule would re-anchor the suite on every
+rescan. A missing pin is an **error** on this machine now, never a skip
+(`tests/fixtureutil.py`, `8804f62`).
 
-**Worse, and newly measured (§8): those 74 excluded+fixture tests currently
-skip on this machine too** — the conftest points at three format subtrees
-(`MD/`, `maint_data/`, `all_above/`) that no longer exist since the sample
-tree was reorganized into a plant-shaped library (~2026-07-20). Skip reason
-verified today: every fixture test reports "MD sample backup not present".
-Until the fixture trees are restored or the conftest repointed, the
-real-backup parser coverage runs **nowhere**.
+**What a clean clone therefore does *not* verify**: real controller dumps
+through `summary_dg`, `io_dg`, `dcs` section classification, `frames`,
+`registers`, `alarms`, `gmwizlog`, `mastering`, `styles`, and the `sysvars`
+display engine. (Backup-type detection and the session index rules *are*
+clone-verified now, via `test_backup_formats`.) A clone sees the deep
+parsers only as far as healthscan's synthetic texts exercise them — and,
+since the repair, its run *says so* out loud in the skip summary instead
+of saying nothing.
+
+Two real-data gaps worth knowing, recorded in the tests' own comments:
+nothing in the pinned tree carries a live-active alarm row (the
+`active=True` branch of `alarms` has no real instance — nothing was
+faulted when the backups ran) or a used DCS tool/user frame (every DCS
+frame in the tree is all-zero). Both branches stay covered only
+synthetically until a backup shows up with one.
 
 **No coverage at all** (tracked or excluded): `mtx_saved_image.
 group_photo_files`/`photo_record` (the photos-tab grouping, `api.py:1987`),
-`curpos.parse_tool_frames`' section-end edge cases beyond what
-`test_kinematics` touches, and the `fk.js` JS twin (§8). The `parsers/`
-docstring-level claims from corpora (6,478 programs, 157 BMPs, 154
-inspect.dat) are records of past measurement, not repeatable tests — the
-corpora are not in the repo.
+and `curpos.parse_tool_frames`' section-end edge cases beyond what
+`test_kinematics` touches. The `parsers/` docstring-level claims from
+corpora (6,478 programs, 157 BMPs, 154 inspect.dat) are records of past
+measurement, not repeatable tests — the corpora are not in the repo.
 
 ## 8. Open questions
 
@@ -424,23 +449,31 @@ Found during this pass, written down instead of fixed (ground rule: a doc
 pass changes no code). Evidence attached so the next session doesn't have to
 re-derive it.
 
-1. **The private-fixture suite is silently skipping.** `tests/conftest.py`
-   (git-excluded) expects `SampleBackup/MD`, `SampleBackup/maint_data`,
-   `SampleBackup/all_above`; the actual `SampleBackup/` now holds a single
-   plant tree and none of those subfolders. All 74 fixture-dependent tests
-   skip ("MD sample backup not present"), and because `_dir_fixture` uses
-   `pytest.skip`, the headline stays green. The suite last exercised real
-   controller dumps before the ~2026-07-20 reorg. Needs a decision: rebuild
-   the three format trees (from any robot + a maintenance-data pull), or
-   repoint the conftest at backups inside the plant tree. Until then,
-   INVENTORY's description of these tests as the parsers' deepest coverage
-   is aspirational.
-2. **`kinematics.py:27` claims "the probe holds them equal" (fk.js ↔
-   `chain_frames`) — no probe does.** `grep -i fk tests/` matches only
-   `test_kinematics.py`'s own docstring; `ui_probe.py` has no 3D checks at
-   all. The JS twin is currently unpinned; a drift would mis-pose the 3D arm
-   with every unit test green. (The stale docstring is also a §C-style
-   prose-vs-code mismatch.)
+1. **RESOLVED 2026-08-01 — the private-fixture suite skips no more.** The
+   conftest was re-pinned at four exact snapshots inside the reorganized
+   plant tree (identities stay in the excluded file; §7 describes the four
+   roles), every assertion re-baselined to invariants plus measured anchors
+   of the pinned robots, and the `maint_data`/`all_above` fixtures retired
+   per the owner's ruling — their detection/index/tab logic converted to
+   tracked synthetic trees (`test_backup_formats`, `e99fc3b`). Absence is
+   now loud: the tracked gate errors on this machine, clean clones report
+   "0 backup roots present" visibly, and `-ra` prints every skip reason in
+   every run (`fixtureutil` + `test_fixture_gate`, `8804f62`). Verified:
+   701 passed / 0 skipped. The re-baseline also dated the rot precisely —
+   the excluded compare tests still drove pre-registry api internals
+   (`api._session`) and `search_backup`'s old positional signature, and
+   the manifest tests asserted all-tabs-lit, impossible since the photos
+   tab landed 2026-07-20 — so nothing had run them since the reorg,
+   exactly as suspected.
+2. **RESOLVED 2026-08-01 — the fk twins are held equal.**
+   `tests/ui_fk_probe.py` (`c502ad5`, the tenth probe) feeds identical
+   chains and joint sets to `kinematics.chain_frames` and `BV.fk.chain`
+   and asserts every matrix cell of every joint frame and the faceplate
+   within 1e-6: every validated builtin type, the longest builtin chain,
+   an even spread of the rest, plus the synthetic parallel-link arm so
+   NegDirection / ParallelLink / flange-dz are always exercised. Measured
+   agreement ~1e-13 — five orders inside tolerance. Both twins' docstrings
+   now cite the probe by name.
 3. **`$MODE = 2`** remains unmapped — never seen on a real controller
    (ROADMAP, DCS lane). Shows `?` + heuristic, as designed. Needs one backup
    whose pendant pairs it.
@@ -487,8 +520,9 @@ The honest tail, per the template. Later subsystem docs: end with yours.
 - **The kinematics accuracy numbers** (0.13 mm / 0.005°, five families) —
   the tracked tests prove the chain math against hand-derived synthetic
   expectations and two flange cases; the against-real-controller residuals
-  are recorded results, re-provable only against real CURPOS dumps (currently
-  blocked by open question 1).
+  are recorded results, re-provable only against real CURPOS dumps (available
+  again since §8 item 1's repair — the pinned snapshots carry curpos.dg —
+  but re-proving them was out of scope for that pass).
 - **`[*SYSTEM*]` name uniqueness** — proven today on one robot (978/978);
   claimed "in practice" for all. Other software loadouts unchecked.
 - **The two-digit-year pivot at 70** — no backup old enough (or clock-wrong

@@ -23,7 +23,7 @@ batch lands, or with `--check` to hear about drift).
 > When per-subsystem docs land, they supersede this file for their own area. This
 > map's remaining job is breadth: what exists, and where.
 
-**Scope.** 249 files / ~67,113 lines. Covers everything in the working tree except: the
+**Scope.** 252 files / ~67,560 lines. Covers everything in the working tree except: the
 `.git` internals, build outputs (`dist/`, `build/`, `__pycache__/`), the private
 `SampleBackup/` fixture tree, the `.rmd` model corpus (61 binary robot-model blobs
 that are input data, not source), and the two local-only real-plant reference files
@@ -49,13 +49,13 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `edit_sandbox.html` | 320 | untracked browser rig driving the real lseditor component against the real css, asserting caret/enter/undo — untracked, excluded via .git/info/exclude; grepped the repo for "edit_sandbox" and nothing references it. its own header says it "dies when the component is trusted", and components/lseditor.js has shipped | program editor | possibly-dead |
 | `edit_workspace_sandbox.html` | 693 | untracked ui mock of the edit workspace (rail tabs, panes, find/replace) on fake robots, nothing talks to python — untracked, git-excluded; grepped for "edit_workspace_sandbox" with no hits. superseded by the shipped workspace.js + tabs/edit.js | program editor | possibly-dead |
 | `LICENSE` | 620 | verbatim gnu gpl v3 license text, the license the readme points at | docs | vendored |
-| `pyproject.toml` | 28 | project metadata (v1.4, pywebview), the pytest pythonpath=src a fresh clone needs to collect tests, and the `probe` marker + `addopts` that keep the default run fast | build/config | active |
+| `pyproject.toml` | 31 | project metadata (v1.4, pywebview), the pytest pythonpath=src a fresh clone needs to collect tests, and the `probe` marker + `addopts` that keep the default run fast | build/config | active |
 | `README.md` | 255 | public readme: feature tour, tab-to-source-file table, run/package/test commands, theme json shape | docs | active |
 | `ROADMAP.md` | 264 | lane-claiming roadmap: shipped/building/decided/open items per subsystem, plus the 2.0 editing principles | docs | active |
 | `run.py` | 10 | dev launcher and pyinstaller entry script: puts src on sys.path, calls backupviewer.app.main | build/config | active |
 | `run_libraryimporter.py` | 10 | dev launcher and pyinstaller entry script for the companion libraryimporter app | LibraryImporter | active |
 | `split_diff_sandbox.html` | 878 | untracked ui mock of the 4-pane split tree and inline pane diff, with a mock aligner and review modal — untracked, git-excluded; grepped for "split_diff_sandbox" with no hits. its header says the js aligner is mock-only and the real one is compare.align_program_lines; the split tree, inline diff and pdiffview have all shipped | program editor | possibly-dead |
-| `docs/INVENTORY.md` | 618 | this file: dated file-level map of the repo plus the findings from the phase-1 documentation pass, with resolved items marked inline | docs | active |
+| `docs/INVENTORY.md` | 621 | this file: dated file-level map of the repo plus the findings from the phase-1 documentation pass, with resolved items marked inline | docs | active |
 | `docs/proposals/home-split.md` | 284 | investigation of tabs/home.js (2,277 lines) by responsibility, where the real seams are, what must become shared components first, and a phased sequence — no code changed | docs | active |
 | `docs/subsystems/parsing.md` | 499 | subsystem doc #1 (parsers/ + session.py): ground truth marked verified-vs-assumed per fact, cross-file invariants, paid-for traps, honest coverage gaps — and the template later subsystem docs follow | docs | active |
 | `packaging/backupviewer.ico` | *75 KB* | multi-resolution app icon embedded in the exe and inherited by the pywebview window | build/config | active |
@@ -185,29 +185,32 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/libraryimporter/web/js/checklist.js` | 100 | importer's copy of BV.checklist: shift-range multiselect controller with tri-state select-all group boxes | LibraryImporter | active |
 | `src/libraryimporter/web/js/importer.js` | 281 | the importer page logic: renders python's whole state, owns selection, runs seeding and the result panel | LibraryImporter | active |
 | `src/libraryimporter/web/js/util.js` | 41 | importer's BV namespace with just esc, el and toast, trimmed from the main app's util.js | LibraryImporter | active |
-| `tests/conftest.py` | 46 | pytest session fixtures for the three local-only sample-backup format trees plus a text reader *(untracked, local-only)* | tests | active |
+| `tests/conftest.py` | 69 | pytest session fixtures pinning four exact snapshots inside the private library tree (primary/prev/secondary/partial), each through the fixtureutil gate, plus a text reader *(untracked, local-only)* | tests | active |
+| `tests/fixtureutil.py` | 70 | tracked half of the private-fixture plumbing: the require-or-error gate (missing fixture = error where the tree is expected, visible skip elsewhere) and runtime backup-root discovery | tests | active |
 | `tests/libraryimporter_probe.py` | 240 | end-to-end probe of the libraryimporter app: drop, checklist ranges, import, sidecars on disk | tests | active |
 | `tests/perf_probe.py` | 255 | plant-scale timing probe: 2400 stubbed rows with ms budgets for notes, stars, shift-range and picker — the library screen's only performance-cliff guard | tests | active |
 | `tests/probeutil.py` | 87 | the probes' shared preamble: temp-APPDATA/watcher isolation before any app import, plus check/js/poll and the FAILURES list all nine used to carry their own copy of | tests | active |
-| `tests/test_alarms.py` | 36 | pytest for the alarm-history parser over the private fixture's ERRALL/ERRACT/ERRHIST/ERRMOT dumps *(untracked, local-only)* | tests | active |
+| `tests/test_alarms.py` | 41 | pytest for the alarm-history parser over the private fixture's ERRALL/ERRACT/ERRHIST/ERRMOT dumps *(untracked, local-only)* | tests | active |
+| `tests/test_backup_formats.py` | 192 | pytest for backup-format detection on synthetic trees: MD vs maintenance vs all-above, dupe-basename priority, per-format tabs, io-from-summary fallback (tracked successor to the retired real-corpus format tests) | tests | active |
 | `tests/test_backuplog.py` | 118 | pytest for the backup-run log: run lifecycle, retry rejoining a closed run, 20-run cap, no password on disk | tests | active |
 | `tests/test_camera_link.py` | 175 | pytest for library camera-to-robot auto-linking, taught camera names, and links surviving a rescan | tests | active |
 | `tests/test_close_guard.py` | 61 | pytest for the app-close confirm guard: asks only while backups run, and fails open when the dialog throws | tests | active |
-| `tests/test_compare.py` | 247 | pytest for every compare diff category plus cross-backup integration through the api *(untracked, local-only)* | tests | active |
+| `tests/test_compare.py` | 267 | pytest for every compare diff category plus cross-backup integration through the api *(untracked, local-only)* | tests | active |
 | `tests/test_compare_align.py` | 105 | pytest for identity-normalized program alignment: equiv classification, junk blanks, banner comments | tests | active |
 | `tests/test_cvx_image.py` | 281 | pytest for the cv-x bmp decoder: 15-bit height packing, no-data sentinel, pairing, and the photos endpoint | tests | active |
 | `tests/test_cvx_inspect.py` | 162 | pytest for reading a cv-x camera's own name out of inspect.dat and teaching it into the library | tests | active |
 | `tests/test_cvx_remote.py` | 417 | pytest for the cv-x remote wire protocol: framing, ctx echo, jpeg harvest, frame-ack, mouse encode and reorder, plus the firewall assertion that the bundled handshake blobs carry only documentation addresses | tests | active |
 | `tests/test_cvx_window.py` | 266 | pytest for cv-x remote session lifecycle at the api: adopt, reload, pop-out window, host-window fullscreen | tests | active |
-| `tests/test_dcs.py` | 180 | pytest for parse_dcs_report over real DCSVRFY/DCSCHGD dumps: sections, signatures, frames, user models *(untracked, local-only)* | tests | active |
+| `tests/test_dcs.py` | 173 | pytest for parse_dcs_report over real DCSVRFY/DCSCHGD dumps: sections, signatures, frames, user models *(untracked, local-only)* | tests | active |
 | `tests/test_dcszones.py` | 395 | pytest for dcszones: DCSPOS.VA geometry, DCSVRFY.DG merge, user models, and disabled/uninit honesty | tests | active |
 | `tests/test_discover.py` | 472 | pytest for backup-folder detection and the offline network scan: fanuc ftp, matrox ethernet/ip, adapters | tests | active |
 | `tests/test_export_endpoint.py` | 299 | pytest for the path-addressed ws_* workspace endpoints: listing, reading, diffing, all-or-nothing export | tests | active |
-| `tests/test_frames.py` | 48 | pytest for the tool/user/jog frame model built from SYSFRAME.VA plus FRAMEVAR.VA comments *(untracked, local-only)* | tests | active |
+| `tests/test_fixture_gate.py` | 60 | the absence reporter (a clean clone says "0 backup roots" in its summary instead of nothing) plus unit tests of the fixture gate's own error/skip branches | tests | active |
+| `tests/test_frames.py` | 55 | pytest for the tool/user/jog frame model built from SYSFRAME.VA plus FRAMEVAR.VA comments *(untracked, local-only)* | tests | active |
 | `tests/test_ftpbackup.py` | 272 | pytest for the fanuc ftp pull against a fake controller: disk layout, completion marker, library register | tests | active |
 | `tests/test_healthscan.py` | 843 | pytest for every fleet health check plus the scan job, driven by synthetic file texts through a fake session | tests | active |
-| `tests/test_io.py` | 51 | pytest for merged IOCONFIG/IOSTATE signals: states, rack/slot/port ranges, pendant short names *(untracked, local-only)* | tests | active |
-| `tests/test_io_fallback.py` | 53 | pytest for io rebuilt from SUMMARY.DG sections when IOCONFIG/IOSTATE are absent, plus the FLG column split *(untracked, local-only)* | tests | active |
+| `tests/test_io.py` | 54 | pytest for merged IOCONFIG/IOSTATE signals: states, rack/slot/port ranges, pendant short names *(untracked, local-only)* | tests | active |
+| `tests/test_io_fallback.py` | 25 | pytest for the FLG two-column split and bracket-proof column splitting over the real IOSTATE dump (the summary-fallback half moved to the tracked test_backup_formats) *(untracked, local-only)* | tests | active |
 | `tests/test_keyence_workspace.py` | 317 | pytest pinning workspace.xml byte-for-byte plus export naming and the ledger guarding foreign folders | tests | active |
 | `tests/test_keyencebackup.py` | 283 | pytest for the cv-x ftp pull against a fake camera: cwd-per-dir quirk, scope, multi-cam, workspace manifest | tests | active |
 | `tests/test_kinematics.py` | 222 | pytest for the .def parse, FK chain poses, flange measurement, and curpos/tool-frame reading | tests | active |
@@ -218,8 +221,8 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/test_libraryimporter_app.py` | 135 | pytest for the LibraryImporter second app: its WebView2 failure-watch/relaunch ladder and the Api bridge envelope, seed and drag-drop handlers | tests | active |
 | `tests/test_libraryimporter_core.py` | 209 | pytest for the importer's parse -> plan -> seed pipeline, full-name expansion, schema-2 sidecar shape and destination sanity warnings | tests | active |
 | `tests/test_libraryimporter_integration.py` | 63 | pytest proving a tree seeded by libraryimporter.core is adopted by BackupViewer's scanner with path identity, IPs and stable ids | tests | active |
-| `tests/test_ls_edit.py` | 342 | pytest for the .LS edit/export engine: byte-faithful decode/encode, section split, emit renumbering, /ATTR and /POS splices, program rename | tests | active |
-| `tests/test_macros.py` | 15 | pytest for the SYSMACRO.VA macro table: names, program names and DI assignments *(untracked, local-only)* | tests | active |
+| `tests/test_ls_edit.py` | 343 | pytest for the .LS edit/export engine: byte-faithful decode/encode, section split, emit renumbering, /ATTR and /POS splices, program rename | tests | active |
+| `tests/test_macros.py` | 21 | pytest for the SYSMACRO.VA macro table: names, program names and DI assignments *(untracked, local-only)* | tests | active |
 | `tests/test_magnet.py` | 67 | pytest for magnet-EOAT detection from MAG*.PC programs and the R[800-899] register grouping | tests | active |
 | `tests/test_mhvalves.py` | 151 | pytest for MH valve signal-table resolution and the no-phantom-vacuum guard on controller defaults | tests | active |
 | `tests/test_modeldb.py` | 95 | pytest for modeldb import/normalized matching/builtin-vs-imported layering plus a wellformedness sweep of the shipped kinematics BUILTIN table | tests | active |
@@ -227,21 +230,20 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/test_mtxbackup.py` | 383 | pytest for the Matrox SMB camera pull end-to-end against a temp camera home via an injected mount, incl. MAX_PATH copy/index and camera self-naming | tests | active |
 | `tests/test_payloads.py` | 43 | pytest for payload schedules out of $PLST_GRP: mass/cg/inertia plus uninit and -9999 sentinel flagging | tests | active |
 | `tests/test_phone_view.py` | 343 | pytest driving PhoneShare over real loopback HTTP with the camera fetch faked, plus address ranking and the phone_view_* endpoints and firewall helper | tests | active |
-| `tests/test_probes.py` | 98 | the wiring that makes pytest run the nine probes: one subprocess each, timeout, `probe` marker (deselected by default in pyproject) | tests | active |
-| `tests/test_programs.py` | 77 | pytest for .ls header/body/position parsing, call hops, and KAREL .PC listing over the private fixture *(untracked, local-only)* | tests | active |
+| `tests/test_probes.py` | 99 | the wiring that makes pytest run the ten probes: one subprocess each, timeout, `probe` marker (deselected by default in pyproject) | tests | active |
+| `tests/test_programs.py` | 82 | pytest for .ls header/body/position parsing, call hops, and KAREL .PC listing over the private fixture *(untracked, local-only)* | tests | active |
 | `tests/test_qr.py` | 218 | pytest pinning the hand-rolled QR encoder: Reed-Solomon syndromes, BCH format info, spec geometry, and a from-scratch reader that re-reads the payload | tests | active |
-| `tests/test_registers.py` | 38 | pytest for NUMREG/POSREG/STRREG parsing: counts, joint vs cartesian PRs, uninit slots *(untracked, local-only)* | tests | active |
+| `tests/test_registers.py` | 48 | pytest for NUMREG/POSREG/STRREG parsing: counts, joint vs cartesian PRs, uninit slots *(untracked, local-only)* | tests | active |
 | `tests/test_screengrab.py` | 125 | pytest decoding the app's own PNG output by hand plus Windows GDI window-capture smoke tests and a pointer-sized HWND prototype guard | tests | active |
-| `tests/test_session.py` | 63 | pytest for BackupSession: manifest, .ls program-vs-report split, case-insensitive find, karel detection *(untracked, local-only)* | tests | active |
-| `tests/test_session_formats.py` | 76 | pytest for multi-format sessions: MD vs maintenance vs all-above detection, dedupe, per-format tabs *(untracked, local-only)* | tests | active |
+| `tests/test_session.py` | 74 | pytest for BackupSession: manifest, .ls program-vs-report split, case-insensitive find, karel detection *(untracked, local-only)* | tests | active |
 | `tests/test_sessions.py` | 198 | pytest for the multi-session registry behind backup tabs: open/switch/close, per-entry compare, session cap, pop-out drop, sid/side parameter-order guard | tests | active |
 | `tests/test_settings.py` | 48 | pytest that settings._write retries a transient Windows PermissionError on the atomic replace and still raises when the lock never clears | tests | active |
 | `tests/test_sim_export.py` | 201 | pytest for loading camera workspaces into the CV-X simulator's flat folder: what is offered, naming, blocking hand-made workspaces, sim_root setting | tests | active |
 | `tests/test_summary.py` | 67 | pytest for parse_summary over a real SUMMARY.DG: identity, options, memory, ethernet, tasks, macros *(untracked, local-only)* | tests | active |
 | `tests/test_sysvar_merge.py` | 157 | pytest for merge_system_records stitching [*SYSTEM*] records across many .VA files, excluding register/KAREL sections, through to get_sysvar_records | tests | active |
-| `tests/test_sysvars.py` | 91 | pytest for the sysvar record tree and flatten, plus KAREL structs whose field lines carry no $ prefix *(untracked, local-only)* | tests | active |
+| `tests/test_sysvars.py` | 92 | pytest for the sysvar record tree and flatten, plus KAREL structs whose field lines carry no $ prefix *(untracked, local-only)* | tests | active |
 | `tests/test_updatecheck.py` | 130 | pytest for updatecheck: version parsing/ordering, check()'s honest per-failure statuses with fetch injected, and the frozen-only autocheck policy | tests | active |
-| `tests/test_v02_parsers.py` | 152 | pytest grab-bag for callgraph, gmwizlog, mastering, styles, io pendant names and the search engine *(untracked, local-only)* | tests | active |
+| `tests/test_v02_parsers.py` | 154 | pytest grab-bag for callgraph, gmwizlog, mastering, styles, io pendant names and the search engine *(untracked, local-only)* | tests | active |
 | `tests/test_va_tokenizer.py` | 51 | pytest for the .VA engine: scalar coercion, scalar arrays, and position arrays incl. a synthetic joint block *(untracked, local-only)* | tests | active |
 | `tests/test_viewfinder.py` | 188 | pytest for the window-mirroring phone share: PhoneShare.start_window_session over loopback plus viewfinder_start choosing which of our own windows to mirror | tests | active |
 | `tests/test_webview_boot.py` | 90 | pytest for the WebView2 0x8007139F boot rescue: failure watch, two-way relaunch ladder, software-rendering fallback env and storage dir | tests | active |
@@ -249,6 +251,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/ui_bgfx_probe.py` | 454 | hidden-window probe of bgfx effects, the settings dialog's two tabs and the theme picker panel | tests | active |
 | `tests/ui_cvxremote_probe.py` | 200 | hidden-window probe of the cv-x remote bar, top-bar phone button and pop-out session adoption | tests | active |
 | `tests/ui_edit_probe.py` | 1369 | hidden-window probe of the #edit workspace: panes, tab strips, find/replace, pane diff, per-robot export | tests | active |
+| `tests/ui_fk_probe.py` | 135 | hidden-window probe holding BV.fk.chain equal to kinematics.chain_frames within 1e-6 across builtin chains plus the synthetic parallel-link arm | tests | active |
 | `tests/ui_probe.py` | 2108 | the original full-app probe: boots a real local backup and walks every tab, primitive and compare view *(untracked, local-only)* | tests | active |
 | `tests/ui_sim_export_probe.py` | 286 | hidden-window probe of the cv-x simulator-folder settings row and the load-cameras picker guard | tests | active |
 | `tests/ui_tabs_probe.py` | 275 | hidden-window probe of backup tabs: strip, per-backup memory, tear-off, and the solo pop-out window | tests | active |
@@ -270,14 +273,14 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 
 | subsystem | files | ~lines |
 |---|---:|---:|
-| tests | 68 | 18,242 |
+| tests | 71 | 18,683 |
 | shared/infra | 27 | 7,657 |
 | program editor | 8 | 6,383 |
 | theming | 34 | 5,646 |
 | backup parsing | 31 | 5,606 |
 | library | 4 | 4,271 |
 | 3D viewer | 16 | 3,832 |
-| docs | 9 | 3,769 |
+| docs | 9 | 3,772 |
 | cameras | 9 | 2,559 |
 | remote/mobile | 10 | 2,032 |
 | backup capture | 4 | 1,739 |
@@ -285,8 +288,8 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | LibraryImporter | 11 | 1,395 |
 | compare engine | 5 | 1,355 |
 | tools/scripts | 4 | 941 |
-| build/config | 7 | 264 |
-| **total** | **249** | **67,113** |
+| build/config | 7 | 267 |
+| **total** | **252** | **67,560** |
 
 > Counts are by *primary* subsystem only — a file appears once, so these add up to the
 > whole repo. The `tests` row is the largest because every probe and unit suite counts as
