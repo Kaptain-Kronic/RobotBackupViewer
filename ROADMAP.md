@@ -56,6 +56,18 @@ Each of these is deliberately scoped to land on its own. Good places to start.
 - ❓ **Scheduled backups + retention** — nightly fleet backup reusing the run
   log / retry / complete-marker machinery; needs a keep-last-N + monthly
   retention policy before it's safe to leave running.
+- 📋 **Camera credentials a site can actually change** — `mtxbackup.py` hardcodes
+  the Matrox vendor defaults (`mtxuser` / `Matrox`, both case-sensitive), which
+  is correct: they are published, they are burned into every DA camera, and a
+  config file would break the offline-single-exe contract. The gap is the plant
+  that *rotates* them and then has nowhere to put the new pair. State measured
+  2026-08-01 (`docs/subsystems/backup-capture.md` §9): the engine already accepts
+  overrides and the batch flow would carry them — set an `ftp user` on a camera
+  entry and the shared password prompt rides along — but the **edit modal sends a
+  user with no password**, and none of it is documented or discoverable. So this
+  is smaller than it looks: finish the modal's credential pair, then say so in
+  the UI. Until it lands, a rotated-credential site cannot back its cameras up
+  at all.
 
 ## 3D View follow-ups
 

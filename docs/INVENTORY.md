@@ -23,7 +23,7 @@ batch lands, or with `--check` to hear about drift).
 > When per-subsystem docs land, they supersede this file for their own area. This
 > map's remaining job is breadth: what exists, and where.
 
-**Scope.** 253 files / ~68,255 lines. Covers everything in the working tree except: the
+**Scope.** 253 files / ~68,267 lines. Covers everything in the working tree except: the
 `.git` internals, build outputs (`dist/`, `build/`, `__pycache__/`), the private
 `SampleBackup/` fixture tree, the `.rmd` model corpus (61 binary robot-model blobs
 that are input data, not source), and the two local-only real-plant reference files
@@ -51,7 +51,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `LICENSE` | 620 | verbatim gnu gpl v3 license text, the license the readme points at | docs | vendored |
 | `pyproject.toml` | 31 | project metadata (v1.4, pywebview), the pytest pythonpath=src a fresh clone needs to collect tests, and the `probe` marker + `addopts` that keep the default run fast | build/config | active |
 | `README.md` | 255 | public readme: feature tour, tab-to-source-file table, run/package/test commands, theme json shape | docs | active |
-| `ROADMAP.md` | 264 | lane-claiming roadmap: shipped/building/decided/open items per subsystem, plus the 2.0 editing principles | docs | active |
+| `ROADMAP.md` | 276 | lane-claiming roadmap: shipped/building/decided/open items per subsystem, plus the 2.0 editing principles | docs | active |
 | `run.py` | 10 | dev launcher and pyinstaller entry script: puts src on sys.path, calls backupviewer.app.main | build/config | active |
 | `run_libraryimporter.py` | 10 | dev launcher and pyinstaller entry script for the companion libraryimporter app | LibraryImporter | active |
 | `split_diff_sandbox.html` | 878 | untracked ui mock of the 4-pane split tree and inline pane diff, with a mock aligner and review modal — untracked, git-excluded; grepped for "split_diff_sandbox" with no hits. its header says the js aligner is mock-only and the real one is compare.align_program_lines; the split tree, inline diff and pdiffview have all shipped | program editor | possibly-dead |
@@ -279,7 +279,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | program editor | 8 | 6,383 |
 | theming | 34 | 5,646 |
 | backup parsing | 31 | 5,606 |
-| docs | 10 | 4,463 |
+| docs | 10 | 4,475 |
 | library | 4 | 4,271 |
 | 3D viewer | 16 | 3,832 |
 | cameras | 9 | 2,559 |
@@ -290,7 +290,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | compare engine | 5 | 1,355 |
 | tools/scripts | 4 | 941 |
 | build/config | 7 | 267 |
-| **total** | **253** | **68,255** |
+| **total** | **253** | **68,267** |
 
 > Counts are by *primary* subsystem only — a file appears once, so these add up to the
 > whole repo. The `tests` row is the largest because every probe and unit suite counts as
