@@ -2,13 +2,20 @@
 
 *Subsystem doc #2. Written 2026-08-01 against `main` @ `b6caaaf`, clean tree
 (plus this pass's own one-line docstring correction in `ftpbackup.py`, §9
-item 1 — a 1-for-1 line swap, so cites into that file hold). Covers
-`ftpbackup.py`, `keyencebackup.py`, `mtxbackup.py`, `discover.py`,
-`backuplog.py`, and the job plumbing they share (`api.py`'s device registry +
-backup/scan endpoints, `web/js/jobs.js`, the launch/retry flows in
-`tabs/home.js` and `manage_ui.js`, and `library.py`'s registration half).
+item 1 — a 1-for-1 line swap, so cites into that file hold).
 Line-number cites are against that revision and drift with edits; the anchor
 commit is the reference.*
+
+Covers: src/backupviewer/ftpbackup.py, src/backupviewer/keyencebackup.py,
+src/backupviewer/mtxbackup.py, src/backupviewer/discover.py,
+src/backupviewer/backuplog.py
+(5 files)
+
+*It also describes the job plumbing those five share — `api.py`'s device
+registry and backup/scan endpoints, `web/js/jobs.js`, the launch and retry flows
+in `tabs/home.js` and `manage_ui.js`, and `library.py`'s registration half — but
+does not claim those files: each is owned by the subsystem it belongs to, and is
+referenced here rather than documented here.*
 
 > **Template note.** parsing.md's shape mostly holds, with one deliberate
 > amendment: this doc has a dedicated **§6 Failure modes** between Invariants

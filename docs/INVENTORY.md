@@ -23,7 +23,7 @@ batch lands, or with `--check` to hear about drift).
 > When per-subsystem docs land, they supersede this file for their own area. This
 > map's remaining job is breadth: what exists, and where.
 
-**Scope.** 254 files / ~68,822 lines. Covers everything in the working tree except: the
+**Scope.** 255 files / ~68,998 lines. Covers everything in the working tree except: the
 `.git` internals, build outputs (`dist/`, `build/`, `__pycache__/`), the private
 `SampleBackup/` fixture tree, the `.rmd` model corpus (61 binary robot-model blobs
 that are input data, not source), and the two local-only real-plant reference files
@@ -55,11 +55,11 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `run.py` | 10 | dev launcher and pyinstaller entry script: puts src on sys.path, calls backupviewer.app.main | build/config | active |
 | `run_libraryimporter.py` | 10 | dev launcher and pyinstaller entry script for the companion libraryimporter app | LibraryImporter | active |
 | `split_diff_sandbox.html` | 878 | untracked ui mock of the 4-pane split tree and inline pane diff, with a mock aligner and review modal — untracked, git-excluded; grepped for "split_diff_sandbox" with no hits. its header says the js aligner is mock-only and the real one is compare.align_program_lines; the split tree, inline diff and pdiffview have all shipped | program editor | possibly-dead |
-| `docs/INVENTORY.md` | 623 | this file: dated file-level map of the repo plus the findings from the phase-1 documentation pass, with resolved items marked inline | docs | active |
+| `docs/INVENTORY.md` | 625 | this file: dated file-level map of the repo plus the findings from the phase-1 documentation pass, with resolved items marked inline | docs | active |
 | `docs/proposals/home-split.md` | 284 | investigation of tabs/home.js (2,277 lines) by responsibility, where the real seams are, what must become shared components first, and a phased sequence — no code changed | docs | active |
 | `docs/subsystems/3d-viewer.md` | 554 | subsystem doc #3 (the 3D viewer): the pendant-proven FK solve and its JS twin, the 228-type table's validated-vs-not honesty, flange residuals re-measured on the pins, the zone degradation ladder, and the unprobed-viewport gap said plainly | docs | active |
-| `docs/subsystems/backup-capture.md` | 649 | subsystem doc #2 (the backup/discovery jobs + shared plumbing): transport ground truth tagged live-run-vs-assumed, the gentle-with-equipment invariants, a dedicated failure-modes section, and the batch-flow coverage gap said plainly | docs | active |
-| `docs/subsystems/parsing.md` | 533 | subsystem doc #1 (parsers/ + session.py): ground truth marked verified-vs-assumed per fact, cross-file invariants, paid-for traps, honest coverage gaps — and the template later subsystem docs follow | docs | active |
+| `docs/subsystems/backup-capture.md` | 656 | subsystem doc #2 (the backup/discovery jobs + shared plumbing): transport ground truth tagged live-run-vs-assumed, the gentle-with-equipment invariants, a dedicated failure-modes section, and the batch-flow coverage gap said plainly | docs | active |
+| `docs/subsystems/parsing.md` | 554 | subsystem doc #1 (parsers/ + session.py): ground truth marked verified-vs-assumed per fact, cross-file invariants, paid-for traps, honest coverage gaps — and the template later subsystem docs follow | docs | active |
 | `packaging/backupviewer.ico` | *75 KB* | multi-resolution app icon embedded in the exe and inherited by the pywebview window | build/config | active |
 | `packaging/backupviewer.spec` | 58 | pyinstaller onefile spec: bundles web/ and cvx_handshake/, edgechromium hidden imports, excludes paramiko | build/config | active |
 | `packaging/libraryimporter.spec` | 41 | pyinstaller onefile spec for libraryimporter.exe, bundling src/libraryimporter/web, no icon | build/config | active |
@@ -260,6 +260,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/ui_updatecheck_probe.py` | 174 | hidden-window probe of the release check ui: statusbar pill, about updates row, skip and startup toggle | tests | active |
 | `tools/apply_ip_list.py` | 159 | cli that stamps a {line:{robot:ip}} list onto library folders as robot.json sidecars, dry-run by default | tools/scripts | active |
 | `tools/restyle.py` | 459 | standalone kit builder cloning s<from>*/style<from>* .ls programs to a new style number, rewriting call refs | tools/scripts | active |
+| `tools/doc_coverage.py` | 146 | reads each subsystem doc's `Covers:` block and reports which shipped files no document claims yet; --check exits nonzero on a claim that cannot resolve | tools/scripts | active |
 | `tools/update_inventory.py` | 147 | recounts this inventory's derived numbers (the ~lines column, subsystem totals, the scope line) from the tree; --check exits nonzero on drift | tools/scripts | active |
 | `tools/seed_library.py` | 176 | hand-out cli expanding a short-name robot list into library plant/line/robot folders with robot.json sidecars | tools/scripts | active |
 | `robot modelas/_re/RMD-FORMAT.md` | 119 | reverse-engineered spec for keyence .rmd robot-model files: container, part records, bvh, mesh soup, chain *(untracked, local-only)* | 3D viewer | active |
@@ -280,7 +281,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | program editor | 8 | 6,383 |
 | theming | 34 | 5,646 |
 | backup parsing | 31 | 5,606 |
-| docs | 11 | 5,030 |
+| docs | 11 | 5,060 |
 | library | 4 | 4,271 |
 | 3D viewer | 16 | 3,832 |
 | cameras | 9 | 2,559 |
@@ -289,9 +290,9 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | flag scanning | 2 | 1,422 |
 | LibraryImporter | 11 | 1,395 |
 | compare engine | 5 | 1,355 |
-| tools/scripts | 4 | 941 |
+| tools/scripts | 5 | 1,087 |
 | build/config | 7 | 267 |
-| **total** | **254** | **68,822** |
+| **total** | **255** | **68,998** |
 
 > Counts are by *primary* subsystem only — a file appears once, so these add up to the
 > whole repo. The `tests` row is the largest because every probe and unit suite counts as
@@ -382,6 +383,7 @@ its target, not dual membership, so they are omitted here — the map above has 
 | `src/libraryimporter/web/js/checklist.js` | LibraryImporter | shared/infra | importer's copy of BV.checklist: shift-range multiselect controller with tri-state select-all group… |
 | `src/libraryimporter/web/js/util.js` | LibraryImporter | shared/infra | importer's BV namespace with just esc, el and toast, trimmed from the main app's util.js |
 | `tools/apply_ip_list.py` | tools/scripts | library | cli that stamps a {line:{robot:ip}} list onto library folders as robot.json sidecars, dry-run by default |
+| `tools/doc_coverage.py` | tools/scripts | docs | reads each subsystem doc's `Covers:` block and reports which shipped files no document claims yet; --check exits… |
 | `tools/restyle.py` | tools/scripts | program editor | standalone kit builder cloning s<from>*/style<from>* .ls programs to a new style number, rewriting… |
 | `tools/seed_library.py` | tools/scripts | library | hand-out cli expanding a short-name robot list into library plant/line/robot folders with robot.json… |
 | `robot modelas/_re/RMD-FORMAT.md` | 3D viewer | docs | reverse-engineered spec for keyence .rmd robot-model files: container, part records, bvh, mesh soup,… |

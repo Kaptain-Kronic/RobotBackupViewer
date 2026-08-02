@@ -1,10 +1,31 @@
 # Parsing — the parser layer
 
 *Subsystem doc #1. Written 2026-07-31 against `main` @ `0dca2d0`, clean tree.
-Covers `src/backupviewer/parsers/` (28 files) plus `session.py`. Line-number
-cites are against that revision and drift with edits; the anchor commit is the
-reference. §5 invariant 10, §7 Coverage and §8 items 1–2 updated 2026-08-01
-after the fixture repair (`e99fc3b` · `8804f62` · `c502ad5`).*
+Line-number cites are against that revision and drift with edits; the anchor
+commit is the reference. §5 invariant 10, §7 Coverage and §8 items 1–2 updated
+2026-08-01 after the fixture repair (`e99fc3b` · `8804f62` · `c502ad5`).*
+
+Covers: src/backupviewer/session.py, src/backupviewer/parsers/__init__.py,
+src/backupviewer/parsers/alarms.py, src/backupviewer/parsers/callgraph.py,
+src/backupviewer/parsers/common.py, src/backupviewer/parsers/curpos.py,
+src/backupviewer/parsers/cvx_image.py, src/backupviewer/parsers/cvx_inspect.py,
+src/backupviewer/parsers/dcs.py, src/backupviewer/parsers/dcszones.py,
+src/backupviewer/parsers/frames.py, src/backupviewer/parsers/gmwizlog.py,
+src/backupviewer/parsers/io_dg.py, src/backupviewer/parsers/kinematics.py,
+src/backupviewer/parsers/ls_edit.py, src/backupviewer/parsers/ls_program.py,
+src/backupviewer/parsers/macros.py, src/backupviewer/parsers/magnet.py,
+src/backupviewer/parsers/mastering.py, src/backupviewer/parsers/mhvalves.py,
+src/backupviewer/parsers/mtx_portal.py, src/backupviewer/parsers/mtx_saved_image.py,
+src/backupviewer/parsers/payloads.py, src/backupviewer/parsers/registers.py,
+src/backupviewer/parsers/roboguidedef.py, src/backupviewer/parsers/styles.py,
+src/backupviewer/parsers/summary_dg.py, src/backupviewer/parsers/sysvars.py,
+src/backupviewer/parsers/va.py
+(29 files)
+
+*Four of those — `curpos`, `dcszones`, `kinematics`, `roboguidedef` — are also
+claimed by [3d-viewer.md](3d-viewer.md), which uses what they produce. Here they
+are documented as parsers; there, as the pose pipeline's evidence. Deliberate
+overlap, not duplication: each links rather than restates.*
 
 > **Template note.** This is the first subsystem doc and sets the shape:
 > sections 1–8 below, closing with **What this pass could not verify**. That
