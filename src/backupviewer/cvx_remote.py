@@ -1,11 +1,11 @@
 """Keyence CV-X live remote-desktop (screen mirror + mouse control).
 
-A clean-room port of the proven C# reference client (`CvxRemote/mirror2.cs`, fully
-reverse-engineered from packet captures - see CvxRemote/CVX_REMOTE_HANDOFF.md). NO
-Keyence software involved; this is a completely separate code path from the CV-X
-anon-FTP backup (keyencebackup.py) - keep both.
+Reverse-engineered from packet captures of Keyence's Terminal software. The C#
+reference client this was ported from is GONE (not in the tree, not in git
+history); the surviving record is this file, the cvx_handshake/ blobs, one test
+file, and docs/subsystems/remote-mobile.md. Separate from keyencebackup.py; keep both.
 
-How it works (all detail in the handoff doc):
+How it works (all detail below, and in the subsystem doc):
   - 3 TCP sockets to the controller: 8502 control/mouse, 8503 aux, 8504 video.
   - Every message = a 32-byte LE header [seq, ctx, type, opcode, method, 0, 0,
     bodyLen] + body.
