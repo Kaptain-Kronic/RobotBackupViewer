@@ -227,6 +227,18 @@ than one that skips its slowest part.
   what's decided, what's in progress, and which questions are still open.
   Claim a lane before building in it; two half-built versions of the same
   thing is the expensive kind of fun.
+- **Docs track code.** A change that alters what a file *does* — its
+  behavior, contract, invariants, or any fact a subsystem doc asserts —
+  updates the doc that `Covers:` it in the **same slice**
+  (`python tools/doc_coverage.py` maps a file to its owning doc), and
+  re-anchors that doc's header commit when the pass is substantive. Pure
+  renames/refactors/typos owe no doc edit, and line-number cites are
+  *expected* to drift — the anchor commit, not the line, is the reference.
+  `doc_coverage.py --check` catches only structural drift (a doc naming a
+  file that no longer exists); a fact gone quietly stale is caught only by
+  this habit and each doc's closing "what this pass could not verify". A file
+  no doc covers yet still owes its `INVENTORY.md` row
+  (`tools/update_inventory.py` keeps the counts honest).
 - **Small slices.** One coherent change per commit; the message says what
   and why, lowercase, like the existing history.
 - Don't rename, move, or reformat files you aren't functionally changing —
