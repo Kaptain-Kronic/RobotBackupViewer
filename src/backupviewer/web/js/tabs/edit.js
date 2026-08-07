@@ -378,9 +378,19 @@
     el.railHead.innerHTML = "";
     el.headCount = BV.el("span", null, headText());
     el.railHead.appendChild(el.headCount);
+    /* bulk intake: search the WHOLE library for programs by name and add the
+       hits in one go - the "same program on 22 robots" job. Offered even on
+       an empty workspace; that is exactly when it earns its keep. */
+    var fnd = BV.el("button", { class: "btn",
+      style: "margin-left:auto;padding:.1rem .4rem;font-size:.7rem",
+      title: "search every library robot's backup for programs by name and " +
+             "add them in bulk (KEYPLC finds S01KEYPLCTRG and S62KEYPLCTRG alike)" },
+      "find…");
+    fnd.addEventListener("click", showProgramFinder);
+    el.railHead.appendChild(fnd);
     if (BV.workspace.count()) {
       var clr = BV.el("button", { class: "btn",
-        style: "margin-left:auto;padding:.1rem .4rem;font-size:.7rem",
+        style: "padding:.1rem .4rem;font-size:.7rem",
         title: "remove everything from the workspace" }, "clear");
       clr.addEventListener("click", function () {
         if (BV.workspace.anyDirty() &&
@@ -592,6 +602,126 @@
     renderPanes();
     afterChange();
     return true;
+  }
+
+  /* ------------------------------------------------------------------ *
+   * the program finder: one pattern, every robot, add in bulk
+   *
+   * The "adjust KEYPLCTRG on all 22 robots" job used to be a per-robot
+   * open -> programs -> sort -> tick -> add crawl. Now: search the pattern
+   * across every library backup (ws_find_programs - no sessions), get the
+   * hits grouped per robot with everything PRE-TICKED (you searched for
+   * exactly this), untick strays, add. Substring by default, * for
+   * wildcards, case never matters.
+   * ------------------------------------------------------------------ */
+  function showProgramFinder() {
+    var body = BV.el("div", { class: "pf" });
+    var row = BV.el("div", { class: "pf-row" });
+    var inp = BV.el("input", { type: "text", spellcheck: "false",
+      placeholder: "program name or a piece of it — * for wildcards" });
+    var goBtn = BV.el("button", { class: "btn primary" }, "search");
+    row.appendChild(inp);
+    row.appendChild(goBtn);
+    body.appendChild(row);
+    var out = BV.el("div", { class: "pf-out" });
+    body.appendChild(out);
+    var foot = BV.el("div", { class: "pf-foot" });
+    var info = BV.el("span", { class: "dim", style: "flex:1;font-size:.75rem" });
+    var addBtn = BV.el("button", { class: "btn primary" }, "add");
+    addBtn.disabled = true;
+    foot.appendChild(info);
+    foot.appendChild(addBtn);
+    body.appendChild(foot);
+
+    var m = BV.modal("find programs across the library", body, {
+      onKey: function (e) {
+        if (e.key === "Enter" && document.activeElement === inp) {
+          search();
+          return true;
+        }
+        return false;
+      },
+    });
+    m.el.classList.add("pf-modal");
+
+    var picks = BV.checklist({ onChange: updateAdd });
+    var found = [];
+    function keyFor(g, p) { return g.root + "|" + p.file; }
+    function updateAdd() {
+      var n = picks.size();
+      addBtn.textContent = "add " + n + " program" + (n === 1 ? "" : "s");
+      addBtn.disabled = !n;
+    }
+    function search() {
+      var pat = inp.value.trim();
+      if (!pat) return;
+      out.innerHTML = '<div class="dim" style="padding:.6rem;font-size:.78rem">searching every backup…</div>';
+      addBtn.disabled = true;
+      BV.api.call("ws_find_programs", pat).then(function (res) {
+        if (!document.body.contains(out)) return;       /* closed mid-search */
+        found = res.groups || [];
+        picks.clear();
+        out.innerHTML = "";
+        var skipNote = res.skipped
+          ? " · " + res.skipped + " robot" + (res.skipped === 1 ? "" : "s") + " skipped (no readable backup)"
+          : "";
+        if (!found.length) {
+          out.innerHTML = '<div class="dim" style="padding:.6rem;font-size:.78rem">' +
+            "nothing matches across " + res.searched + " robots" + BV.esc(skipNote) + "</div>";
+          info.textContent = "";
+          updateAdd();
+          return;
+        }
+        found.forEach(function (g) {
+          var keys = g.programs.map(function (p) { return keyFor(g, p); });
+          var h = BV.el("div", { class: "pf-rb" });
+          if (keys.length > 1) {
+            h.appendChild(picks.group(BV.el("input", { type: "checkbox" }),
+              function () { return keys; }, "rb:" + g.root));
+          }
+          h.appendChild(BV.el("span", { class: "nm" }, BV.esc(g.label || g.robot)));
+          if (g.line) h.appendChild(BV.el("span", { class: "ln" }, BV.esc(g.line)));
+          h.appendChild(BV.el("span", { class: "n" }, String(g.programs.length)));
+          out.appendChild(h);
+          g.programs.forEach(function (p) {
+            var r2 = BV.el("label", { class: "pf-ln" });
+            r2.appendChild(picks.bind(BV.el("input", { type: "checkbox" }), keyFor(g, p)));
+            r2.appendChild(BV.el("span", { class: "nm" }, BV.esc(p.name)));
+            if (p.comment) r2.appendChild(BV.el("span", { class: "cm" }, BV.esc(p.comment)));
+            out.appendChild(r2);
+          });
+          /* found = wanted: everything starts ticked, strays get unticked */
+          keys.forEach(function (k) { picks.set(k, true); });
+        });
+        picks.sync();
+        info.textContent = res.total + " program" + (res.total === 1 ? "" : "s") +
+          " on " + found.length + " robot" + (found.length === 1 ? "" : "s") + skipNote;
+        updateAdd();
+      }).catch(function (e) {
+        if (!document.body.contains(out)) return;
+        out.innerHTML = '<div class="dim" style="padding:.6rem;font-size:.78rem">search failed: ' +
+          BV.esc(e.message || e) + "</div>";
+      });
+    }
+    goBtn.addEventListener("click", search);
+    addBtn.addEventListener("click", function () {
+      var chosen = {};
+      picks.selected().forEach(function (k) { chosen[k] = true; });
+      var entries = [];
+      found.forEach(function (g) {
+        g.programs.forEach(function (p) {
+          if (chosen[keyFor(g, p)]) {
+            entries.push({ root: g.root, label: g.label, file: p.file, name: p.name });
+          }
+        });
+      });
+      var n = BV.workspace.addMany(entries);
+      m.close(true);
+      BV.toast(n ? "added " + n + " program" + (n === 1 ? "" : "s") + " to the workspace"
+                 : "already all in the workspace");
+      afterChange();
+    });
+    setTimeout(function () { try { inp.focus(); } catch (e) {} }, 0);
   }
 
   /* the menu for a SET. Deliberately one item: rename and duplicate have no

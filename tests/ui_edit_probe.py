@@ -283,6 +283,49 @@ def probe(window):
         check("rail.click_keeps_the_row_node", bool(js(window, "window._sameNode")),
               "(a rebuilt row eats the dblclick that opens the program)")
 
+        # ---- the program finder: one pattern, every robot, add in bulk ----
+        # real endpoint against the two on-disk fixture robots: substring
+        # matching, results pre-ticked, dedupe against the working set
+        js(window, """[...document.querySelectorAll('.ws-railhead .btn')]
+            .find(function(b){return b.textContent==='find…';}).click()""")
+        check("finder.opens", bool(poll(window, "!!document.querySelector('.pf-modal')")))
+        js(window, """(function(){
+            var i=document.querySelector('.pf-row input');
+            i.value='AIN';
+            [...document.querySelectorAll('.pf-row .btn')].pop().click();
+        })()""")
+        rows_n = poll(window, "document.querySelectorAll('.pf-ln').length")
+        check("finder.substring_matches_both_robots",
+              rows_n == 2 and js(window, "document.querySelectorAll('.pf-rb').length") == 2,
+              f"({rows_n} program rows — 'AIN' must find MAIN.LS on both robots)")
+        check("finder.results_preticked", bool(js(window, """(function(){
+            var b=[...document.querySelectorAll('.pf-foot .btn')].pop();
+            return !b.disabled && b.textContent==='add 2 programs';
+        })()""")), "(you searched for exactly this — untick strays, not the finds)")
+        # both hits are already IN the workspace: adding is a clean no-op
+        js(window, "[...document.querySelectorAll('.pf-foot .btn')].pop().click()")
+        time.sleep(0.4)
+        check("finder.dedupes_against_workspace",
+              js(window, "BV.workspace.count()") == 2
+              and bool(js(window, "document.getElementById('modal-root').classList.contains('hidden')")))
+        # drop one MAIN, find it by name, add it back — the real intake path
+        js(window, "BV.workspace.remove(BV.workspace.entries()[1].id)")
+        time.sleep(0.3)
+        check("finder.setup_removed_one", js(window, "BV.workspace.count()") == 1)
+        js(window, """[...document.querySelectorAll('.ws-railhead .btn')]
+            .find(function(b){return b.textContent==='find…';}).click()""")
+        poll(window, "!!document.querySelector('.pf-modal')")
+        js(window, """(function(){
+            var i=document.querySelector('.pf-row input');
+            i.value='MAIN';
+            [...document.querySelectorAll('.pf-row .btn')].pop().click();
+        })()""")
+        poll(window, "document.querySelectorAll('.pf-ln').length === 2")
+        js(window, "[...document.querySelectorAll('.pf-foot .btn')].pop().click()")
+        check("finder.readds_missing_program",
+              poll(window, "BV.workspace.count() === 2 ? 'y' : ''") == "y",
+              "(one of the two hits was missing — only it gets added)")
+
         # ---- the split is DERIVED: one pane until a program is dropped right ----
         check("panes.single_by_default",
               js(window, "document.querySelectorAll('.ws-pane').length") == 1)

@@ -7,6 +7,7 @@ Every public method returns an envelope and never raises across the bridge:
 from __future__ import annotations
 
 import base64
+import fnmatch
 import functools
 import json
 import logging
@@ -1052,6 +1053,45 @@ class Api:
             "label": e.get("robot", "") or r.name,
             "programs": self.ws_list_programs(str(r))["data"],
         }
+
+    @_endpoint
+    def ws_find_programs(self, pattern: str):
+        """Program-name search across EVERY library robot's saved backup, for
+        the workspace's add-many picker: 'KEYPLC' finds S01KEYPLCTRG and
+        S62KEYPLCTRG alike. Case-insensitive substring; a '*' in the pattern
+        switches to explicit wildcard matching. Opens no sessions - the same
+        no-session listing ws_robot_programs uses, per robot. Robots without a
+        backup on disk are counted, never silently dropped."""
+        pat = str(pattern or "").strip().upper()
+        if not pat:
+            raise ApiError("BAD_SPEC", "a search pattern is required")
+
+        def match(stem: str) -> bool:
+            return (fnmatch.fnmatchcase(stem.upper(), pat) if "*" in pat
+                    else pat in stem.upper())
+
+        groups, searched, skipped = [], 0, 0
+        for e in library.load()["robots"]:
+            path = library.resolve_open_path(e)
+            if not path or not Path(path).is_dir():
+                skipped += 1
+                continue
+            searched += 1
+            try:
+                r = self._ws_root(path)
+                progs = [p for p in self.ws_list_programs(str(r))["data"]
+                         if match(Path(p["name"]).stem)]
+            except Exception:  # noqa: BLE001 - one unreadable backup must not kill the search
+                skipped += 1
+                continue
+            if progs:
+                groups.append({"robot_id": e.get("id", ""),
+                               "robot": e.get("robot", ""), "line": e.get("line", ""),
+                               "root": str(r),
+                               "label": e.get("robot", "") or r.name,
+                               "programs": progs})
+        return {"groups": groups, "searched": searched, "skipped": skipped,
+                "total": sum(len(g["programs"]) for g in groups)}
 
     @_endpoint
     def ws_get_program(self, root: str, file: str):
