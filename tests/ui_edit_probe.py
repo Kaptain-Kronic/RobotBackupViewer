@@ -1327,6 +1327,59 @@ def probe(window):
               f"({g.get('caretLine')!r} — the gap above must not offset it)")
         check("gaps.clear_removes_all", g.get("cleared") is True)
 
+        # ---- alt+arrow line moves: the component contract, in isolation ----
+        mv_out = js(window, """(function(){
+            var host=document.createElement('div');
+            host.style.cssText='position:fixed;left:0;top:0;width:400px;height:220px;visibility:hidden';
+            document.body.appendChild(host);
+            var ed=BV.lsEditor(host,{text:'AAA\\nBBB\\nCCC\\nDDD'});
+            var out={};
+            function alt(key){ ed.code.dispatchEvent(new KeyboardEvent('keydown',
+                {key:key,altKey:true,bubbles:true,cancelable:true})); }
+            /* collapsed caret on line 2: the line rides down, the caret rides
+               with it (same column on the same text) */
+            ed.focusLine(2);
+            alt('ArrowDown');
+            out.down=ed.getText();
+            out.caretAfterDown=ed.caretLine();
+            alt('ArrowUp');
+            out.up=ed.getText();
+            /* a selection spanning lines 1-2 moves as one block */
+            window._selIn(ed.code, 0, 7);
+            alt('ArrowDown');
+            out.blockDown=ed.getText();
+            alt('ArrowUp');
+            out.blockBack=ed.getText();
+            /* the edges consume the key without changing anything */
+            ed.focusLine(1);
+            alt('ArrowUp');
+            out.topEdge=ed.getText();
+            ed.focusLine(4);
+            alt('ArrowDown');
+            out.bottomEdge=ed.getText();
+            /* each move is one undo step */
+            ed.focusLine(2);
+            alt('ArrowDown');
+            ed.code.dispatchEvent(new KeyboardEvent('keydown',
+                {key:'z',ctrlKey:true,bubbles:true,cancelable:true}));
+            out.undo=ed.getText();
+            host.remove();
+            return JSON.stringify(out);
+        })()""")
+        mv = json.loads(mv_out or "{}")
+        check("move.line_down", mv.get("down") == "AAA\nCCC\nBBB\nDDD",
+              f"({mv.get('down')!r})")
+        check("move.caret_rides_along", mv.get("caretAfterDown") == 3,
+              f"(line {mv.get('caretAfterDown')!r} — the caret stays on the moved text)")
+        check("move.line_back_up", mv.get("up") == "AAA\nBBB\nCCC\nDDD")
+        check("move.selection_block_moves", mv.get("blockDown") == "CCC\nAAA\nBBB\nDDD",
+              f"({mv.get('blockDown')!r})")
+        check("move.selection_block_returns", mv.get("blockBack") == "AAA\nBBB\nCCC\nDDD")
+        check("move.top_edge_consumed_noop", mv.get("topEdge") == "AAA\nBBB\nCCC\nDDD")
+        check("move.bottom_edge_consumed_noop", mv.get("bottomEdge") == "AAA\nBBB\nCCC\nDDD")
+        check("move.one_undo_step", mv.get("undo") == "AAA\nBBB\nCCC\nDDD",
+              "(a move then ctrl+z restores exactly)")
+
         report()
     except Exception as e:  # noqa: BLE001
         print("[FAIL] probe crashed:", type(e).__name__, e)

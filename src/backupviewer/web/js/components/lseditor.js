@@ -43,6 +43,10 @@
    would resurrect it - a dead keystroke). lineTop(n) is the gap-aware
    line->pixel map every outside decoration must use instead of n*lineHeight.
 
+   Alt+ArrowUp/Down moves the caret line (or every line the selection
+   touches) one line up or down - a text-space edit like the gap-boundary
+   delete, so gaps/undo/caret all stay coherent.
+
    BV.lsEditor(host, {text, onChange})
      -> {el, code, getText, setText, focusLine, setGaps, lineTop} */
 (function () {
@@ -354,6 +358,41 @@
       return true;
     }
 
+    /* Alt+Arrow: move the caret line - or every line the selection touches -
+       one line up/down, the selection riding along (so the gesture repeats).
+       Text-space like gapBoundaryDelete: there is no native gesture to lean
+       on, and innerHTML rebuilds would fight one anyway. */
+    function moveLines(dir) {
+      var caret = caretOffsets();
+      if (!caret) return false;
+      var t = lastText === null ? getText() : lastText;
+      var lines = t.split("\n");
+      var a = t.slice(0, caret.start).split("\n").length - 1;
+      var b = t.slice(0, caret.end).split("\n").length - 1;
+      /* a selection ending exactly at a line's column 0 does not claim it */
+      if (caret.end > caret.start && t.charAt(caret.end - 1) === "\n") b--;
+      var moved, delta;
+      if (dir < 0) {
+        if (a === 0) return true;              /* nothing above: consumed */
+        moved = lines.splice(a - 1, 1)[0];     /* block slides to a-1..b-1 */
+        lines.splice(b, 0, moved);             /* ...and this lands after it */
+        delta = -(moved.length + 1);
+      } else {
+        if (b >= lines.length - 1) return true; /* nothing below: consumed */
+        moved = lines.splice(b + 1, 1)[0];
+        lines.splice(a, 0, moved);
+        delta = moved.length + 1;
+      }
+      lastText = lines.join("\n");
+      code.innerHTML = buildHtml(lastText);
+      setSelection(caret.start + delta, caret.end + delta);
+      lastCount = -1;
+      updateGutter(lastText.split("\n").length);
+      pushHistory(false);
+      if (opts && opts.onChange) opts.onChange(lastText);
+      return true;
+    }
+
     code.addEventListener("keydown", function (e) {
       if (e.key === "Enter") {
         e.preventDefault();
@@ -363,6 +402,12 @@
       if ((e.key === "Backspace" || e.key === "Delete") &&
           gapBoundaryDelete(e.key)) {
         e.preventDefault();
+        return;
+      }
+      if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey &&
+          (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        e.preventDefault();          /* consumed even at the edges */
+        moveLines(e.key === "ArrowUp" ? -1 : 1);
         return;
       }
       if (e.key === "Tab") {
