@@ -298,7 +298,10 @@
           onClick: function () { startLineBackup(_visibleRobots); } },
         { label: (unhide ? "unhide" : "hide") + tag, disabled: !n,
           onClick: function () { hideSelectedInLine(_visibleRobots); } },
-        { label: "scan" + tag, disabled: !n,
+        /* never disabled: with nothing selected the scan window opens as a
+           REPORT VIEWER (the last scan survives the app), and viewing it must
+           not cost you a robot selection you did not want */
+        { label: n ? "scan" + tag : "scan / last report",
           onClick: function () { BV.scanUI.open(sel); } },
         { label: "fix names" + tag, disabled: !n,
           onClick: function () { BV.libActions.fixNames(); } },

@@ -978,7 +978,7 @@ def probe(window):
             clock.querySelector('input[type=checkbox]').click();
             var pin=clock.querySelector('.hs-param');
             pin.value='45s';
-            var go=[...document.querySelectorAll('.hs-host .lf-actions .btn.primary')]
+            var go=[...document.querySelectorAll('.hs-foot .btn.primary')]
                 .find(function(b){return b.textContent==='scan';});
             go.click();
             return window.__hs;
@@ -993,6 +993,399 @@ def probe(window):
             document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));""")
         check("scan.modal_closes", bool(poll(window,
               "document.getElementById('modal-root').classList.contains('hidden')")))
+
+        # ---- the scan REPORT: a tree with report-scoped filters ----
+        # canned results through stubbed endpoints, so the real pick -> run ->
+        # report flow drives the real report code with known findings
+        js(window, """(function(){
+            window.__realCall3=BV.api.call;
+            var RESULTS=[
+              {robot_id:'probe-r1', robot:'RB010R01B01', line:'LINE01', plant:'FakePlant',
+               checks:[
+                 {id:'remarked_positions', status:'flag',
+                  summary:'3 remarked motion lines — positions are being skipped',
+                  detail:'capped text',
+                  items:[{prog:'S04FLIP', line:71, text:'//J P[5] 100% CNT100'},
+                         {prog:'S04FLIP', line:72, text:'//J P[6] 100% CNT15'},
+                         {prog:'S042DMTX1', line:42, text:'//J P[2] 100% FINE'}]},
+                 {id:'pause_used', status:'flag', summary:'1 PAUSE in 1 program',
+                  items:[{prog:'S04PROC1', line:24, text:'PAUSE'}]},
+                 {id:'broken_calls', status:'info',
+                  summary:'2 called programs not in the backup (2 call sites)',
+                  detail:'GONE <- S04FLIP, MISSING <- S04PROC1',
+                  items:[{prog:'S04FLIP', text:'CALL GONE'},
+                         {prog:'S04PROC1', text:'CALL MISSING'}]},
+                 {id:'clock_drift', status:'info', summary:'drift +4m',
+                  detail:'controller 11-JUN-26 08:56 vs backup written 08:52'},
+                 {id:'override_low', status:'ok', summary:'100%'}]},
+              {robot_id:'probe-r2', robot:'RB020R01B01', line:'LINE01', plant:'FakePlant',
+               checks:[
+                 {id:'remarked_positions', status:'flag',
+                  summary:'1 remarked motion line — positions are being skipped',
+                  items:[{prog:'S04FLIP', line:9, text:'//L P[1] 500mm/sec FINE'}]},
+                 {id:'pause_used', status:'ok', summary:'no PAUSE instructions'},
+                 {id:'override_low', status:'na', summary:'no $MCR.$GENOVERRIDE'}]}];
+            BV.api.call=function(){
+              var a=arguments;
+              if(a[0]==='health_scan_start')
+                return Promise.resolve({job_id:'hs-probe', total:2});
+              if(a[0]==='scan_progress' && a[1]==='hs-probe')
+                return Promise.resolve({status:'done', scanned:2, total:2, results:RESULTS});
+              if(a[0]==='ws_robot_programs')
+                return Promise.resolve({root:'PROBE-ROOT-'+a[1], label:'RB0X0R01B01',
+                  programs:[{file:'S04FLIP.LS', name:'S04FLIP.LS', comment:''}]});
+              return window.__realCall3.apply(this, a);
+            };
+            BV.scanUI.open([{id:'probe-r1'},{id:'probe-r2'}]);
+        })()""")
+        poll(window, "!!document.querySelector('.hs-check')")
+        js(window, """(function(){
+            var rows=[...document.querySelectorAll('.hs-check')];
+            var pick=rows.find(function(r){
+                return r.querySelector('.hs-lbl').textContent==='remarked positions';});
+            pick.querySelector('input[type=checkbox]').click();
+            [...document.querySelectorAll('.hs-foot .btn.primary')]
+                .find(function(b){return b.textContent==='scan';}).click();
+        })()""")
+        got = poll(window, "document.querySelectorAll('.hs-sec').length")
+        check("report.sections_render", got and got >= 2, f"({got} sections)")
+        head_txt = js(window, "(document.querySelector('.hs-report-head .hs-info')||{}).textContent||''")
+        check("report.head_counts_and_stamp",
+              "2 robots scanned" in head_txt and "3 flags" in head_txt and ":" in head_txt,
+              f"({head_txt!r})")
+        # unfiltered: the head states findings plainly, no "of"
+        check("report.head_counts_findings",
+              "7 findings" in head_txt and " of " not in head_txt, f"({head_txt!r})")
+        check("report.flag_sections_open_themselves",
+              js(window, "document.querySelectorAll('.hs-sec.open').length") >= 2,
+              "(the flags are the report — quiet sections stay folded)")
+        # STICKY: a stray click outside must NOT eat the report
+        js(window, """document.getElementById('modal-root').dispatchEvent(
+            new MouseEvent('mousedown',{bubbles:true}))""")
+        time.sleep(0.3)
+        check("report.backdrop_click_does_not_close",
+              not js(window, "document.getElementById('modal-root').classList.contains('hidden')"))
+        check("report.has_x_close", bool(js(window, "!!document.querySelector('.modal-x')")))
+        # the TREE: left-click expands into per-program groups, nothing capped
+        js(window, "document.querySelector('.hs-sec.open .hs-rowhead.expandable').click()")
+        time.sleep(0.3)
+        # scope to the OPENED row: collapsed rowbodies exist in the DOM too
+        tree = js(window, """JSON.stringify({
+            progs:[...document.querySelectorAll('.hs-row.open .hs-prog-h .nm')]
+                .map(function(n){return n.textContent;}),
+            items:document.querySelectorAll('.hs-row.open .hs-item').length})""")
+        tree_d = json.loads(tree or "{}")
+        check("report.row_expands_to_program_groups",
+              tree_d.get("progs") == ["S04FLIP", "S042DMTX1"] and tree_d.get("items") == 3,
+              f"({tree})")
+        # right-click a LINE ITEM -> ignore this finding (view filter only).
+        # scoped to the row just opened: folded sections keep their rows in
+        # the DOM, so an unscoped .hs-item lands in whichever section is first
+        js(window, """document.querySelector('.hs-row.open .hs-item').dispatchEvent(
+            new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:200,clientY:200}))""")
+        time.sleep(0.3)
+        menu1 = js(window, """[...document.querySelectorAll('.ctx-menu .ctx-item')]
+            .map(function(b){return b.textContent;}).join('|')""") or ""
+        check("report.item_menu_shape",
+              "ignore this finding" in menu1 and "exclude program S04FLIP from scan" in menu1
+              and "add S04FLIP to editor" in menu1 and "open this backup" in menu1,
+              f"({menu1!r})")
+        js(window, """[...document.querySelectorAll('.ctx-menu .ctx-item')]
+            .find(function(b){return b.textContent==='ignore this finding';}).click()""")
+        time.sleep(0.4)
+        check("report.ignore_finding_filters_item", bool(js(window, """(function(){
+            var sec=[...document.querySelectorAll('.hs-sec')].find(function(s){
+                return s.querySelector('.hs-sec-title').textContent==='remarked positions';});
+            var row=[...sec.querySelectorAll('.hs-rowhead')].find(function(h){
+                return h.textContent.indexOf('RB010')>=0;});
+            return row && row.querySelector('.hs-shown') &&
+                   row.querySelector('.hs-shown').textContent==='2 of 3 shown';
+        })()""")), "(the row must say honestly that a finding is filtered)")
+        reset_txt = js(window, "(document.querySelector('.hs-reset')||{}).textContent") or ""
+        check("report.reset_chip_appears", reset_txt == "reset filters (1)",
+              f"({reset_txt!r})")
+        # a filter repaint must NOT lose your place: the row you were working
+        # in is still open (no re-scroll, no re-expand crawl)
+        check("report.filters_keep_your_place", bool(js(window, """(function(){
+            var sec=[...document.querySelectorAll('.hs-sec')].find(function(s){
+                return s.querySelector('.hs-sec-title').textContent==='remarked positions';});
+            var row=[...sec.querySelectorAll('.hs-row')].find(function(x){
+                return x.querySelector('.hs-rowhead').textContent.indexOf('RB010')>=0;});
+            return row && row.classList.contains('open');
+        })()""")), "(every right-click used to collapse the whole report)")
+        # the program header offers BOTH scopes: its own row-local ignore and
+        # the every-robot exclude
+        js(window, """document.querySelector('.hs-row.open .hs-prog-h').dispatchEvent(
+            new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:220,clientY:220}))""")
+        time.sleep(0.3)
+        menu2 = js(window, """[...document.querySelectorAll('.ctx-menu .ctx-item')]
+            .map(function(b){return b.textContent;}).join('|')""") or ""
+        check("report.prog_menu_has_both_scopes",
+              menu2.split("|")[0].startswith("ignore th")
+              and "exclude program S04FLIP from scan" in menu2,
+              f"({menu2!r})")
+        js(window, """[...document.querySelectorAll('.ctx-menu .ctx-item')]
+            .find(function(b){return b.textContent.indexOf('ignore th')===0;}).click()""")
+        time.sleep(0.4)
+        prog_local = js(window, """JSON.stringify((function(){
+            var sec=[...document.querySelectorAll('.hs-sec')].find(function(s){
+                return s.querySelector('.hs-sec-title').textContent==='remarked positions';});
+            var r10=[...sec.querySelectorAll('.hs-row')].find(function(x){
+                return x.querySelector('.hs-rowhead').textContent.indexOf('RB010')>=0;});
+            return {progs:[...r10.querySelectorAll('.hs-prog-h .nm')].map(function(n){return n.textContent;}),
+                    rb20: [...sec.querySelectorAll('.hs-rowhead')].some(function(h){
+                        return h.textContent.indexOf('RB020')>=0;})};
+        })())""")
+        pl = json.loads(prog_local or "{}")
+        check("report.prog_ignore_is_row_local",
+              pl.get("progs") == ["S042DMTX1"] and pl.get("rb20") is True,
+              f"({prog_local} — RB020's S04FLIP must survive a row-local ignore)")
+        # EXCLUDE from RB020's side: S04FLIP findings vanish on EVERY robot
+        js(window, """(function(){
+            var sec=[...document.querySelectorAll('.hs-sec')].find(function(s){
+                return s.querySelector('.hs-sec-title').textContent==='remarked positions';});
+            var row=[...sec.querySelectorAll('.hs-row')].find(function(x){
+                return x.querySelector('.hs-rowhead').textContent.indexOf('RB020')>=0;});
+            row.querySelector('.hs-rowhead').click();
+            row.querySelector('.hs-prog-h').dispatchEvent(
+                new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:220,clientY:220}));
+        })()""")
+        time.sleep(0.3)
+        js(window, """[...document.querySelectorAll('.ctx-menu .ctx-item')]
+            .find(function(b){return b.textContent.indexOf('exclude program S04FLIP')>=0;}).click()""")
+        time.sleep(0.4)
+        # filtered ROWS leave the DOM entirely; RB020's ok/n·a rows in OTHER
+        # sections rightly stay (CSS-hidden), so ask the remarked section
+        after_ex = js(window, """JSON.stringify((function(){
+            var txt=document.querySelector('.hs-results').textContent;
+            var sec=[...document.querySelectorAll('.hs-sec')].find(function(s){
+                return s.querySelector('.hs-sec-title').textContent==='remarked positions';});
+            var rb20=[...sec.querySelectorAll('.hs-rowhead')].filter(function(h){
+                return h.textContent.indexOf('RB020')>=0;});
+            return {flip: txt.indexOf('S04FLIP')>=0, rb20rows: rb20.length};
+        })())""")
+        ex_d = json.loads(after_ex or "{}")
+        check("report.exclude_program_sweeps_all_robots",
+              ex_d.get("flip") is False and ex_d.get("rb20rows") == 0,
+              f"({after_ex} — RB020's only finding was S04FLIP, so its row goes too)")
+        # copy follows the filters and keeps the tree shape
+        js(window, """window.__copied=null; window.__realCopy=BV.copyText;
+            BV.copyText=function(t){ window.__copied=t; };
+            [...document.querySelectorAll('.hs-report-head .btn')]
+                .find(function(b){return b.textContent==='copy full';}).click();""")
+        time.sleep(0.3)
+        copied = js(window, "window.__copied") or ""
+        js(window, "BV.copyText=window.__realCopy")
+        check("report.copy_is_tree_text",
+              "[remarked positions]" in copied and "S042DMTX1 (1)" in copied
+              and "line 42: //J P[2] 100% FINE" in copied,
+              f"({copied[:120]!r})")
+        check("report.copy_honors_filters",
+              "S04FLIP" not in copied and "filter" in copied and "not shown" in copied,
+              "(what you send matches what you see)")
+        # an exclude reaches EVERY section, not just the one it was used in -
+        # broken CALLs names S04FLIP too, and prose-only details would have
+        # smuggled it back into the paste
+        check("report.exclude_reaches_other_sections",
+              "[broken CALLs]" in copied and "CALL GONE" not in copied
+              and "CALL MISSING" in copied,
+              "(S04FLIP's broken call must go with it; S04PROC1's stays)")
+        check("report.copy_states_filtered_counts",
+              "[1 of 2 shown]" in copied and "of 7 findings" in copied,
+              f"(a filtered row must never quote its pre-filter summary alone)")
+        # a check with NO findings (per-robot facts) keeps its detail
+        check("report.copy_keeps_findingless_detail",
+              "controller 11-JUN-26 08:56" in copied,
+              "(clock drift has nothing to filter — dropping it would lose real info)")
+        head2 = js(window, "(document.querySelector('.hs-report-head .hs-info')||{}).textContent||''")
+        check("report.head_recounts_when_filtered",
+              " of 7 findings shown" in head2, f"({head2!r})")
+        sec_txt = js(window, """(function(){
+            var s=[...document.querySelectorAll('.hs-sec')].find(function(x){
+                return x.querySelector('.hs-sec-title').textContent==='remarked positions';});
+            return s.querySelector('.hs-sec-counts').textContent;
+        })()""") or ""
+        check("report.section_head_recounts", " of " in sec_txt and "findings" in sec_txt,
+              f"({sec_txt!r})")
+        # the QUICK list: who, how many, which programs - no lines. Same rows,
+        # same filters, blank line between robots so it reads as a list.
+        js(window, """window.__q=null; window.__realCopy2=BV.copyText;
+            BV.copyText=function(t){ window.__q=t; };
+            [...document.querySelectorAll('.hs-report-head .btn')]
+                .find(function(b){return b.textContent==='copy list';}).click();
+            BV.copyText=window.__realCopy2;""")
+        time.sleep(0.3)
+        quick = js(window, "window.__q") or ""
+        check("quick.has_banner_rules",
+              "[remarked positions]" in quick and quick.count("---") >= 2,
+              f"({quick[:80]!r})")
+        check("quick.robot_line_carries_count",
+              any(l.strip().startswith("x RB010") and l.rstrip().endswith("— 1")
+                  for l in quick.split("\n")),
+              "(robot — <findings> for the shown findings only)")
+        check("quick.lists_programs_with_counts", "      S042DMTX1 (1)" in quick)
+        check("quick.no_line_detail",
+              "line 42" not in quick and "//J P[2]" not in quick,
+              "(the short form is the point — lines live in copy full)")
+        check("quick.blank_line_between_robots",
+              "\n\n  x RB0" in quick or "\n\n  * RB0" in quick,
+              "(robots must breathe)")
+        check("quick.honors_filters", "S04FLIP" not in quick)
+
+        # LAST SCAN: close with the ✕, reopen the report from the picker —
+        # the report AND its filters survive
+        js(window, "document.querySelector('.modal-x').click()")
+        check("report.x_closes", bool(poll(window,
+              "document.getElementById('modal-root').classList.contains('hidden')")))
+
+        # the finished report is on DISK, not just in memory: closing the app
+        # must not throw away minutes of scanning. Closing FLUSHES the
+        # debounced save, so a filter applied a second before quitting keeps.
+        # the close FIRES the write, it does not await it - so re-read until
+        # the flush lands rather than racing it (an atomic replace means a
+        # read that is early sees the previous save, never a torn one)
+        js(window, "window.__disk=''")
+        disk = poll(window, """(function(){
+            BV.api.call('load_last_scan').then(function(r){
+                window.__disk = JSON.stringify({
+                    robots: r && r.results ? r.results.length : -1,
+                    progs: r && r.flt ? Object.keys(r.flt.progs).length : -1,
+                    view: r && r.view ? Object.keys(r.view.rows).length : -1});
+            }, function(e){ window.__disk = 'err:' + (e.code||e.message); });
+            var d = null;
+            try { d = window.__disk ? JSON.parse(window.__disk) : null; } catch (e) {}
+            return (d && d.progs === 1) ? window.__disk : "";
+        })()""") or js(window, "window.__disk")
+        disk_d = json.loads(disk) if isinstance(disk, str) and disk.startswith("{") else {}
+        check("persist.report_written_to_disk", disk_d.get("robots") == 2, f"({disk!r})")
+        check("persist.filters_ride_along", disk_d.get("progs") == 1,
+              "(the excluded program is part of the saved view)")
+        check("persist.expansion_rides_along", (disk_d.get("view") or 0) >= 1)
+        js(window, "BV.scanUI.open([{id:'probe-r1'},{id:'probe-r2'}])")
+        last_btn = poll(window, """(function(){
+            var b=[...document.querySelectorAll('.hs-foot .btn')]
+                .find(function(x){return x.textContent.indexOf('last scan ·')===0;});
+            return b ? b.textContent : '';
+        })()""")
+        check("report.last_scan_button_in_picker", bool(last_btn), f"({last_btn!r})")
+        js(window, """[...document.querySelectorAll('.hs-foot .btn')]
+            .find(function(x){return x.textContent.indexOf('last scan ·')===0;}).click()""")
+        time.sleep(0.4)
+        res_txt = js(window, "(document.querySelector('.hs-results')||{}).textContent") or ""
+        check("report.last_scan_reopens_with_filters",
+              bool(js(window, "!!document.querySelector('.hs-reset')"))
+              and "S04FLIP" not in res_txt,
+              "(the kept report carries its view filters)")
+        # reset filters brings every finding back
+        js(window, "document.querySelector('.hs-reset').click()")
+        time.sleep(0.4)
+        check("report.reset_restores_everything",
+              "S04FLIP" in (js(window, "(document.querySelector('.hs-results')||{}).textContent") or "")
+              and not js(window, """(function(){
+                  var b=document.querySelector('.hs-reset');
+                  return b && b.style.display!=='none';
+              })()"""))
+        # add-to-editor from a program header (stubbed ws_robot_programs);
+        # the RB010 row is STILL open — expansion survives the reset repaint
+        ws_before = js(window, "BV.workspace.count()")
+        check("report.expansion_survives_reset",
+              bool(js(window, "!!document.querySelector('.hs-row.open .hs-prog-h')")))
+        js(window, """document.querySelector('.hs-row.open .hs-prog-h').dispatchEvent(
+            new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:220,clientY:220}))""")
+        time.sleep(0.3)
+        js(window, """[...document.querySelectorAll('.ctx-menu .ctx-item')]
+            .find(function(b){return b.textContent.indexOf('add S04FLIP to editor')>=0;}).click()""")
+        added_ws = poll(window, "BV.workspace.count() > %d ? 'y' : ''" % (ws_before or 0))
+        check("report.add_to_editor_adds_entry", added_ws == "y",
+              f"({ws_before} -> {js(window, 'BV.workspace.count()')})")
+        js(window, """(function(){
+            BV.workspace.entries().filter(function(e){
+                return String(e.root).indexOf('PROBE-ROOT-')===0; })
+              .forEach(function(e){ BV.workspace.remove(e.id); });
+        })()""")
+        js(window, """BV.api.call=window.__realCall3;
+            document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));""")
+        poll(window, "document.getElementById('modal-root').classList.contains('hidden')")
+
+        # ---- the scan window with NOTHING selected: a report viewer ----
+        # it used to be unreachable (the menu item greyed out), so re-reading
+        # a finished report cost you a robot selection you did not want
+        js(window, "BV.scanUI.open([])")
+        got = poll(window, "!!document.querySelector('.hs-results') ? 'report' : ''")
+        check("noselect.opens_straight_to_last_report", got == "report",
+              "(no robots + a kept report = the report, not an empty picker)")
+        js(window, """[...document.querySelectorAll('.hs-report-head .btn')]
+            .find(function(b){return b.textContent==='scan again';}).click()""")
+        poll(window, "!!document.querySelector('.hs-check')")
+        gate = js(window, """JSON.stringify((function(){
+            var go=[...document.querySelectorAll('.hs-foot .btn')]
+                .find(function(b){return b.textContent==='scan';});
+            var last=[...document.querySelectorAll('.hs-foot .btn')]
+                .some(function(b){return b.textContent.indexOf('last scan ·')===0;});
+            return {disabled: !!(go && go.disabled), last: last,
+                    note: (document.querySelector('.hs-info')||{}).textContent||''};
+        })())""")
+        gate_d = json.loads(gate or "{}")
+        check("noselect.scan_disabled_and_says_why",
+              gate_d.get("disabled") is True and "no robots selected" in gate_d.get("note", ""),
+              f"({gate})")
+        check("noselect.last_scan_still_offered", gate_d.get("last") is True)
+
+        # ---- the picker's own layout: stapled foot, one scroller, packed ----
+        layout = js(window, """JSON.stringify((function(){
+            var m=document.querySelector('.hs-modal');
+            var mb=m.querySelector('.modal-body');
+            var sc=document.querySelector('.hs-scroll');
+            var ft=document.querySelector('.hs-foot');
+            var q=document.querySelector('.hs-findinput');
+            var cats=document.querySelector('.hs-cats');
+            var box=m.getBoundingClientRect();
+            var rows=[...document.querySelectorAll('.hs-check')];
+            return {
+              bodyOverflow: getComputedStyle(mb).overflowY,
+              scroller: !!sc && getComputedStyle(sc).overflowY === 'auto',
+              footBelowScroll: !!(sc && ft) &&
+                  ft.getBoundingClientRect().top >= sc.getBoundingClientRect().bottom - 1,
+              footInsideModal: !!ft &&
+                  ft.getBoundingClientRect().bottom <= box.bottom + 1,
+              findStapled: !!(q && sc) &&
+                  q.getBoundingClientRect().top >= sc.getBoundingClientRect().bottom - 1,
+              columns: cats ? getComputedStyle(cats).columnCount : '0',
+              wide: Math.round(box.width / window.innerWidth * 100),
+              topGap: Math.round(box.top),
+              bottomGap: Math.round(window.innerHeight - box.bottom),
+              rowH: rows.length ? Math.round(rows[0].getBoundingClientRect().height) : 0,
+              descEls: document.querySelectorAll('.hs-check .hs-desc').length,
+              tipped: rows.filter(function(r){ return (r.title||'').length > 10; }).length,
+              nRows: rows.length};
+        })())""")
+        lay = json.loads(layout or "{}")
+        check("picker.body_does_not_scroll", lay.get("bodyOverflow") == "hidden",
+              f"({layout} — the host owns [head][scroll][foot])")
+        check("picker.one_scroller", lay.get("scroller") is True)
+        check("picker.foot_is_stapled",
+              lay.get("footBelowScroll") is True and lay.get("footInsideModal") is True,
+              "(the scan / last-scan buttons must never scroll away)")
+        check("picker.find_bar_stapled_too", lay.get("findStapled") is True,
+              "(find is an action you reach for, not an option you browse)")
+        check("picker.categories_flow_in_columns", lay.get("columns") == "3",
+              "(a short category must not reserve the tallest one's height)")
+        check("picker.uses_the_screen", (lay.get("wide") or 0) >= 70,
+              f"({lay.get('wide')}% of the window — it carries a lot)")
+        # #modal-root pins dialogs 10vh from the top, so the height must leave
+        # the SAME gap underneath or the window reads as dropped, not centred
+        check("picker.window_is_centred",
+              abs((lay.get("topGap") or 0) - (lay.get("bottomGap") or 0)) <= 6,
+              f"(top {lay.get('topGap')} vs bottom {lay.get('bottomGap')})")
+        # a list, not a stack of paragraphs: one line per check, description
+        # in the tooltip
+        check("picker.rows_are_one_line", 0 < (lay.get("rowH") or 0) <= 34,
+              f"({lay.get('rowH')}px per check)")
+        check("picker.descriptions_are_tooltips",
+              lay.get("descEls") == 0 and lay.get("tipped") == lay.get("nRows"),
+              f"({lay.get('tipped')} of {lay.get('nRows')} rows carry their description as a title)")
+        js(window, "document.querySelector('.modal-x').click()")
+        poll(window, "document.getElementById('modal-root').classList.contains('hidden')")
 
         # ---- link cameras: lives in the functions… dropdown now ----
         check("manage.link_cams_not_in_head",

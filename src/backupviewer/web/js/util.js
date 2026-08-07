@@ -130,12 +130,20 @@ window.BV = {};
   /* simple modal helper; returns {close}. opts.beforeClose() -> false blocks a
      dismissal (backdrop / Esc / cancel) — the unsaved-work guard. close(true)
      bypasses it for a committed save or an explicit discard; the check is
-     strictly === true so event objects passed by listeners can't bypass. */
+     strictly === true so event objects passed by listeners can't bypass.
+     opts.sticky: a click outside does NOT dismiss (for dialogs whose content
+     was expensive to produce - a scan report re-runs minutes of work); the
+     dialog gains a ✕ in its corner instead, and Esc still works. */
   BV.modal = function (title, bodyEl, opts) {
     var root = document.getElementById("modal-root");
     root.innerHTML = "";
     var m = BV.el("div", { class: "modal" });
     if (title) m.appendChild(BV.el("h2", null, BV.esc(title)));
+    if (opts && opts.sticky) {
+      var xBtn = BV.el("button", { class: "modal-x", title: "close" }, "✕");
+      xBtn.addEventListener("click", function () { close(); });
+      m.appendChild(xBtn);
+    }
     var body = BV.el("div", { class: "modal-body" });
     body.appendChild(bodyEl);
     m.appendChild(body);
@@ -157,7 +165,11 @@ window.BV = {};
       if (e.key === "Escape") { e.stopPropagation(); e.preventDefault(); close(); }
       else if (opts && opts.onKey && opts.onKey(e, close)) { e.stopPropagation(); e.preventDefault(); }
     }
-    function onBackdrop(e) { if (e.target === root) close(); }
+    function onBackdrop(e) {
+      if (e.target !== root) return;
+      if (opts && opts.sticky) return;   /* outside clicks can't eat this one */
+      close();
+    }
     document.addEventListener("keydown", onKey, true);
     root.addEventListener("mousedown", onBackdrop);
     return { close: close, el: m };

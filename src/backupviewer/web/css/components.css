@@ -312,6 +312,16 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
   font-size: 0.8rem; color: var(--sub); text-transform: lowercase;
 }
 .modal .modal-body { overflow: auto; padding: 0.3rem 0.5rem 0.8rem; }
+/* the sticky-modal ✕ (BV.modal opts.sticky): the ONE mouse way out when
+   outside clicks are ignored. .modal already clips (overflow:hidden), so the
+   button pins inside the top-right corner. */
+.modal { position: relative; }
+.modal-x {
+  position: absolute; top: 0.45rem; right: 0.55rem;
+  background: none; border: none; cursor: pointer;
+  color: var(--sub); font-size: 0.85rem; line-height: 1; padding: 0.25rem;
+}
+.modal-x:hover { color: var(--text); }
 /* pickable rows: dialogs (library/compare pickers) and anchored drop panels
    (the theme picker) share them */
 :is(.modal, .bv-drop) .opt-row {
@@ -1665,11 +1675,20 @@ button.btn.danger:disabled { opacity: 0.5; cursor: default; }
 
 /* fleet health scan modal (scan_ui.js) */
 .hs-info { font-size: 0.82rem; color: var(--sub); }
-.hs-check { display: flex; align-items: flex-start; gap: 0.55rem; padding: 0.32rem 0.3rem; border-radius: 6px; cursor: pointer; }
-.hs-check:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
-.hs-check input { margin-top: 0.18rem; }
-.hs-lbl { font-weight: 600; font-size: 0.86rem; }
-.hs-check .hs-desc { font-size: 0.76rem; color: var(--sub); }
+/* one line per check - the description is the tooltip, so the list stays a
+   list. Truncation is deliberate: hovering gives you the whole story. */
+.hs-check {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.16rem 0.35rem; border-radius: 5px; cursor: pointer;
+}
+.hs-check:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.hs-check input { flex: none; }
+.hs-lbl {
+  font-size: 0.8rem; color: var(--text); line-height: 1.5;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* a picked check reads as picked without hunting for the tick */
+.hs-check:has(input:checked) .hs-lbl { color: var(--accent); font-weight: 600; }
 /* per-check input (the clock tolerance) — rides the right edge of its row */
 .hs-param {
   margin-left: auto; flex: none; width: 4.6em; align-self: center;
@@ -1678,22 +1697,42 @@ button.btn.danger:disabled { opacity: 0.5; cursor: default; }
   text-align: center;
 }
 .hs-param:focus { outline: none; border-color: var(--accent); }
-.hs-find { display: flex; align-items: center; gap: 0.55rem; margin: 0.55rem 0 0.3rem; }
-.hs-find input {
-  appearance: none; font: inherit; font-size: 0.85rem; flex: 1; min-width: 0;
-  background: var(--bg2); color: var(--text);
-  border: 1px solid var(--edge); border-radius: 6px; padding: 0.3rem 0.55rem;
-}
-.hs-find input:focus { outline: none; border-color: var(--accent); }
 /* reports need room: wider + taller than the stock 640px/70vh modal */
-.modal.hs-modal { max-width: min(900px, 94vw); max-height: 86vh; }
-.hs-report-head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.45rem; flex-wrap: wrap; }
+/* the scan window carries more than any other dialog - give it the screen it
+   needs instead of a small centred box with everything fighting for room.
+   80vh, NOT more: #modal-root pins dialogs 10vh from the top, so 80 leaves
+   the same 10vh underneath and the window reads as centred. 90vh put its
+   bottom edge flush against the app's and looked dropped. */
+.modal.hs-modal {
+  width: min(78rem, 96vw); max-width: min(78rem, 96vw); height: 80vh; max-height: 80vh;
+}
+/* its body does NOT scroll: the host owns a [head][scroller][foot] column so
+   the actions and the report toolbar stay put (the daily stapling lesson) */
+.modal.hs-modal > .modal-body { overflow: hidden; display: flex; min-height: 0; }
+.hs-host { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 0.4rem; }
+.hs-scroll { flex: 1; overflow-y: auto; min-height: 0; padding-right: 0.2rem; }
+.hs-foot {
+  flex: none; display: flex; flex-direction: column; gap: 0.4rem;
+  border-top: 1px solid var(--edge); padding-top: 0.55rem; margin-top: 0;
+}
+/* find + the buttons on one always-visible row; the find box takes the slack */
+.hs-footbar { display: flex; align-items: center; gap: 0.4rem; }
+.hs-findinput {
+  flex: 1; min-width: 0; box-sizing: border-box;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--edge); border-radius: 4px;
+  padding: 0.3rem 0.55rem; font-family: var(--font-mono); font-size: 0.78rem;
+}
+.hs-findinput:focus { outline: none; border-color: var(--accent); }
+.hs-report-head {
+  display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; flex: none;
+  border-bottom: 1px solid var(--edge); padding-bottom: 0.5rem;
+}
 .hs-report-head .hs-info { margin-right: auto; }
-.hs-results { max-height: 68vh; overflow-y: auto; display: flex; flex-direction: column; gap: 0.4rem; }
+.hs-results { flex: 1; overflow-y: auto; min-height: 0; display: flex; flex-direction: column; gap: 0.4rem; }
 /* the two report toggles, both defaulting to hidden: ok/n·a rows only clutter
    a fleet report, and the per-finding detail line gaps the listing */
 .hs-results.hide-quiet .hs-row.st-ok, .hs-results.hide-quiet .hs-row.st-na { display: none; }
-.hs-results.hide-details .hs-row .hs-detail { display: none; }
 .hs-quiet-note { display: none; color: var(--sub); font-size: 0.74rem; padding: 0.18rem 0.35rem 0.3rem; }
 .hs-results.hide-quiet .hs-quiet-note { display: block; }
 .hs-sec { border: 1px solid var(--edge-soft); border-radius: var(--radius); padding: 0.15rem 0.4rem; }

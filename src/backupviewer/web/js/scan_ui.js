@@ -9,11 +9,57 @@
    here with zero UI work; the registry's "category" field groups the picker
    under plain headers (no accordions - everything stays visible). The picked
    check ids persist in settings ("scan_checks", default NOTHING selected);
-   find queries are add-to-list chips, each its own report section. */
+   find queries are add-to-list chips, each its own report section.
+
+   The REPORT is a tree, not prose: checks with structured items (healthscan's
+   "items") group them per program under an expandable robot row, so nothing
+   is capped behind a "+N more". Left-click expands; every ACTION (open the
+   backup, ignore, exclude a program, add to editor) lives on right-click.
+   Ignores are view filters scoped to THIS report - nothing persists, nothing
+   touches the programs - and "exclude program X" drops X's findings across
+   every robot in the report (same name, any robot). The report modal is
+   sticky (✕ / Esc close it, stray clicks don't), and the finished report is
+   kept for the app run: the picker grows a "last scan" button, because
+   re-running four minutes of scan to re-read a report is robbery. */
 (function () {
   "use strict";
 
   var _lastQueries = [];   /* find chips survive close/reopen within this app run */
+  /* the kept report {results, checks, queries, when, flt, view}. Held here for
+     the app run AND written to its own file, so closing the app never throws
+     away minutes of scanning; the file is read once, lazily, on first open. */
+  var _lastScan = null;
+  var _lastLoaded = false;
+
+  function loadLast() {
+    if (_lastLoaded) return Promise.resolve(_lastScan);
+    return BV.api.call("load_last_scan").then(function (r) {
+      _lastLoaded = true;
+      if (r && r.results && r.results.length) {
+        r.flt = r.flt || { rows: {}, items: {}, progs: {}, progRows: {} };
+        r.view = r.view || { secs: {}, rows: {}, progs: {} };
+        _lastScan = r;
+      }
+      return _lastScan;
+    }).catch(function () { _lastLoaded = true; return null; });
+  }
+
+  /* persist on every change that matters (a finished scan, a filter, a fold),
+     debounced - the report can be large and the user is still working in it */
+  var _saveTimer = null;
+  function saveLast() {
+    if (!_lastScan) return;
+    clearTimeout(_saveTimer);
+    _saveTimer = setTimeout(flushSave, 600);
+  }
+  /* closing the window must not race the debounce: a filter applied one
+     second before quitting is exactly the one you meant to keep */
+  function flushSave() {
+    clearTimeout(_saveTimer);
+    _saveTimer = null;
+    if (!_lastScan) return Promise.resolve();
+    return BV.api.call("save_last_scan", _lastScan).catch(function () {});
+  }
 
   var PILL = { flag: ["flag", "err"], info: ["info", "acc"], ok: ["ok", "ok-soft"], na: ["n/a", "ghost"] };
   var ORDER = { flag: 0, info: 1, ok: 2, na: 3 };
@@ -96,9 +142,11 @@
       var jobId = null;
       var modal = BV.modal("scan " + robots.length + " robot" + (robots.length === 1 ? "" : "s"),
         host, {
+          sticky: true,         /* a stray outside click must not eat a report */
           onClose: function () {
             if (stop) stop();
             if (jobId) BV.api.call("cancel_scan", jobId).catch(function () {});
+            flushSave();        /* never race the debounce on the way out */
           },
         });
       modal.el.classList.add("hs-modal");   /* reports need width - see .hs-modal */
@@ -106,8 +154,14 @@
       /* ---- view 1: pick checks (grouped by category) + find chips ---- */
       function pickView(checks) {
         host.innerHTML = "";
+        /* [note] [scrolling picker] [stapled actions]: the buttons must never
+           scroll away behind a long check list */
+        var scroll = BV.el("div", { class: "hs-scroll" });
         host.appendChild(BV.el("div", { class: "hs-info" },
-          "scans each robot's saved backup — nothing touches the network"));
+          robots.length
+            ? "scans each robot's saved backup — nothing touches the network"
+            : "no robots selected — pick some in the library to run a scan, " +
+              "or reopen the last report below"));
 
         /* one shared checklist controller = the same select-all / tri-state
            behavior as every other list in the app. Default = NOTHING picked;
@@ -141,11 +195,12 @@
           head.appendChild(sel);
           block.appendChild(head);
           byCat[cat].forEach(function (c) {
-            var row = BV.el("label", { class: "hs-check" });
+            /* ONE line per check: the description is a tooltip, not a
+               paragraph. Seventeen checks with a paragraph each is a page you
+               scroll; seventeen one-liners is a list you read. */
+            var row = BV.el("label", { class: "hs-check", title: c.desc || "" });
             row.appendChild(cl.bind(BV.el("input", { type: "checkbox", class: "lf-check" }), c.id));
-            row.appendChild(BV.el("div", null,
-              '<div class="hs-lbl">' + BV.esc(c.label) + "</div>" +
-              '<div class="hs-desc">' + BV.esc(c.desc) + "</div>"));
+            row.appendChild(BV.el("span", { class: "hs-lbl" }, BV.esc(c.label)));
             if (c.input) {
               var pin = BV.el("input", { type: "text", class: "hs-param", spellcheck: "false",
                 placeholder: c.input.hint || "", title: c.input.label || "" });
@@ -160,19 +215,15 @@
           });
           wrap.appendChild(block);
         });
-        host.appendChild(wrap);
+        scroll.appendChild(wrap);
+        host.appendChild(scroll);
         cl.sync();               /* reflect the restored picks onto the boxes */
 
-        /* find: its own block - a list of query chips, each one becoming its
-           own report section. Enter adds; whatever's left in the input when
-           scan is clicked rides along (type-one-thing-then-scan is the
-           common case - never force Enter). */
-        var findBlock = BV.el("div", { class: "hs-cat hs-findblock" });
-        var fhead = BV.el("div", { class: "hs-cat-head" });
-        fhead.appendChild(BV.el("span", { class: "hs-cat-title" }, "find"));
-        fhead.appendChild(BV.el("span", { class: "hs-desc" },
-          "each query gets its own report section"));
-        findBlock.appendChild(fhead);
+        /* find lives in the STAPLED footer beside the buttons, not in the
+           scrolling list: it is an action you reach for, not an option you
+           browse. Each query becomes its own report section; Enter adds, and
+           whatever is left in the box when scan is clicked rides along
+           (type-one-thing-then-scan is the common case - never force Enter). */
         var queries = _lastQueries.slice();
         var chips = BV.el("div", { class: "hs-chips" });
         function renderChips() {
@@ -191,13 +242,9 @@
           });
         }
         renderChips();
-        findBlock.appendChild(chips);
-        var findRow = BV.el("div", { class: "hs-find" });
-        var q = BV.el("input", { type: "text", spellcheck: "false",
-          placeholder: "optional — DI[279], R[151], a program name… Enter adds it" });
-        findRow.appendChild(q);
-        findBlock.appendChild(findRow);
-        host.appendChild(findBlock);
+        var q = BV.el("input", { type: "text", spellcheck: "false", class: "hs-findinput",
+          title: "each query becomes its own section in the report",
+          placeholder: "find across the scan — DI[279], R[151], a program name… Enter adds it" });
 
         /* true = the input text is now IN the list (added or already there) */
         function addQuery(text, silent) {
@@ -216,12 +263,33 @@
           if (e.key === "Enter" && addQuery(q.value)) q.value = "";
         });
 
-        var actions = BV.el("div", { class: "lf-actions" });
+        /* the footer: chips on top (only when there are any), then one row of
+           find + buttons. Everything you ACT with, always on screen. */
+        var actions = BV.el("div", { class: "hs-foot" });
+        actions.appendChild(chips);
+        var bar = BV.el("div", { class: "hs-footbar" });
         var go = BV.el("button", { class: "btn primary" }, "scan");
+        /* honest gating: with nothing picked in the library there is nothing
+           to scan, but the window still opens so the last report is reachable */
+        go.disabled = !robots.length;
+        if (!robots.length) go.title = "select robots in the library first";
         var closeBtn = BV.el("button", { class: "btn" }, "close");
         closeBtn.addEventListener("click", function () { modal.close(); });
-        actions.appendChild(go);
-        actions.appendChild(closeBtn);
+        bar.appendChild(q);
+        if (_lastScan) {
+          /* the finished report outlives the modal AND the app: reopening
+             costs nothing, re-scanning costs minutes */
+          var lastBtn = BV.el("button", { class: "btn",
+            title: "reopen the finished report — no rescan" },
+            "last scan · " + stamp(_lastScan.when));
+          lastBtn.addEventListener("click", function () {
+            reportView(null, null, null, _lastScan);
+          });
+          bar.appendChild(lastBtn);
+        }
+        bar.appendChild(closeBtn);
+        bar.appendChild(go);
+        actions.appendChild(bar);
         host.appendChild(actions);
 
         go.addEventListener("click", function () {

@@ -3508,6 +3508,43 @@ class Api:
         return healthscan.check_list()
 
     @_endpoint
+    def save_last_scan(self, report: dict):
+        """Keep the finished report so closing the app does not throw away
+        minutes of scanning. Its OWN file, never settings.json: settings are
+        read on every boot and a fleet report can run to megabytes, while
+        this one is read only when the scan window opens."""
+        if not isinstance(report, dict):
+            raise ApiError("BAD_SPEC", "a report object is required")
+        path = settings.app_dir() / "last_scan.json"
+        tmp = path.with_suffix(".tmp")
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(report, f)
+            os.replace(tmp, path)            # atomic: a killed write leaves the old one
+        except OSError as e:
+            raise ApiError("IO", f"could not save the report: {e}") from e
+        return {"saved": True, "bytes": path.stat().st_size}
+
+    @_endpoint
+    def load_last_scan(self):
+        """The kept report, or None when there is none / it is unreadable —
+        a corrupt file must never stop the scan window from opening."""
+        path = settings.app_dir() / "last_scan.json"
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return None
+
+    @_endpoint
+    def clear_last_scan(self):
+        try:
+            (settings.app_dir() / "last_scan.json").unlink()
+        except OSError:
+            pass
+        return {"cleared": True}
+
+    @_endpoint
     def health_scan_start(self, robot_ids: list, checks: list, queries=None, params=None):
         """Run selected checks (and/or free-text finds - a list of queries, each
         its own report section) across the given library robots on a worker
