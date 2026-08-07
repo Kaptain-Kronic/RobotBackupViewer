@@ -49,10 +49,11 @@ PROG_BYTES = (
     b"   2:  R[21:SERVO GUN WORK]=1 ;\r\n"
     b"   3:  R[21]=2 ;\r\n"
     b"   4:  !R[21] remarked on purpose ;\r\n"
-    b"   5:J P[1] 100% FINE ;\r\n"
-    b"   6:  CALL HOMEPOS ;\r\n"        # not in this backup -> flagged missing
-    b"   7:  LBL[1:TOP] ;\r\n"
-    b"   8:  IF DI[3]=ON,JMP LBL[1] ;\r\n"
+    b"   5:  // R[21] CALL NOSUCH here ;\r\n"   # the OTHER remark spelling
+    b"   6:J P[1] 100% FINE ;\r\n"
+    b"   7:  CALL HOMEPOS ;\r\n"        # not in this backup -> flagged missing
+    b"   8:  LBL[1:TOP] ;\r\n"
+    b"   9:  IF DI[3]=ON,JMP LBL[1] ;\r\n"
     b"/POS\r\n"
     b"P[1]{\r\n"
     b"   GP1:\r\n"
@@ -469,6 +470,8 @@ def probe(window):
         check("nav.flags_missing_call",
               bool(js(window, "!!document.querySelector('.ws-navrow .nm.miss')")),
               "(HOMEPOS is not a program in this backup)")
+        check("nav.remarked_call_not_listed", "NOSUCH" not in calls_txt,
+              "(a CALL on a //-remarked line calls nothing, same as ! lines)")
         labels_txt = js(window, """(function(){
             var lab=[...document.querySelectorAll('.ws-navhead .seg button')]
                 .filter(function(b){return b.textContent.trim()==='labels';})[0];
@@ -601,7 +604,7 @@ def probe(window):
             var s=document.querySelector('.ws-diffstats');
             return s && s.textContent.indexOf('identical')>=0 ? s.textContent : '';
         })()""")
-        check("pdiff.stats_ride_the_toolbar", "8 identical" in (stats_txt or ""),
+        check("pdiff.stats_ride_the_toolbar", "9 identical" in (stats_txt or ""),
               f"({stats_txt!r} — two robots' pristine MAIN.LS are byte-identical)")
         check("pdiff.identical_no_marks",
               js(window, "document.querySelectorAll('.wsd-bar').length") == 0
@@ -880,8 +883,12 @@ def probe(window):
         check("find.identity_matches_both_forms",
               any("R[21:SERVO GUN WORK]" in s for s in snips) and any(s.strip().startswith("R[21]=") for s in snips),
               f"({len(snips)} hits)")
-        check("find.remarked_line_excluded",
-              not any("remarked on purpose" in s for s in snips))
+        # remarks are IN by default now - the search shows everything until
+        # the exclude toggle says otherwise
+        check("find.remarks_included_by_default",
+              any("remarked on purpose" in s for s in snips)
+              and any("NOSUCH here" in s for s in snips),
+              f"(both remark spellings must surface; {len(snips)} hits)")
         check("find.grouped_by_robot",
               js(window, "document.querySelectorAll('.fp-rb').length") == 2)
         check("find.no_duplicate_scope_row",
@@ -892,9 +899,94 @@ def probe(window):
             var t=[...document.querySelectorAll('.fp-opt')].map(function(o){return o.textContent;}).join('|');
             return t.indexOf('match case')>=0 && t.indexOf('whole word')>=0;
         })()""")))
+
+        # ---- the foot and inputs are STAPLED: only the results scroll ----
+        # grow editor B until the hit list overflows the rail, then check the
+        # geometry; one undo takes the growth back out
+        js(window, """(function(){
+            var code=document.querySelectorAll('.lsed-code')[1];
+            var lines=[];
+            for (var i=0;i<300;i++) lines.push('R[77:STAPLE FILLER]=1');
+            code.textContent = code.textContent + '\\n' + lines.join('\\n');
+            code.dispatchEvent(new Event('input',{bubbles:true}));
+        })()""")
+        time.sleep(0.4)
+        js(window, """(function(){
+            var i=document.querySelector('.fp-find');
+            i.value='R[77]';
+            i.dispatchEvent(new Event('input',{bubbles:true}));
+        })()""")
+        time.sleep(0.8)
+        staple = js(window, """JSON.stringify((function(){
+            var rail=document.querySelector('.ws-rail').getBoundingClientRect();
+            var res=document.querySelector('.fp-results');
+            var foot=document.querySelector('.fp-foot').getBoundingClientRect();
+            var inp=document.querySelector('.fp-inputs').getBoundingClientRect();
+            return {overflow: res.scrollHeight - res.clientHeight,
+                    footIn: foot.bottom <= rail.bottom + 1 && foot.height > 0,
+                    inputsIn: inp.top >= rail.top - 1 && inp.height > 0};
+        })())""")
+        st_d = json.loads(staple or "{}")
+        check("find.results_are_the_scroller", (st_d.get("overflow") or 0) > 100,
+              f"({staple} — 300 hits must overflow inside .fp-results)")
+        check("find.foot_stapled_visible", st_d.get("footIn") is True,
+              f"({staple} — the selected/found line must never leave the frame)")
+        check("find.inputs_stapled_visible", st_d.get("inputsIn") is True)
+        # replace with the box folded away AND empty must not silently delete:
+        # the click reveals the box instead, and nothing changes
+        dirty_before = js(window, "BV.workspace.dirtyCount()")
+        js(window, "[...document.querySelectorAll('.fp-foot .btn')].pop().click()")
+        time.sleep(0.4)
+        check("find.empty_replace_reveals_not_deletes",
+              js(window, "getComputedStyle(document.querySelector('.fp-xtra')).display") != "none"
+              and js(window, "BV.workspace.dirtyCount()") == dirty_before,
+              "(deleting 300 matches must take a second, informed click)")
+        # undo the growth; B reads clean again
+        js(window, """(function(){
+            var code=document.querySelectorAll('.lsed-code')[1];
+            code.dispatchEvent(new KeyboardEvent('keydown',
+                {key:'z',ctrlKey:true,bubbles:true,cancelable:true}));
+        })()""")
+        time.sleep(0.4)
+        check("find.growth_undone", js(window, "BV.workspace.dirtyCount()") == dirty_before - 1)
+
+        # ---- the exclude ! // toggle hides BOTH remark spellings ----
+        js(window, """(function(){
+            var i=document.querySelector('.fp-find');
+            i.value='R[21]';
+            i.dispatchEvent(new Event('input',{bubbles:true}));
+        })()""")
+        time.sleep(0.5)
+        js(window, """(function(){
+            var o=[...document.querySelectorAll('.fp-opt')].find(function(x){
+                return x.textContent.indexOf('exclude')>=0; });
+            o.querySelector('input').click();
+        })()""")
+        time.sleep(0.5)
+        snips2 = js(window, """[...document.querySelectorAll('.fp-ln .snip')]
+            .map(function(s){return s.textContent;})""") or []
+        check("find.exclude_hides_both_remark_spellings",
+              snips2 and not any("remarked on purpose" in s for s in snips2)
+              and not any("NOSUCH here" in s for s in snips2),
+              f"({len(snips2)} hits after the toggle)")
+        js(window, """(function(){
+            var o=[...document.querySelectorAll('.fp-opt')].find(function(x){
+                return x.textContent.indexOf('exclude')>=0; });
+            o.querySelector('input').click();
+        })()""")
+        time.sleep(0.5)
+        # the caret closes the fold again (state, not a one-way door)
+        js(window, "document.querySelector('.fp-more').click()")
+        time.sleep(0.3)
+        check("find.caret_refolds",
+              js(window, "getComputedStyle(document.querySelector('.fp-xtra')).display") == "none")
+        js(window, "document.querySelector('.fp-more').click()")
+        time.sleep(0.3)
+        check("find.caret_reopens",
+              js(window, "getComputedStyle(document.querySelector('.fp-xtra')).display") != "none")
         # a program NAME match is found and marked (navigational, not replaceable)
         js(window, """(function(){
-            var i=document.querySelector('.fp-inputs input');
+            var i=document.querySelector('.fp-find');
             i.value='MAIN'; i.dispatchEvent(new Event('input',{bubbles:true}));
         })()""")
         time.sleep(0.5)
@@ -902,7 +994,7 @@ def probe(window):
               bool(js(window, "!!document.querySelector('.fp-pg .pill')")),
               "(MAIN matches the file name, badged 'name')")
         js(window, """(function(){
-            var i=document.querySelector('.fp-inputs input');
+            var i=document.querySelector('.fp-find');
             i.value='R[21]'; i.dispatchEvent(new Event('input',{bubbles:true}));
         })()""")
         time.sleep(0.5)
@@ -950,7 +1042,7 @@ def probe(window):
 
         # ---- replace across BOTH robots ----
         js(window, """(function(){
-            var i=document.querySelectorAll('.fp-inputs input')[1];
+            var i=document.querySelector('.fp-repl');
             i.value='R[30]'; i.dispatchEvent(new Event('input',{bubbles:true}));
         })()""")
         time.sleep(0.4)
@@ -961,6 +1053,54 @@ def probe(window):
         time.sleep(0.6)
         check("replace.applied",
               js(window, "BV.workspace.dirtyCount()") == 2, "(both robots edited)")
+
+        # ---- multi-line: a BLOCK of lines is found and replaced as one ----
+        # the two-line LBL/IF tail exists in both programs; swap it for a
+        # three-line block and both buffers grow by exactly one line
+        js(window, """(function(){
+            var f=document.querySelector('.fp-find');
+            f.value='LBL[1:TOP]\\nIF DI[3]=ON,JMP LBL[1]';
+            f.dispatchEvent(new Event('input',{bubbles:true}));
+        })()""")
+        time.sleep(0.6)
+        block_ns = js(window, """[...document.querySelectorAll('.fp-ln .n')]
+            .map(function(n){return n.textContent;})""") or []
+        check("block.one_hit_per_program", len(block_ns) == 2, f"({block_ns})")
+        check("block.rows_show_line_ranges",
+              all("–" in n for n in block_ns), f"({block_ns})")
+        check("block.snip_says_span", bool(js(window, """(function(){
+            var s=document.querySelector('.fp-ln .snip');
+            return s && s.textContent.indexOf('2 lines')>=0;
+        })()""")))
+        check("block.single_line_options_hidden", bool(js(window, """(function(){
+            var os=[...document.querySelectorAll('.fp-opt')];
+            var word=os.find(function(x){return x.textContent.indexOf('whole word')>=0;});
+            var rem=os.find(function(x){return x.textContent.indexOf('exclude')>=0;});
+            return word.style.display==='none' && rem.style.display==='none';
+        })()""")), "(whole-word and the remark filter mean nothing for a block)")
+        foot_txt = js(window, "document.querySelector('.fp-foot .dim').textContent") or ""
+        check("block.foot_counts_blocks", "2 selected / 2 found" in foot_txt, f"({foot_txt!r})")
+        lens_before = js(window, """JSON.stringify(BV.workspace.entries().slice(0,2).map(function(e){
+            return BV.workspace.peek(e).text.split('\\n').length; }))""")
+        js(window, """(function(){
+            var r=document.querySelector('.fp-repl');
+            r.value='LBL[1:TOP]\\nWAIT .1\\nIF DI[3]=ON,JMP LBL[1]';
+            r.dispatchEvent(new Event('input',{bubbles:true}));
+            [...document.querySelectorAll('.fp-foot .btn')].pop().click();
+        })()""")
+        time.sleep(0.6)
+        grew = js(window, """JSON.stringify(BV.workspace.entries().slice(0,2).map(function(e){
+            var t=BV.workspace.peek(e).text;
+            return [t.split('\\n').length, t.indexOf('WAIT .1')>=0]; }))""")
+        lb = json.loads(lens_before or "[0,0]")
+        ga = json.loads(grew or "[[0,false],[0,false]]")
+        check("block.replace_spans_lines",
+              ga[0][1] and ga[1][1] and ga[0][0] == lb[0] + 1 and ga[1][0] == lb[1] + 1,
+              f"(lines {lb} -> {grew})")
+        check("block.open_editor_updated", bool(js(window, """(function(){
+            return [...document.querySelectorAll('.lsed-code')].every(function(c){
+                return c.textContent.indexOf('WAIT .1')>=0; });
+        })()""")), "(replace pushes fresh text into mounted editors)")
 
         # ---- export: one folder per robot ----
         js(window, """window._exp='';
@@ -1090,9 +1230,10 @@ def probe(window):
             .find(function(t){return t.textContent.indexOf('find')>=0;}).click()""")
         time.sleep(0.4)
         js(window, """(function(){
-            var ins=document.querySelectorAll('.fp-inputs input');
-            ins[0].value='BRANDNEW'; ins[0].dispatchEvent(new Event('input',{bubbles:true}));
-            ins[1].value='RENAMEDBYFR'; ins[1].dispatchEvent(new Event('input',{bubbles:true}));
+            var f=document.querySelector('.fp-find');
+            var r=document.querySelector('.fp-repl');
+            f.value='BRANDNEW'; f.dispatchEvent(new Event('input',{bubbles:true}));
+            r.value='RENAMEDBYFR'; r.dispatchEvent(new Event('input',{bubbles:true}));
         })()""")
         time.sleep(0.6)
         check("rename_fr.name_hit_has_box", bool(js(window, """(function(){

@@ -55,7 +55,8 @@
     find: "", repl: "",
     matchCase: false, wholeWord: false,
     ignoreComment: true,     /* R[21] also matches R[21:ANY] and R[21:OFF:ANY] */
-    includeRemarks: false,   /* skip ! lines unless asked */
+    excludeRemarks: false,   /* default shows EVERYTHING; ticking hides !-and-// lines */
+    optsOpen: false,         /* the ▸ caret: options + replace fold away by default */
   };
 
   var editors = {};          /* key -> the cached BV.lsEditor instance */
@@ -345,6 +346,10 @@
       st.railOpen = false; persistPanels(); renderShell();
     });
     el.railTabs.appendChild(hide);
+    /* find STAPLES its inputs and foot: the railbody becomes a flex host so
+       the results list is the only scroller (the working set keeps the plain
+       scrolling railbody) */
+    el.railBody.classList.toggle("fp-host", st.railTab === "find");
     if (st.railTab === "find") renderFind(prefill);
     else renderWorkingSet();
   }
@@ -1371,6 +1376,13 @@
   var JMP_REF = /\bJMP\s+LBL\[\s*(\d+)/g;
   var CALL_REF = /\b(CALL|RUN)\s+([A-Z][A-Z0-9_]*)/g;
 
+  /* both remark spellings the pendant knows: the ! remark instruction and
+     the newer // comment line */
+  function isRemark(line) {
+    var t = line.trim();
+    return t.charAt(0) === "!" || t.slice(0, 2) === "//";
+  }
+
   function tpNav(text, known) {
     var lines = text.split("\n");
     var defs = [], byId = {}, broken = {}, calls = {};
@@ -1383,7 +1395,7 @@
       }
     });
     lines.forEach(function (raw, i) {
-      if (raw.trim().charAt(0) === "!") return;   /* remarked lines jump nowhere */
+      if (isRemark(raw)) return;        /* remarked lines jump and call nowhere */
       var mm;
       JMP_REF.lastIndex = 0;
       while ((mm = JMP_REF.exec(raw)) !== null) {
@@ -1663,8 +1675,13 @@
    * ------------------------------------------------------------------ */
   var REF = /^([A-Z]+)\[(\d+)\]$/i;
 
+  function multiline(needle) { return (needle || "").indexOf("\n") >= 0; }
+
   function buildRx(needle) {
-    var m = REF.exec((needle || "").trim());
+    needle = needle || "";
+    /* a needle spanning lines is always a literal block: identity and
+       whole-word are single-line ideas (their options hide with them) */
+    var m = multiline(needle) ? null : REF.exec(needle.trim());
     var src;
     if (m && fr.ignoreComment) {
       /* an IO/register reference matches with or WITHOUT its comment - and the
@@ -1672,18 +1689,35 @@
          optional tail is everything up to the closing bracket */
       src = "\\b" + m[1] + "\\[" + m[2] + "(?::[^\\]]*)?\\]";
     } else {
-      src = (needle || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      if (fr.wholeWord) src = "\\b" + src + "\\b";
+      src = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (fr.wholeWord && !multiline(needle)) src = "\\b" + src + "\\b";
     }
     return new RegExp(src, fr.matchCase ? "g" : "gi");
+  }
+
+  /* a multi-line needle searches the WHOLE text: a hit is a char span that
+     may start and end mid-line. The remark filter does not apply - a block
+     that includes remark lines was asked for verbatim. */
+  function findBlockHits(text, needle) {
+    var rx = buildRx(needle);
+    var hits = [], mm;
+    var lineBreaks = needle.split("\n").length - 1;
+    while ((mm = rx.exec(text)) !== null) {
+      var startLine = text.slice(0, mm.index).split("\n").length - 1;
+      hits.push({ block: true, start: mm.index, end: mm.index + mm[0].length,
+                  line: startLine, endLine: startLine + lineBreaks });
+      if (mm.index === rx.lastIndex) rx.lastIndex++;
+    }
+    return hits;
   }
 
   function findHits(text, needle) {
     var hits = [];
     if (!needle) return hits;
+    if (multiline(needle)) return findBlockHits(text, needle);
     var rx = buildRx(needle);
     text.split("\n").forEach(function (line, i) {
-      if (!fr.includeRemarks && line.trim().charAt(0) === "!") return;
+      if (fr.excludeRemarks && isRemark(line)) return;
       rx.lastIndex = 0;
       var mm, spans = [];
       while ((mm = rx.exec(line)) !== null) {
@@ -1693,6 +1727,12 @@
       if (spans.length) hits.push({ line: i, text: line, spans: spans });
     });
     return hits;
+  }
+
+  /* checkbox identity for one hit: line hits key by line, block hits by char
+     start (two blocks CAN start on one line when the needle starts mid-line) */
+  function hitKey(e, h) {
+    return keyOf(e) + (h.block ? "|b" + h.start : "|" + h.line);
   }
   function nameMatches(name, needle) {
     if (!needle) return false;
@@ -1714,6 +1754,17 @@
     });
     return out + BV.esc(t.slice(last));
   }
+  /* a block hit's one-row summary: the first matched line (marked from where
+     the match starts) plus how many lines the block spans */
+  function blockSnipHtml(text, h) {
+    var first = text.split("\n")[h.line] || "";
+    var col = h.start - (text.lastIndexOf("\n", h.start - 1) + 1);
+    var lead = first.length - first.replace(/^\s+/, "").length;
+    var t = first.trim();
+    var c = Math.max(0, Math.min(t.length, col - lead));
+    return BV.esc(t.slice(0, c)) + "<mark>" + BV.esc(t.slice(c)) + "</mark>" +
+      '<span class="dim"> ⋯ ' + (h.endLine - h.line + 1) + " lines</span>";
+  }
 
   function renderFind(prefill) {
     el.railHead.innerHTML = "";
@@ -1729,14 +1780,46 @@
     var panel = BV.el("div", { class: "fp" });
     el.railBody.appendChild(panel);
 
+    /* the inputs are STAPLED at the top (the results list is the scroller):
+       a textarea, not an input, because find/replace takes whole BLOCKS -
+       paste (or Enter) a second line and the search goes multi-line */
     var inputs = BV.el("div", { class: "fp-inputs" });
-    var fIn = BV.el("input", { type: "text", placeholder: "find" });
-    var rIn = BV.el("input", { type: "text", placeholder: "replace with" });
+    var frow = BV.el("div", { class: "fp-findrow" });
+    var fIn = BV.el("textarea", { class: "fp-find", rows: "1", wrap: "off",
+      placeholder: "find (paste a block for multi-line)", spellcheck: "false" });
+    var more = BV.el("button", { class: "fp-more",
+      title: "search options + replace" }, fr.optsOpen ? "▾" : "▸");
+    frow.appendChild(fIn);
+    frow.appendChild(more);
+    inputs.appendChild(frow);
+
+    /* options + the replace box fold behind the caret, closed by default -
+       most visits are searches, and rail height is the scarce thing */
+    var xtra = BV.el("div", { class: "fp-xtra" + (fr.optsOpen ? " open" : "") });
+    var rIn = BV.el("textarea", { class: "fp-repl", rows: "1", wrap: "off",
+      placeholder: "replace with", spellcheck: "false" });
+    xtra.appendChild(rIn);
     if (prefill !== undefined) fr.find = prefill;
     fIn.value = fr.find;
     rIn.value = fr.repl;
-    inputs.appendChild(fIn);
-    inputs.appendChild(rIn);
+
+    /* textareas grow with their content (capped), never drag-resized */
+    function autoGrow(ta) {
+      ta.rows = Math.max(1, Math.min(6, ta.value.split("\n").length));
+    }
+    autoGrow(fIn);
+    autoGrow(rIn);
+
+    function openXtra() {
+      fr.optsOpen = true;
+      xtra.classList.add("open");
+      more.textContent = "▾";
+    }
+    more.addEventListener("click", function () {
+      fr.optsOpen = !fr.optsOpen;
+      xtra.classList.toggle("open", fr.optsOpen);
+      more.textContent = fr.optsOpen ? "▾" : "▸";
+    });
 
     var opts = BV.el("div", { class: "fp-opts" });
     function opt(label, flag, title) {
@@ -1750,11 +1833,14 @@
       return l;
     }
     opt("match case", "matchCase");
-    opt("whole word", "wholeWord");
-    opt("include ! remarks", "includeRemarks", "remarked-out lines are skipped by default");
+    var wordOpt = opt("whole word", "wholeWord");
+    var remOpt = opt("exclude ! // remarks", "excludeRemarks",
+      "hide hits on remarked-out lines (both remark spellings). Off by " +
+      "default: everything is shown");
     var refOpt = opt("with or without comment", "ignoreComment",
       "R[21] also matches R[21:SERVO GUN WORK] and the pendant's status form");
-    inputs.appendChild(opts);
+    xtra.appendChild(opts);
+    inputs.appendChild(xtra);
     panel.appendChild(inputs);
 
     var results = BV.el("div", { class: "fp-results" });
@@ -1782,15 +1868,23 @@
        group) must PRESERVE the selection - BV.checklist keeps its state across
        re-binds, so we simply do not clear it */
     function paint(force) {
-      fr.find = fIn.value;
-      fr.repl = rIn.value;
+      /* textarea values are \n in Chromium, but normalize anyway - a \r that
+         sneaked in would silently un-match every buffer */
+      fr.find = fIn.value.replace(/\r\n?/g, "\n");
+      fr.repl = rIn.value.replace(/\r\n?/g, "\n");
       var sig = JSON.stringify([fr.find, fr.matchCase, fr.wholeWord,
-                                fr.ignoreComment, fr.includeRemarks]);
+                                fr.ignoreComment, fr.excludeRemarks]);
       var reset = !!force || sig !== lastSig;
       lastSig = sig;
       if (reset) picks.clear();
 
-      refOpt.style.display = REF.test((fr.find || "").trim()) ? "" : "none";
+      /* options that cannot apply vanish with their meaning: identity and
+         whole-word are single-line ideas, and a multi-line block includes
+         its remark lines by definition */
+      var multi = multiline(fr.find);
+      refOpt.style.display = (!multi && REF.test(fr.find.trim())) ? "" : "none";
+      wordOpt.style.display = multi ? "none" : "";
+      remOpt.style.display = multi ? "none" : "";
       results.innerHTML = "";
       var fresh = [], total = 0;
 
@@ -1803,7 +1897,7 @@
           /* a NAME match is replaceable too: applying it renames the program on
              export (renaming is a real job - style kits are exactly this) */
           var named = nameMatches(baseName(e), fr.find);
-          if (hits.length || named) per.push({ e: e, hits: hits, named: named });
+          if (hits.length || named) per.push({ e: e, hits: hits, named: named, text: b.text });
         });
         var n = per.reduce(function (a, x) { return a + x.hits.length; }, 0);
         var names = per.filter(function (x) { return x.named; }).length;
@@ -1813,7 +1907,7 @@
         var rbKeys = [];
         per.forEach(function (rec) {
           if (rec.named) rbKeys.push(keyOf(rec.e) + "|name");
-          rec.hits.forEach(function (h) { rbKeys.push(keyOf(rec.e) + "|" + h.line); });
+          rec.hits.forEach(function (h) { rbKeys.push(hitKey(rec.e, h)); });
         });
         rbKeys.forEach(function (k) { fresh.push(k); });
 
@@ -1841,7 +1935,7 @@
 
         per.forEach(function (rec) {
           var pgKey = keyOf(rec.e);
-          var pgKeys = rec.hits.map(function (h) { return pgKey + "|" + h.line; });
+          var pgKeys = rec.hits.map(function (h) { return hitKey(rec.e, h); });
           if (rec.named) pgKeys.unshift(pgKey + "|name");
           var pgFolded = !!st.frFolds[pgKey];
           var ph = BV.el("div", { class: "fp-pg" });
@@ -1874,14 +1968,16 @@
           if (pgFolded) return;
 
           rec.hits.forEach(function (h) {
-            var k = pgKey + "|" + h.line;
+            var k = hitKey(rec.e, h);
             var row = BV.el("div", { class: "fp-ln" });
             var cb = picks.bind(BV.el("input", { type: "checkbox" }), k);
             cb.addEventListener("click", function (ev) { ev.stopPropagation(); });
             row.appendChild(cb);
-            row.appendChild(BV.el("span", { class: "n" }, String(h.line + 1)));
+            row.appendChild(BV.el("span", { class: "n" },
+              h.block ? (h.line + 1) + "–" + (h.endLine + 1) : String(h.line + 1)));
             var snip = BV.el("span", { class: "snip" });
-            snip.innerHTML = snipHtml(h.text, h.spans);
+            snip.innerHTML = h.block ? blockSnipHtml(rec.text, h)
+                                     : snipHtml(h.text, h.spans);
             row.appendChild(snip);
             row.addEventListener("click", function () { revealLine(rec.e, h.line); });
             results.appendChild(row);
@@ -1907,7 +2003,17 @@
       var b = BV.el("button", { class: "btn primary",
         style: "padding:.15rem .5rem;font-size:.75rem" }, "replace " + sel);
       b.disabled = !sel;
-      b.addEventListener("click", doReplace);
+      b.addEventListener("click", function () {
+        /* the replace box is folded away AND empty: replacing now would
+           silently DELETE every ticked match - reveal the box instead and
+           let the second click mean it */
+        if (!fr.optsOpen && !fr.repl) {
+          openXtra();
+          try { rIn.focus(); } catch (e) {}
+          return;
+        }
+        doReplace();
+      });
       foot.appendChild(b);
     }
 
@@ -1927,15 +2033,32 @@
         }
         var b = BV.workspace.peek(e);
         if (!b || b.base === null) return;
-        var lines = b.text.split("\n"), hit = false;
-        findHits(b.text, fr.find).forEach(function (h) {
-          if (!chosen[keyOf(e) + "|" + h.line]) return;
-          lines[h.line] = applyHit(h.text, h.spans, fr.repl);
-          hit = true; changed++;
-        });
-        if (hit) {
-          BV.workspace.setBody(e, lines.join("\n"));
-          touched.push(e);
+        var hit = false;
+        if (multiline(fr.find)) {
+          /* block hits are char spans on the whole text: splice bottom-up so
+             earlier offsets stay true while later ones are rewritten */
+          var text = b.text;
+          var hits = findHits(text, fr.find);
+          for (var i = hits.length - 1; i >= 0; i--) {
+            if (!chosen[hitKey(e, hits[i])]) continue;
+            text = text.slice(0, hits[i].start) + fr.repl + text.slice(hits[i].end);
+            hit = true; changed++;
+          }
+          if (hit) {
+            BV.workspace.setBody(e, text);
+            touched.push(e);
+          }
+        } else {
+          var lines = b.text.split("\n");
+          findHits(b.text, fr.find).forEach(function (h) {
+            if (!chosen[hitKey(e, h)]) return;
+            lines[h.line] = applyHit(h.text, h.spans, fr.repl);
+            hit = true; changed++;
+          });
+          if (hit) {
+            BV.workspace.setBody(e, lines.join("\n"));
+            touched.push(e);
+          }
         }
       });
       if (refused.length) {
@@ -1956,8 +2079,12 @@
       paint(true);
     }
 
-    fIn.addEventListener("input", function () { paint(false); });
-    rIn.addEventListener("input", function () { fr.repl = rIn.value; updateFoot(); });
+    fIn.addEventListener("input", function () { autoGrow(fIn); paint(false); });
+    rIn.addEventListener("input", function () {
+      autoGrow(rIn);
+      fr.repl = rIn.value.replace(/\r\n?/g, "\n");
+      updateFoot();
+    });
     ensureBuffers().then(function () {
       if (!document.body.contains(panel)) return;
       paint(true);
@@ -2280,7 +2407,10 @@
     if (e.ctrlKey && (e.key === "f" || e.key === "F")) {
       e.preventDefault();
       var sel = "";
-      try { sel = String(window.getSelection()).trim(); } catch (x) {}
+      try { sel = String(window.getSelection()); } catch (x) {}
+      /* a multi-line selection prefills a BLOCK search, where the first
+         line's leading spaces are part of the match - only trim one-liners */
+      if (sel.indexOf("\n") < 0) sel = sel.trim();
       if (!st.railOpen) { st.railOpen = true; persistPanels(); renderShell(); }
       st.railTab = "find";
       renderRail(sel || undefined);

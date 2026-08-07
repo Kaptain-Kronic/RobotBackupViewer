@@ -710,15 +710,38 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
   font-size: 0.72rem; letter-spacing: 0.06em;
 }
 
-/* find/replace panel (lives in the rail so the code stays visible) */
+/* find/replace panel (lives in the rail so the code stays visible).
+   While find owns the rail the body becomes a flex HOST (.fp-host): the
+   inputs and the foot are stapled in place and the results list is the only
+   scroller - a long hit list can no longer push either out of view. */
+.ws-railbody.fp-host {
+  display: flex; flex-direction: column; overflow: hidden; padding-bottom: 0;
+}
 .fp { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .fp-inputs { padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--edge); flex: none; }
-.fp-inputs input[type=text] {
+.fp-findrow { display: flex; gap: 0.3rem; align-items: stretch; }
+.fp-findrow .fp-find { flex: 1; min-width: 0; }
+/* textareas, not inputs: find/replace takes whole blocks. They grow by rows
+   (JS caps at 6) - resize handles would fight the stapled layout. */
+.fp-inputs textarea {
   width: 100%; box-sizing: border-box; background: var(--bg); color: var(--text);
   border: 1px solid var(--edge); border-radius: 4px; padding: 0.22rem 0.45rem;
-  font-family: var(--font-mono); font-size: 0.8rem; margin-bottom: 0.3rem;
+  font-family: var(--font-mono); font-size: 0.8rem; display: block;
+  resize: none; line-height: 1.35;
+  /* wrap=off, but no horizontal BAR: a classic scrollbar inside a one-row
+     box sits on the text - long lines caret-scroll like an input instead */
+  overflow-x: hidden; overflow-y: auto;
 }
-.fp-inputs input[type=text]:focus { border-color: var(--accent); outline: none; }
+.fp-inputs textarea:focus { border-color: var(--accent); outline: none; }
+.fp-more {
+  flex: none; align-self: stretch; width: 1.5rem; cursor: pointer;
+  background: var(--bg); color: var(--sub); border: 1px solid var(--edge);
+  border-radius: 4px; font-size: 0.72rem; padding: 0;
+}
+.fp-more:hover { color: var(--text); border-color: var(--accent); }
+/* options + the replace box fold behind the ▸ caret, closed by default */
+.fp-xtra { display: none; }
+.fp-xtra.open { display: block; margin-top: 0.3rem; }
 /* find options: two per row so four fit without a tall panel */
 .fp-opts {
   display: grid; grid-template-columns: repeat(2, minmax(min(8rem, 100%), 1fr));
