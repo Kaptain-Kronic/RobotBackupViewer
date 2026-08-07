@@ -50,8 +50,21 @@ _BLAL = re.compile(r"\bBLAL\b", re.I)
 # continuation belongs to the numbered line above it, remark state included
 _MN_LINE = re.compile(r"^\s*(\d+)?\s*:\s{0,2}(.*?)\s*;?\s*$")
 _REMARK_MOTION = re.compile(r"^//\s*[JLCA]\s")          # //J P[6] 50% CNT100
+_MOTION = re.compile(r"^[JLCA]\s")                      # a live motion instruction
+# CNT termination: CNT100 / CNT1 / register-driven CNT R[282] (value unknowable
+# from a listing - still a continuous move, so it counts)
+_CNT_TERM = re.compile(r"\bCNT\s*(?:\d+|R\[)")
+_PAUSE = re.compile(r"\bPAUSE\b")
+# text payloads may SAY "PAUSE" without pausing anything - blank them first
+_TEXT_PAYLOAD = re.compile(r"\b(?:MESSAGE|UALM)\s*\[[^\]]*\]", re.I)
+_LBL_ONLY = re.compile(r"^LBL\[\s*\d+\s*(?::[^\]]*)?\]$")   # a bare label line
 _P_REF = re.compile(r"\bP\[(\d+)\s*[\]:]")              # P[7] / P[7:comment]
 _P_INDIRECT = re.compile(r"\bP\[\s*(?:A?R\[|GP)")       # P[R[..]] — unresolvable statically
+# P[...] — a motion instruction carrying NO position id. Both readings of it
+# (a point never taught, or a listing written without position data) mean the
+# same thing to this backup: nothing in /POS can bind to that line, so it is
+# reported for what the file proves and never as a meaning we cannot prove.
+_P_ANON = re.compile(r"\bP\[\s*\.{2,}\s*\]")
 _PR_REF = re.compile(r"\bPR\[(\d+)\s*(?:[,:][^\]]*)?\]")   # PR[7] / PR[7:Home] / PR[7,3]
 _PR_WRITE = re.compile(r"^PR\[(\d+)\s*(?:[,:][^\]]*)?\]\s*=")   # PR[7]=... assignment target
 _PR_INDIRECT = re.compile(r"\bPR\[\s*(?:A?R\[|GP)")     # PR[R[..]] / PR[GP1:..]
@@ -88,8 +101,12 @@ CHECKS = [
      "desc": "motion lines commented out with // — the robot skips those positions (a path changed by hand)"},
     {"id": "remarked_logic", "label": "remarked logic", "category": "programs",
      "desc": "non-motion lines commented out with // (CALLs, IO, logic) — deliberate edits or forgotten troubleshooting"},
+    {"id": "pause_used", "label": "PAUSE in programs", "category": "programs",
+     "desc": "live PAUSE instructions — the robot halts mid-cycle and waits for a restart"},
+    {"id": "cnt_logic", "label": "logic on continuous", "category": "programs",
+     "desc": "logic follows a CNT motion (or a program ends on one) — outputs/CALLs fire while the robot is still moving, clears get checked mid-flight"},
     {"id": "uninit_points", "label": "untaught positions", "category": "positions",
-     "desc": "a motion line references a P[n] with no recorded data in the program — INTP-311 the moment it runs"},
+     "desc": "a motion line whose position the program does not record — a P[n] with no /POS entry, or a P[...] carrying no position id at all; INTP-311 the moment it runs"},
     {"id": "uninit_prs", "label": "uninitialized PRs in use", "category": "positions",
      "desc": "programs read position registers POSREG.VA lists as uninitialized (info when another program writes that PR — it may be set at runtime)"},
     {"id": "software_version", "label": "software version", "category": "config",
@@ -617,39 +634,151 @@ def _check_remarked_logic(ctx: _RobotData) -> dict:
     return _remarks(ctx, motion=False)
 
 
+def _check_pause(ctx: _RobotData) -> dict:
+    """Live PAUSE instructions. Remarked/comment lines don't count (inert),
+    and a MESSAGE/UALM text that merely SAYS "pause" is blanked before the
+    match - only an instruction that can actually halt the robot flags."""
+    lines = ctx.mn_lines()
+    if not lines:
+        return _na("no .LS programs in this backup")
+    items = []
+    for prog in sorted(lines):
+        seen = set()
+        for n, t, active in lines[prog]:
+            if not active or n in seen:
+                continue
+            if _PAUSE.search(_TEXT_PAYLOAD.sub(" ", t)):
+                seen.add(n)
+                items.append({"prog": prog, "line": n, "text": t})
+    if not items:
+        return {"status": "ok", "summary": "no PAUSE instructions"}
+    progs = len({i["prog"] for i in items})
+    return {"status": "flag",
+            "summary": f"{len(items)} PAUSE{'s' if len(items) != 1 else ''} in "
+                       f"{progs} program{'s' if progs != 1 else ''}",
+            "detail": _cap([f"{i['prog']} line {i['line']}: {i['text']}" for i in items], 8),
+            "items": items}
+
+
+def _check_cnt_logic(ctx: _RobotData) -> dict:
+    """Logic reached while the robot is still moving: a CNT-terminated motion
+    whose NEXT significant instruction is not a motion - the blend never
+    settles, so an output/CALL/wait there fires mid-flight (checking clears
+    and opening clamps are the classic victims). The forward scan is
+    transparent to ! comments, // remarks, blank lines and bare LBL[] lines
+    (a label executes nothing), exactly so a commented block cannot hide the
+    logic behind it. A program whose LAST motion is CNT flags too - the blend
+    carries out of the program into whatever the caller does next. Logic
+    riding ON the motion line itself (TIME AFTER / DO[..] options) is a
+    deliberate construct and does not flag."""
+    lines = ctx.mn_lines()
+    if not lines:
+        return _na("no .LS programs in this backup")
+    items = []
+    for prog in sorted(lines):
+        # numbered instructions only: a circular's continuation rows belong to
+        # their motion line, and remark state rides the owning number
+        stream, last_n = [], None
+        for n, t, active in lines[prog]:
+            if n == last_n:
+                continue
+            last_n = n
+            stream.append((n, t, active))
+        for i, (n, t, active) in enumerate(stream):
+            if not active or not _MOTION.match(t) or not _CNT_TERM.search(t):
+                continue
+            nxt = None
+            for n2, t2, a2 in stream[i + 1:]:
+                if not a2 or _LBL_ONLY.match(t2):
+                    continue
+                nxt = (n2, t2)
+                break
+            if nxt is None:
+                items.append({"prog": prog, "line": n, "text": t,
+                              "after": "program ends here"})
+            elif not _MOTION.match(nxt[1]):
+                items.append({"prog": prog, "line": n, "text": t,
+                              "after": f"line {nxt[0]}: {nxt[1]}"})
+    if not items:
+        return {"status": "ok", "summary": "no logic on continuous motions"}
+    progs = len({i["prog"] for i in items})
+    return {"status": "flag",
+            "summary": f"{len(items)} CNT motion{'s' if len(items) != 1 else ''}"
+                       f" followed by logic in {progs} program{'s' if progs != 1 else ''}",
+            "detail": _cap([f"{i['prog']} line {i['line']}: {i['text']} → {i['after']}"
+                            for i in items], 8),
+            "items": items}
+
+
 def _check_uninit_points(ctx: _RobotData) -> dict:
-    """Active lines referencing a P[n] the program records no /POS entry for —
+    """Active lines whose position the program records no /POS entry for —
     the file itself is the proof (the reference is printed, the position
-    isn't), and running that line is an INTP-311. Remarked/comment lines
-    don't count as references; P[R[..]] indirection can't be resolved from a
-    listing, so it is counted and said, never guessed at."""
+    isn't), and running that line is an INTP-311. Two shapes count:
+
+      P[n]   — a numbered reference with no matching /POS entry
+      P[...] — a motion carrying no position id at all
+
+    Remarked/comment lines don't count as references; P[R[..]] indirection
+    can't be resolved from a listing, so it is counted and said, never
+    guessed at. A program that records NO positions while printing P[...]
+    says so separately: that reads as a listing written without position
+    data, which is a different story from one point never taught, and we
+    have not ground-truthed which produced any given file."""
     lines = ctx.mn_lines()
     if not lines:
         return _na("no .LS programs in this backup")
     parsed = ctx.parsed_programs()
-    items, total, indirect = [], 0, 0
+    caps, items, total, indirect, anon_n = [], [], 0, 0, 0
+    bare_progs = []
     for prog in sorted(lines):
         taught = {p["id"] for p in (parsed.get(prog, {}).get("positions") or [])}
         refs: dict[int, int] = {}     # missing id -> first line that uses it
+        anon: list[int] = []          # lines printing P[...]
+        # a finding IS its line: one row per line, carrying the instruction
+        # verbatim (the count of distinct missing ids rides the summary)
+        text_of: dict[int, str] = {}
         for n, t, active in lines[prog]:
             if not active:
                 continue
             indirect += len(_P_INDIRECT.findall(t))
+            if _P_ANON.search(t) and n not in anon:
+                anon.append(n)
+                text_of[n] = t
             for m in _P_REF.finditer(t):
                 pid = int(m.group(1))
                 if pid not in taught:
                     refs.setdefault(pid, n)
+                    text_of.setdefault(n, t)
         if refs:
             total += len(refs)
-            items.append(prog + ": " + ", ".join(
+            caps.append(prog + ": " + ", ".join(
                 f"P[{pid}] (line {refs[pid]})" for pid in sorted(refs)[:6]))
+        if anon:
+            anon_n += len(anon)
+            if not taught:
+                bare_progs.append(prog)
+            caps.append(prog + ": " + ", ".join(f"P[...] (line {n})" for n in anon[:6]))
+        for n in sorted(set(list(refs.values()) + anon)):
+            items.append({"prog": prog, "line": n, "text": text_of.get(n, "")})
     note = f" · {indirect} indirect P[R[..]] ref{'s' if indirect != 1 else ''} not checkable" \
         if indirect else ""
     if items:
-        return {"status": "flag",
-                "summary": f"{total} referenced position{'s' if total != 1 else ''}"
-                           " with no recorded data",
-                "detail": _cap(items, 8) + note}
+        parts = []
+        if total:
+            parts.append(f"{total} referenced position{'s' if total != 1 else ''}"
+                         " with no recorded data")
+        if anon_n:
+            parts.append(f"{anon_n} motion line{'s' if anon_n != 1 else ''} with no"
+                         " position (P[...])")
+        if bare_progs:
+            # said ONCE per robot, not repeated on every line: a program that
+            # records nothing reads as a listing written without position data
+            one = len(bare_progs) == 1
+            parts.append(f"{len(bare_progs)} program{'' if one else 's'}"
+                         f" record{'s' if one else ''} no positions at all")
+        return {"status": "flag", "summary": " · ".join(parts),
+                "detail": _cap(caps, 8) + note,
+                "items": items}
     return {"status": "ok", "summary": "every referenced position is recorded" + note}
 
 
@@ -804,6 +933,8 @@ _CHECK_FNS = {
     "broken_calls": _check_broken_calls,
     "remarked_positions": _check_remarked_positions,
     "remarked_logic": _check_remarked_logic,
+    "pause_used": _check_pause,
+    "cnt_logic": _check_cnt_logic,
     "uninit_points": _check_uninit_points,
     "uninit_prs": _check_uninit_prs,
     "software_version": _check_sw_version,

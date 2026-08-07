@@ -23,6 +23,7 @@
     mastering: "#overview", cloned_mastering: "#overview", battery_alarm: "#overview",
     style_broken: "#programs", style_orphans: "#programs", broken_calls: "#programs",
     remarked_positions: "#programs", remarked_logic: "#programs",
+    pause_used: "#programs", cnt_logic: "#programs",
     uninit_points: "#programs", uninit_prs: "#registers",
     software_version: "#overview", payload_unset: "#frames",
     override_low: "#sysvars", clock_drift: "#overview",

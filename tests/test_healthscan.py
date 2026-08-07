@@ -7,11 +7,11 @@ from datetime import datetime
 from backupviewer import healthscan
 from backupviewer.healthscan import (
     HealthScanJob, _RobotData, _check_adv_dcs, _check_battery,
-    _check_broken_calls, _check_cip, _check_clock, _check_mastering,
-    _check_override, _check_payload, _check_remarked_logic,
-    _check_remarked_positions, _check_sigs, _check_style_broken,
-    _check_style_orphans, _check_sw_version, _check_uninit_points,
-    _check_uninit_prs, _parse_tolerance, norm_queries,
+    _check_broken_calls, _check_cip, _check_clock, _check_cnt_logic,
+    _check_mastering, _check_override, _check_pause, _check_payload,
+    _check_remarked_logic, _check_remarked_positions, _check_sigs,
+    _check_style_broken, _check_style_orphans, _check_sw_version,
+    _check_uninit_points, _check_uninit_prs, _parse_tolerance, norm_queries,
 )
 
 # -- fixture texts (formats validated against the real parsers) -------------------
@@ -305,6 +305,7 @@ def test_registry_and_valid_ids():
                    "mastering", "cloned_mastering", "battery_alarm",
                    "style_broken", "style_orphans", "broken_calls",
                    "remarked_positions", "remarked_logic",
+                   "pause_used", "cnt_logic",
                    "uninit_points", "uninit_prs",
                    "software_version", "payload_unset", "override_low", "clock_drift"]
     assert all(c["label"] and c["desc"] and c["category"] for c in healthscan.check_list())
@@ -710,6 +711,65 @@ def test_remarked_positions_and_logic(tmp_path):
     assert _check_remarked_positions(clean)["status"] == "ok"
     assert _check_remarked_logic(clean)["status"] == "ok"
     assert _check_remarked_positions(_RobotData(FakeSession({})))["status"] == "na"
+
+
+def test_pause_used(tmp_path):
+    progs = [_prog(tmp_path, "PSEPROG", [
+        "J P[1] 100% FINE",
+        "PAUSE",                            # live -> flags
+        "//PAUSE",                          # remarked -> inert
+        "! PAUSE for setup",                # comment -> inert
+        "MESSAGE[PAUSE PRESSED]",           # a message SAYING pause pauses nothing
+        "IF R[1]=1,JMP LBL[1]",
+    ])]
+    row = _check_pause(_RobotData(FakeSession({}, program_files=progs)))
+    assert row["status"] == "flag"
+    assert "1 PAUSE in 1 program" in row["summary"]
+    assert "PSEPROG line 2: PAUSE" in row["detail"]
+    assert row["items"] == [{"prog": "PSEPROG", "line": 2, "text": "PAUSE"}]
+
+    clean = _check_pause(_RobotData(FakeSession({}, program_files=[
+        _prog(tmp_path, "NOPSE", ["J P[1] 100% FINE", "MESSAGE[PAUSE HERE]"])])))
+    assert clean["status"] == "ok"
+    assert _check_pause(_RobotData(FakeSession({})))["status"] == "na"
+
+
+def test_cnt_logic(tmp_path):
+    progs = [_prog(tmp_path, "CNTPROG", [
+        "J P[1] 100% CNT100",           # next real instruction is motion: fine
+        "L P[2] 800mm/sec CNT50",       # comments/remarks/labels are transparent...
+        "! checking clears",
+        "//J P[9] 100% FINE",
+        "LBL[5:RETRY]",
+        "DO[104:Clamp Open]=ON",        # ...so THIS is what follows: flags
+        "L P[3] 500mm/sec FINE",        # FINE settles - logic after it is fine
+        "CALL CHECK_CLEARS",
+        "J P[4] 100% CNT R[28]",        # register CNT ending the program: flags
+    ])]
+    row = _check_cnt_logic(_RobotData(FakeSession({}, program_files=progs)))
+    assert row["status"] == "flag"
+    assert "2 CNT motions followed by logic in 1 program" in row["summary"]
+    assert len(row["items"]) == 2
+    assert row["items"][0]["line"] == 2
+    assert "line 6: DO[104:Clamp Open]=ON" in row["items"][0]["after"]
+    assert row["items"][1]["line"] == 9
+    assert "ends here" in row["items"][1]["after"]
+
+    # logic riding ON the motion line is a deliberate construct - no flag
+    inline = _check_cnt_logic(_RobotData(FakeSession({}, program_files=[
+        _prog(tmp_path, "INLINEOK", [
+            "J P[1] 100% CNT80 TIME AFTER 0.2sec,DO[5]=ON",
+            "L P[2] 500mm/sec FINE",
+        ])])))
+    assert inline["status"] == "ok"
+
+    # trailing remarks cannot hide a program that ends on a CNT
+    tail = _check_cnt_logic(_RobotData(FakeSession({}, program_files=[
+        _prog(tmp_path, "TAILCNT", ["J P[1] 100% CNT100", "//DO[1]=ON"])])))
+    assert tail["status"] == "flag"
+    assert "ends here" in tail["items"][0]["after"]
+
+    assert _check_cnt_logic(_RobotData(FakeSession({})))["status"] == "na"
 
 
 def test_uninit_points(tmp_path):
