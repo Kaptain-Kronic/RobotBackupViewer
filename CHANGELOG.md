@@ -1,6 +1,117 @@
 # Changelog
 
 ## Unreleased
+- **"untaught positions" now catches `P[...]` too.** A motion line printed as
+  `P[...]` carries no position id at all, so it matched neither the numbered
+  `P[n]` reference nor the `P[R[..]]` indirect bucket — it slipped through
+  both nets and was reported nowhere. It is now a finding in its own right,
+  counted separately in the summary and listed with its line. A program that
+  prints `P[...]` while recording no positions whatsoever is counted
+  separately again — a listing written without position data is a different
+  story from one point never taught, and the app does not claim to know
+  which produced a given file.
+- **Findings read as evidence, not commentary.** Every row in the report is
+  now the program line itself (`line 254  J P[...] 100% CNT100`) instead of
+  a sentence explaining it — the section header already says what the
+  problem is. Caveats that apply to a whole robot are stated once in its
+  summary rather than repeated on every line.
+- **Two new fleet-scan checks: PAUSE and logic-on-continuous.** "PAUSE in
+  programs" flags live PAUSE instructions (remarked lines and MESSAGE texts
+  that merely say "pause" don't count). "logic on continuous" catches the
+  classic mid-flight mistake: a CNT-terminated motion whose next real
+  instruction is logic rather than another motion — outputs flip and clears
+  get checked while the robot is still moving. The forward scan sees through
+  comments, remarks and bare labels (a commented block can't hide the logic
+  behind it), register-driven CNT R[..] counts, logic riding on the motion
+  line itself doesn't, and a program that *ends* on a CNT flags too — the
+  blend carries out into whatever the caller does next.
+- **The scan report is a tree now.** Findings arrive structured, so a robot's
+  row expands into per-program groups with every line listed — the capped
+  "+8 more" text is gone, and so is the run-on detail sentence. Left-click
+  expands; every action moved to right-click: open this backup, ignore this
+  finding, ignore the flag, exclude program X from the scan (drops X's
+  findings across every robot in the report — one right-click cleans a
+  fleet-wide standard you don't care about), and add the program straight to
+  the edit workspace — right-clicking a section header offers all its
+  flagged programs at once. A program header carries both scopes: "ignore
+  these findings" hides that program's lines on that robot only, "exclude"
+  sweeps the fleet — across *every* section, so excluding a program drops
+  its remarked lines, its broken CALLs and its find hits in one action.
+  Ignores are view filters scoped to the open report: a "reset filters (N)"
+  chip brings everything back, filtering never moves the view (what's
+  expanded stays expanded, the scroll stays put), and every count follows —
+  the report header, each section header and each robot row all recount to
+  what is actually shown ("4 of 17 findings"), so a filtered report never
+  quotes its pre-filter numbers. "copy report" emits exactly that filtered
+  tree as clean indented text — paste beats a screenshot.
+- **A scan report is hard to lose now.** The scan dialog ignores stray
+  clicks outside it (✕ and Esc close it), and the finished report is written
+  to its own file in `%APPDATA%` — it survives closing the app, filters and
+  folds included. The scan picker grows a "last scan · 14:32" button that
+  reopens it instead of re-running minutes of work, and **"scan" no longer
+  greys out when nothing is selected**: with no robots picked the window
+  opens straight into the last report, because re-reading a finished scan
+  should not cost you a robot selection you did not want.
+- **The scan window is a list now, and it uses the screen.** It was a small
+  box whose content fought for room: every check spent three lines on a
+  description, categories sat in fixed grid cells (so a two-check category
+  reserved the height of the tallest one), and the whole thing still
+  scrolled. Now it is one plain list flowing across three columns —
+  one line per check, the description on hover — so every check fits on
+  screen at once under its category heading. The window is wider and sized
+  to sit centred rather than hanging off the bottom edge. Everything you act
+  with is stapled to the footer: the find box, the scan button and
+  "last scan" stay put no matter how the list scrolls, and the report's own
+  toolbar does the same.
+- **Two ways to copy a report.** "copy full" is the line-by-line version you
+  work from. **"copy list"** is the short one you paste to someone: a ruled
+  banner per check, then each robot with its finding count and just the
+  programs involved — no line detail. Both leave a blank line between robots
+  so the result reads as a list instead of a wall.
+- **Find programs across the whole library.** The edit workspace's working
+  set gained "find…": type a name or a piece of one (KEYPLC finds
+  S01KEYPLCTRG and S62KEYPLCTRG alike, * wildcards work), search every
+  robot's saved backup in one shot, and add the hits — grouped per robot,
+  pre-ticked — in bulk. The "same program on 22 robots" job is now search,
+  glance, add.
+- **Find/replace takes whole blocks now.** The find and replace boxes accept
+  multiple lines — paste a block (or press Enter) and the search goes
+  multi-line: a hit is the exact block wherever it occurs, shown as a line
+  range with how many lines it spans, and replacing swaps the whole block
+  for whatever you typed, growing or shrinking the program as needed.
+  Ctrl+F with a multi-line selection prefills a block search. Options that
+  cannot apply to a block (whole word, identity matching, the remark filter)
+  step aside while one is in the box.
+- **The find panel stays where you put your eyes.** The search box is
+  stapled to the top of the rail and the "N selected / M found" line with
+  its replace button to the bottom — a long hit list scrolls between them
+  instead of pushing either out of view. Search options and the replace box
+  fold behind a ▸ caret, closed by default, so a plain search spends one
+  row. If the replace box is folded away and empty, the replace button
+  reveals it instead of silently deleting every ticked match — deleting
+  takes a second, informed click.
+- **Remarks are shown by default, and the filter knows both spellings.**
+  "include ! remarks" (off, hiding them) became "exclude ! // remarks"
+  (off, showing everything): search results now include remarked-out lines
+  unless you ask to hide them, and hiding covers both the `!` remark and
+  the newer `//` comment line. The call navigator learned the same lesson —
+  a CALL on a `//` line calls nothing, so it is no longer listed.
+- **Alt+arrow moves lines.** Alt+↑/↓ in the editor moves the caret line —
+  or every line the selection touches — one line up or down, with the
+  caret and selection riding along so the gesture repeats. Each move is one
+  undo step.
+- **Quick copy shuttles code between programs.** A toolbar toggle: while it
+  is on, highlighting code in one editor copies it (mirrored to the system
+  clipboard when allowed), and the next highlight in a *different* program
+  replaces that highlight with the copy — or double-click an empty spot to
+  paste at the caret. The clip clears itself after every paste so a stray
+  gesture can never paste twice, esc drops an armed clip, and the flow is
+  symmetric: A→B and B→A are the same two gestures.
+- **A removed program can no longer be reopened from a stale rail row.**
+  Removing an entry through the state API while its rail row still stood
+  let a double-click resurrect a ghost tab over a buffer the workspace no
+  longer owned — edits into it went nowhere. Opening now refuses and
+  repaints the rail instead.
 - **Review your edits before they leave the tool.** A "review…" button beside
   export (and "review changes" on any program's ⋯ menu) shows original vs
   edited side by side — body lines aligned and highlighted, plus attribute

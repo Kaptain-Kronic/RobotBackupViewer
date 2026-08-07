@@ -23,7 +23,7 @@ batch lands, or with `--check` to hear about drift).
 > When per-subsystem docs land, they supersede this file for their own area. This
 > map's remaining job is breadth: what exists, and where.
 
-**Scope.** 256 files / ~69,614 lines. Covers everything in the working tree except: the
+**Scope.** 256 files / ~71,928 lines. Covers everything in the working tree except: the
 `.git` internals, build outputs (`dist/`, `build/`, `__pycache__/`), the private
 `SampleBackup/` fixture tree, the `.rmd` model corpus (61 binary robot-model blobs
 that are input data, not source), and the two local-only real-plant reference files
@@ -43,8 +43,8 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 |---|---|---|---|---|
 | `.gitignore` | 21 | ignore rules for pycache/build/dist plus the local-only sample backup, real ip list and diag folders | build/config | active |
 | `build_exe.log` | 106 | pyinstaller transcript of one successful onefile build on store python 3.13 with pyinstaller 6.20 *(untracked, local-only)* | build/config | generated |
-| `CHANGELOG.md` | 935 | prose changelog newest-first: a large unreleased section over v1.4 back to v0.1, feature by feature | docs | active |
-| `CLAUDE.md` | 261 | the build contract: locked stack, layer map, composition/honesty rules and the plant-identifier firewall | docs | active |
+| `CHANGELOG.md` | 1046 | prose changelog newest-first: a large unreleased section over v1.4 back to v0.1, feature by feature | docs | active |
+| `CLAUDE.md` | 273 | the build contract: locked stack, layer map, composition/honesty rules and the plant-identifier firewall | docs | active |
 | `CVX_FTP_LAYOUT.md` | 40 | field notes on the cv-x ftp tree and simulator workspace layout, and what env.dat cannot prove | docs | active |
 | `edit_sandbox.html` | 320 | untracked browser rig driving the real lseditor component against the real css, asserting caret/enter/undo — untracked, excluded via .git/info/exclude; grepped the repo for "edit_sandbox" and nothing references it. its own header says it "dies when the component is trusted", and components/lseditor.js has shipped | program editor | possibly-dead |
 | `edit_workspace_sandbox.html` | 693 | untracked ui mock of the edit workspace (rail tabs, panes, find/replace) on fake robots, nothing talks to python — untracked, git-excluded; grepped for "edit_workspace_sandbox" with no hits. superseded by the shipped workspace.js + tabs/edit.js | program editor | possibly-dead |
@@ -66,7 +66,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `packaging/libraryimporter.spec` | 41 | pyinstaller onefile spec for libraryimporter.exe, bundling src/libraryimporter/web, no icon | build/config | active |
 | `src/backupviewer/__init__.py` | 1 | package marker holding the single source of the app version string (1.4) | shared/infra | active |
 | `src/backupviewer/__main__.py` | 6 | python -m backupviewer entry point delegating to app.main | shared/infra | active |
-| `src/backupviewer/api.py` | 3512 | the pywebview bridge class: 117 @_endpoint methods returning {ok,data} envelopes across every feature area | shared/infra | active |
+| `src/backupviewer/api.py` | 3589 | the pywebview bridge class: 117 @_endpoint methods returning {ok,data} envelopes across every feature area | shared/infra | active |
 | `src/backupviewer/app.py` | 251 | window boot: arg parsing, resource_path, pywebview window, and the one-shot webview2 failure rescue relaunch | shared/infra | active |
 | `src/backupviewer/backuplog.py` | 144 | durable backup-run log in %appdata%: per-run job rows, retry attempt counting, failed-spec list, never a password | backup capture | active |
 | `src/backupviewer/compare.py` | 527 | pure two-backup diff functions: io/registers/frames/payloads/programs rows plus tp-line alignment | compare engine | active |
@@ -76,7 +76,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/cvx_remote.py` | 508 | cv-x remote-desktop client: handshake replay on 3 sockets, jpeg frame harvest, mouse events, mjpeg server | remote/mobile | active |
 | `src/backupviewer/discover.py` | 669 | subnet scan job finding fanuc/keyence over ftp and matrox via ethernet/ip, plus adapter list and live name probe | backup capture | active |
 | `src/backupviewer/ftpbackup.py` | 627 | ftp backup engine: gentle md: pull, dated+latest tree, .part/complete-marker crash safety, shared job base | backup capture | active |
-| `src/backupviewer/healthscan.py` | 1023 | fleet health-scan engine: 17-check registry, lazy per-robot parse context, threaded job, fleet-wide verdict passes | flag scanning | active |
+| `src/backupviewer/healthscan.py` | 1185 | fleet health-scan engine: 17-check registry, lazy per-robot parse context, threaded job, fleet-wide verdict passes | flag scanning | active |
 | `src/backupviewer/keyence_workspace.py` | 374 | cv-x simulator workspace.xml writer/reader plus flat-folder export guarded by a we-created-this ledger | cameras | active |
 | `src/backupviewer/keyencebackup.py` | 359 | cv-x camera backup job over anonymous ftp, plus pre-flight probe, read-only diagnose and self-naming | cameras | active |
 | `src/backupviewer/kinematics_builtin.py` | 247 | built-in kinematics table: one chain (joint placements + faceplate) per fanuc robot type, some validated | 3D viewer | active |
@@ -119,7 +119,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/settings.py` | 103 | settings.json under %appdata% with atomic locked writes, plus app_dir, library_root, sim_root and logging setup | shared/infra | active |
 | `src/backupviewer/updatecheck.py` | 109 | github releases/latest check with version compare and a policy that only lets the frozen exe auto-check | shared/infra | active |
 | `src/backupviewer/web/css/base.css` | 531 | root css: theme variable contract (--bg/--accent/--edge/--panel), app shell layout, chrome bars, bgfx layers | theming | active |
-| `src/backupviewer/web/css/components.css` | 2008 | the app's single component stylesheet: cards, tables, pills, modals, plus per-tab styles for every subsystem | theming | active |
+| `src/backupviewer/web/css/components.css` | 2141 | the app's single component stylesheet: cards, tables, pills, modals, plus per-tab styles for every subsystem | theming | active |
 | `src/backupviewer/web/fonts/Orbitron-VariableFont_wght.ttf` | *38 KB* | bundled orbitron variable font, loaded by base.css @font-face and offered as the 'rog' ui font in settings | theming | vendored |
 | `src/backupviewer/web/index.html` | 144 | the single page: the two chrome rows (topbar with the screens button, per-screen toolbar), #view, jobstrip, statusbar, and the ordered script list | shared/infra | active |
 | `src/backupviewer/web/js/api.js` | 142 | promise wrapper over the pywebview bridge: {ok,data} envelope, solo/cvx-window sid injection, slow-call dedupe | shared/infra | active |
@@ -132,7 +132,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/web/js/components/framecard.js` | 43 | BV.frameCard: the tool/uframe card — title, status pills, subtitle, xyzwpr list and config line | shared/infra | active |
 | `src/backupviewer/web/js/components/icons.js` | 53 | BV.icon: 6 inline stroke-svg glyphs (phone/gear/help/remote/lock/unlock) plus a boot sweep filling [data-icon] holders | shared/infra | active |
 | `src/backupviewer/web/js/components/libtree.js` | 215 | BV.libTree: plant to line to robot grouped collapsible library tree with filter, persisted folds, nested cameras | library | active |
-| `src/backupviewer/web/js/components/lseditor.js` | 461 | BV.lsEditor: single-layer contenteditable TP code editor — own undo stack, caret offsets, alignment gap blocks | program editor | active |
+| `src/backupviewer/web/js/components/lseditor.js` | 518 | BV.lsEditor: single-layer contenteditable TP code editor — own undo stack, caret offsets, alignment gap blocks | program editor | active |
 | `src/backupviewer/web/js/components/multitable.js` | 249 | BV.MultiTable: two VTables driven as one — split halves or paired lists, lockable linked scroll, pane switching | shared/infra | active |
 | `src/backupviewer/web/js/components/pdiffview.js` | 150 | BV.pdiffView: aligned side-by-side program-line diff renderer with equiv rows, stats pills and prev/next jumps | compare engine | active |
 | `src/backupviewer/web/js/components/pill.js` | 29 | BV.pill plus .node/.map: the rounded status badge as an html string, a live node, or a status-to-variant map | shared/infra | active |
@@ -150,17 +150,17 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/web/js/mtxremote.js` | 168 | matrox remote overlay: sandboxed iframe tabs of the camera's own web ui, window fallback if unframeable | remote/mobile | active |
 | `src/backupviewer/web/js/phoneview.js` | 212 | qr handoff modal that mirrors this window (or a camera feed) to a phone, with a firewall-fix help panel | remote/mobile | active |
 | `src/backupviewer/web/js/router.js` | 496 | hash router and app boot: the screens dropdown + breadcrumb feed, chrome edge hairlines, cubes, status bar, boot sequence | shared/infra | active |
-| `src/backupviewer/web/js/scan_ui.js` | 399 | the fleet-scan modal: check picker built from the backend registry, find chips, live progress, grouped report | flag scanning | active |
+| `src/backupviewer/web/js/scan_ui.js` | 895 | the fleet-scan modal: check picker built from the backend registry, find chips, live progress, grouped report | flag scanning | active |
 | `src/backupviewer/web/js/settings_ui.js` | 474 | the gear dialog (display/preferences tabs) and BV.uiPrefs.apply — fonts, sizes, glass/frost fills, bgfx dials | shared/infra | active |
 | `src/backupviewer/web/js/sim_export.js` | 188 | the load-cameras picker: copies CV-X workspaces from backups into the simulator folder, foreign-dir guard | cameras | active |
 | `src/backupviewer/web/js/state.js` | 65 | BV.state: open-backup manifest, per-backup tabData buckets, pub/sub, BV.tabState and BV.persistScroll | shared/infra | active |
 | `src/backupviewer/web/js/tabs/alarms.js` | 119 | alarm-history section embedded in overview: 15-row snapshot per ERR*.LS file, expandable to a filtered vtable | backup parsing | active |
 | `src/backupviewer/web/js/tabs/compare.js` | 493 | compare tab: changes-only two-backup report by category, hideable rows, lazy mini-diffs, backup picker flow | compare engine | active |
 | `src/backupviewer/web/js/tabs/dcs.js` | 542 | dcs tab: signature dashboard, section menu, pendant-style section pages; owns the shared status pill map | 3D viewer | active |
-| `src/backupviewer/web/js/tabs/edit.js` | 2343 | the #edit multi-robot .ls workspace: split panes, working-set rail, find/replace, live pane diff, export | program editor | active |
+| `src/backupviewer/web/js/tabs/edit.js` | 2723 | the #edit multi-robot .ls workspace: split panes, working-set rail, find/replace, live pane diff, export | program editor | active |
 | `src/backupviewer/web/js/tabs/files.js` | 133 | raw file browser tab: virtualized list with ext filter, text/hex preview, and a camera-remote button | backup parsing | active |
 | `src/backupviewer/web/js/tabs/frames.js` | 250 | frames tab: pendant-style tool/uframe/jog/payload cards per motion group, with show-empty and vs mode | backup parsing | active |
-| `src/backupviewer/web/js/tabs/home.js` | 2295 | the #home library screen: plant/line/robot tree, per-row actions, batch ftp backup, discover, cam tiles | library | active |
+| `src/backupviewer/web/js/tabs/home.js` | 2298 | the #home library screen: plant/line/robot tree, per-row actions, batch ftp backup, discover, cam tiles | library | active |
 | `src/backupviewer/web/js/tabs/io.js` | 336 | io tab: pendant-style signal browser by category, in/out panes, rack/slot/port config view, vs mode | backup parsing | active |
 | `src/backupviewer/web/js/tabs/macros.js` | 113 | macro table (name, program, assignment) rendered inside the programs tab, with side-by-side vs mode | backup parsing | active |
 | `src/backupviewer/web/js/tabs/mhvalves.js` | 227 | mh valves tab: gripper/valve setup cards from MHGRIPDT.VA with resolved io links, magnet section, full tree | backup parsing | active |
@@ -175,7 +175,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/web/js/theme.js` | 310 | theme data + apply layer: maps 9 theme colors onto css vars, hex/contrast math, the custom-theme color editor | theming | active |
 | `src/backupviewer/web/js/theme_ui.js` | 269 | the theme picker row + drop panel: categories, credits, filter, hover-preview, edit/delete of custom themes | theming | active |
 | `src/backupviewer/web/js/update.js` | 135 | release-check UI: boot autocheck toast, statusbar update pill, about-box updates row with skip-version | shared/infra | active |
-| `src/backupviewer/web/js/util.js` | 398 | boots window.BV: esc/el/fmt/toast/copy, host-window fullscreen, modal+dirtyGuard, menu/dropPanel, collapsible | shared/infra | active |
+| `src/backupviewer/web/js/util.js` | 410 | boots window.BV: esc/el/fmt/toast/copy, host-window fullscreen, modal+dirtyGuard, menu/dropPanel, collapsible | shared/infra | active |
 | `src/backupviewer/web/js/workspace.js` | 383 | the multi-robot edit working set (BV.workspace): entry ids, buffers, persisted drafts, export payload | program editor | active |
 | `src/backupviewer/web/themes/*.json (28 files)` | 448 | 28 bundled read-only theme packs, each {id,name,category,colors{9 hex}} in monkeytype/sports/cyberpunk/vibes | theming | active |
 | `src/libraryimporter/__init__.py` | 6 | version + APP_NAME for the separate Library Importer app, and the note on where its brand strings live | LibraryImporter | active |
@@ -211,7 +211,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/test_fixture_gate.py` | 60 | the absence reporter (a clean clone says "0 backup roots" in its summary instead of nothing) plus unit tests of the fixture gate's own error/skip branches | tests | active |
 | `tests/test_frames.py` | 55 | pytest for the tool/user/jog frame model built from SYSFRAME.VA plus FRAMEVAR.VA comments *(untracked, local-only)* | tests | active |
 | `tests/test_ftpbackup.py` | 272 | pytest for the fanuc ftp pull against a fake controller: disk layout, completion marker, library register | tests | active |
-| `tests/test_healthscan.py` | 843 | pytest for every fleet health check plus the scan job, driven by synthetic file texts through a fake session | tests | active |
+| `tests/test_healthscan.py` | 937 | pytest for every fleet health check plus the scan job, driven by synthetic file texts through a fake session | tests | active |
 | `tests/test_io.py` | 54 | pytest for merged IOCONFIG/IOSTATE signals: states, rack/slot/port ranges, pendant short names *(untracked, local-only)* | tests | active |
 | `tests/test_io_fallback.py` | 25 | pytest for the FLG two-column split and bracket-proof column splitting over the real IOSTATE dump (the summary-fallback half moved to the tracked test_backup_formats) *(untracked, local-only)* | tests | active |
 | `tests/test_keyence_workspace.py` | 317 | pytest pinning workspace.xml byte-for-byte plus export naming and the ledger guarding foreign folders | tests | active |
@@ -250,10 +250,10 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/test_va_tokenizer.py` | 51 | pytest for the .VA engine: scalar coercion, scalar arrays, and position arrays incl. a synthetic joint block *(untracked, local-only)* | tests | active |
 | `tests/test_viewfinder.py` | 188 | pytest for the window-mirroring phone share: PhoneShare.start_window_session over loopback plus viewfinder_start choosing which of our own windows to mirror | tests | active |
 | `tests/test_webview_boot.py` | 90 | pytest for the WebView2 0x8007139F boot rescue: failure watch, two-way relaunch ladder, software-rendering fallback env and storage dir | tests | active |
-| `tests/ui_batch_probe.py` | 1437 | hidden-window probe: library home rows, note editing, cam lens, program navigator, mh-valve reflow, tab keys | tests | active |
+| `tests/ui_batch_probe.py` | 1830 | hidden-window probe: library home rows, note editing, cam lens, program navigator, mh-valve reflow, tab keys | tests | active |
 | `tests/ui_bgfx_probe.py` | 454 | hidden-window probe of bgfx effects, the settings dialog's two tabs and the theme picker panel | tests | active |
 | `tests/ui_cvxremote_probe.py` | 200 | hidden-window probe of the cv-x remote bar, top-bar phone button and pop-out session adoption | tests | active |
-| `tests/ui_edit_probe.py` | 1369 | hidden-window probe of the #edit workspace: panes, tab strips, find/replace, pane diff, per-robot export | tests | active |
+| `tests/ui_edit_probe.py` | 1753 | hidden-window probe of the #edit workspace: panes, tab strips, find/replace, pane diff, per-robot export | tests | active |
 | `tests/ui_fk_probe.py` | 135 | hidden-window probe holding BV.fk.chain equal to kinematics.chain_frames within 1e-6 across builtin chains plus the synthetic parallel-link arm | tests | active |
 | `tests/ui_probe.py` | 2108 | the original full-app probe: boots a real local backup and walks every tab, primitive and compare view *(untracked, local-only)* | tests | active |
 | `tests/ui_sim_export_probe.py` | 286 | hidden-window probe of the cv-x simulator-folder settings row and the load-cameras picker guard | tests | active |
@@ -277,23 +277,23 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 
 | subsystem | files | ~lines |
 |---|---:|---:|
-| tests | 71 | 18,687 |
-| shared/infra | 27 | 7,657 |
-| program editor | 8 | 6,383 |
-| docs | 12 | 5,676 |
-| theming | 34 | 5,646 |
+| tests | 71 | 19,558 |
+| shared/infra | 27 | 7,746 |
+| program editor | 8 | 6,820 |
+| docs | 12 | 5,799 |
+| theming | 34 | 5,779 |
 | backup parsing | 31 | 5,606 |
-| library | 4 | 4,271 |
+| library | 4 | 4,274 |
 | 3D viewer | 16 | 3,832 |
 | cameras | 9 | 2,559 |
+| flag scanning | 2 | 2,080 |
 | remote/mobile | 10 | 2,032 |
 | backup capture | 4 | 1,739 |
-| flag scanning | 2 | 1,422 |
 | LibraryImporter | 11 | 1,395 |
 | compare engine | 5 | 1,355 |
 | tools/scripts | 5 | 1,087 |
 | build/config | 7 | 267 |
-| **total** | **256** | **69,614** |
+| **total** | **256** | **71,928** |
 
 > Counts are by *primary* subsystem only — a file appears once, so these add up to the
 > whole repo. The `tests` row is the largest because every probe and unit suite counts as
