@@ -490,6 +490,17 @@
       scroll.scrollTop = Math.max(0, lineTop(n) - scroll.clientHeight / 2);
     }
 
+    /* replace the current selection (or insert at the caret) with plain text.
+       Only acts when the selection already lives in THIS editor - the caller
+       (quick copy) decides which editor a gesture belongs to. */
+    function replaceSelection(str) {
+      var caret = caretOffsets();
+      if (caret === null) return false;
+      try { code.focus(); } catch (e) { /* probe window */ }
+      insertPlain(str);
+      return true;
+    }
+
     setText((opts && opts.text) || "");
 
     return {
@@ -501,6 +512,7 @@
       setGaps: setGaps,        /* [{after: 1-based line (0 = top), n: rows}] */
       lineTop: lineTop,        /* 1-based line -> px offset inside the scroller */
       caretLine: caretLine,    /* 1-based caret line (text space), or null */
+      replaceSelection: replaceSelection,  /* plain-text splice at the selection */
     };
   };
 })();

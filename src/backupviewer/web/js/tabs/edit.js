@@ -164,6 +164,19 @@
     bar.appendChild(el.diffStats);
     el.armHint = BV.el("span", { class: "ws-armhint" });
     bar.appendChild(el.armHint);
+    el.qcHint = BV.el("span", { class: "ws-armhint" });
+    bar.appendChild(el.qcHint);
+    el.qcBtn = BV.el("button", { class: "btn",
+      title: "shuttle code between open programs: highlight to copy, then " +
+             "highlight (or double-click) in another program to paste - the " +
+             "clip clears after each paste, and it works in both directions" },
+      "quick copy");
+    el.qcBtn.addEventListener("click", function () {
+      qc.on = !qc.on;
+      if (!qc.on) { qc.text = null; qc.srcKey = null; }
+      syncQcUi();
+    });
+    bar.appendChild(el.qcBtn);
     el.diffPrev = BV.el("button", { class: "btn", title: "previous difference" }, "↑");
     el.diffNext = BV.el("button", { class: "btn", title: "next difference" }, "↓");
     el.diffPrev.style.display = el.diffNext.style.display = "none";
@@ -196,6 +209,7 @@
     el.shell = shell;
     renderShell();
     updateCounts();
+    syncQcUi();
     return true;
   }
 
@@ -754,6 +768,15 @@
   }
 
   function openTab(entry, leaf) {
+    /* a captured entry can outlive its membership (removed through the state
+       API while the rail row still stood): opening it would resurrect a
+       ghost tab over a buffer the workspace no longer owns. Refuse, and
+       repaint so the stale row goes with it. */
+    if (!BV.workspace.byId(keyOf(entry))) {
+      BV.toast("that program is no longer in the workspace");
+      afterChange();
+      return;
+    }
     /* diff mode locks the layout; a program already on screen may still be
        focused (that changes nothing about the tree) */
     if (pd.on && !leafHolding(entry)) {
@@ -2132,6 +2155,95 @@
   }
 
   /* ------------------------------------------------------------------ *
+   * quick copy: highlight-to-copy, highlight-elsewhere-to-paste
+   *
+   * A toggled mode for shuttling code between open programs without the
+   * ctrl+c/ctrl+v dance. While it is on, highlighting in an editor ARMS the
+   * clip (mirrored to the system clipboard where the runtime allows); the
+   * next highlight in a DIFFERENT program replaces that highlight with the
+   * clip, and a double-click on an empty spot pastes at the caret. The clip
+   * clears itself on every paste, so a stray gesture can never paste twice -
+   * and because arming is just "highlight anywhere", the flow is symmetric:
+   * A->B and B->A are the same two gestures. Esc drops an armed clip;
+   * highlighting again in the SOURCE program re-copies instead of pasting.
+   * ------------------------------------------------------------------ */
+  var qc = { on: false, text: null, srcKey: null };
+
+  /* which cached editor the CURRENT selection lives in (each editor is its
+     own contenteditable island, so a selection never spans two) */
+  function editorAtSelection() {
+    var sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return null;
+    var n = sel.getRangeAt(0).commonAncestorContainer;
+    var ks = Object.keys(editors);
+    for (var i = 0; i < ks.length; i++) {
+      var ed = editors[ks[i]];
+      if (ed && ed.el.parentNode && ed.code.contains(n)) return { key: ks[i], ed: ed };
+    }
+    return null;
+  }
+
+  function qcPreview() {
+    var t = (qc.text || "").replace(/\s+/g, " ").trim();
+    return t.length > 24 ? t.slice(0, 24) + "…" : t;
+  }
+
+  function syncQcUi() {
+    if (!el.qcBtn) return;
+    el.qcBtn.textContent = qc.on ? "quick copy ✕" : "quick copy";
+    el.qcBtn.classList.toggle("on", qc.on);
+    el.qcHint.textContent = !qc.on ? ""
+      : qc.text === null
+        ? "highlight code to copy it"
+        : "✂ " + qcPreview() + " — highlight in another program to paste (esc drops)";
+  }
+
+  function qcArm(text, key) {
+    qc.text = text;
+    qc.srcKey = key;
+    /* best-effort mirror; the paste gesture uses the internal clip either
+       way, and clearing on paste only ever clears the internal one */
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).catch(function () {});
+      }
+    } catch (e) { /* clipboard denied */ }
+    syncQcUi();
+  }
+
+  function qcPaste(hit) {
+    hit.ed.replaceSelection(qc.text);
+    qc.text = null;
+    qc.srcKey = null;
+    syncQcUi();
+  }
+
+  /* the selection is final at mouseup (a drag-highlight, a double-click's
+     word). A modal overlaying the panes keeps the old editor selection
+     alive underneath, so gestures on it must not re-arm - hence modalOpen. */
+  document.addEventListener("mouseup", function () {
+    if (!qc.on || location.hash.split("/")[0] !== "#edit" || BV.modalOpen()) return;
+    var hit = editorAtSelection();
+    if (!hit) return;
+    var s = String(window.getSelection() || "");
+    if (!s) return;
+    if (qc.text !== null && hit.key !== qc.srcKey) qcPaste(hit);
+    else qcArm(s, hit.key);
+  });
+
+  /* double-click on an EMPTY spot (blank line, past the text): paste at the
+     caret. A double-click on a word selects it first, so the mouseup path
+     above has already pasted over it - and cleared the clip - by now. */
+  document.addEventListener("dblclick", function () {
+    if (!qc.on || qc.text === null || location.hash.split("/")[0] !== "#edit" ||
+        BV.modalOpen()) return;
+    var hit = editorAtSelection();
+    if (!hit || hit.key === qc.srcKey) return;
+    if (String(window.getSelection() || "")) return;
+    qcPaste(hit);
+  });
+
+  /* ------------------------------------------------------------------ *
    * review-your-edits: original vs edited, before anything leaves the tool
    *
    * The honesty screen for the whole editing lane: EVERY kind of change an
@@ -2442,6 +2554,14 @@
       e.preventDefault();
       e.stopPropagation();
       removeEntries(selEntries());
+      return;
+    }
+    if (e.key === "Escape" && qc.on && qc.text !== null) {
+      /* an armed clip is the most transient state on screen: esc drops it
+         before it means anything else */
+      qc.text = null;
+      qc.srcKey = null;
+      syncQcUi();
       return;
     }
     if (e.key === "Escape" && pd.armed) {

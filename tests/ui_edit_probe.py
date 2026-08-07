@@ -3,10 +3,15 @@
 Covers what pytest cannot: that a shell screen renders with ZERO backups open,
 the rail's working set (grouped per robot, collapsible), per-pane tab strips
 (open by double-click, close by x, ctrl+tab cycling), the single-layer
-BV.lsEditor mounting per pane, live dirty state reaching the rail and the
-topbar badge, find/replace scoped to the working set (identity-aware matching,
-per-robot scope, collapsible grouped results with select-all, click-to-reveal),
-the pane-vs-pane diff strip (offered only while split, live while typing,
+BV.lsEditor mounting per pane, alt+arrow line moves (collapsed caret, block
+selections, edges, undo), quick copy (highlight-to-copy / highlight-elsewhere-
+to-paste, clip cleared per paste, symmetric, esc drops), live dirty state
+reaching the rail and the topbar badge, find/replace scoped to the working set
+(identity-aware matching, remarks shown by default with an exclude-!-and-//
+toggle, multi-line BLOCK search/replace, stapled inputs/foot with the results
+list as the only scroller, options+replace folded behind a caret, per-robot
+scope, collapsible grouped results with select-all, click-to-reveal), the
+pane-vs-pane diff strip (offered only while split, live while typing,
 ref-comment differences honestly classified display-only), the
 review-your-edits modal (original vs edited; clean programs say so plainly;
 a rename alone counts as an exportable change), and an export that lands ONE
@@ -823,6 +828,30 @@ def probe(window):
               and js(window, "document.querySelectorAll('.lsed-gap').length") == 0
               and bool(js(window, """[...document.querySelectorAll('.toolbar-slot .btn')]
                   .some(function(x){return x.textContent==='diff…';})""")))
+        # the RAW remove above repainted counts only (the rail is deliberately
+        # left alone while it may be worked in), so a TREETMP4 row still
+        # stands for an entry that is gone. Opening from that stale row must
+        # REFUSE - it would resurrect a ghost tab over a buffer the workspace
+        # no longer owns, and every later edit would vanish into it. (Exactly
+        # that zombie ate this probe's own find/replace flows once.)
+        js(window, """(function(){
+            var r=[...document.querySelectorAll('.ws-prog')].find(function(x){
+                return x.textContent.indexOf('TREETMP4')>=0; });
+            window._staleRow = !!r;
+            if (r) r.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
+        })()""")
+        time.sleep(0.5)
+        check("stale.row_stood_for_the_test", bool(js(window, "window._staleRow")),
+              "(the raw remove must have left the rail unrepainted)")
+        check("stale.open_refused",
+              js(window, "document.querySelectorAll('.ws-tab').length") == 1
+              and not js(window, """[...document.querySelectorAll('.ws-tab')]
+                  .some(function(t){ return t.textContent.indexOf('TREETMP4')>=0; })"""),
+              "(no ghost tab for a removed entry)")
+        check("stale.refusal_heals_the_rail", not js(window, """
+            [...document.querySelectorAll('.ws-prog')].some(function(x){
+                return x.textContent.indexOf('TREETMP4')>=0; })"""),
+              "(the repaint takes the stale row with it)")
         # back to two panes for the find/replace flow below: the closed side
         # reopens from the rail (allowed again - the diff is off), then splits
         js(window, """document.querySelectorAll('.ws-prog')[1]
@@ -864,16 +893,134 @@ def probe(window):
         time.sleep(0.4)
         check("details.closes_again", not js(window, "!!document.querySelector('.ws-details')"))
 
+        # ---- quick copy: highlight-to-copy, highlight-elsewhere-to-paste ----
+        # A DOM-range helper stands in for the mouse drag; the mode's own
+        # handlers listen for the mouseup/dblclick that ends a real gesture.
+        js(window, """window._selIn = function(code, start, end){
+            var sel=window.getSelection();
+            var range=document.createRange();
+            var w=document.createTreeWalker(code, NodeFilter.SHOW_TEXT, null);
+            var pos=0,node,ps=false,pe=false;
+            while((node=w.nextNode())){
+                var len=node.nodeValue.length;
+                if(!ps && start<=pos+len){ range.setStart(node,start-pos); ps=true; }
+                if(ps && end<=pos+len){ range.setEnd(node,end-pos); pe=true; break; }
+                pos+=len;
+            }
+            if(!pe) range.collapse(true);
+            sel.removeAllRanges(); sel.addRange(range);
+        };
+        window._qcMouseup = function(){ document.dispatchEvent(
+            new MouseEvent('mouseup',{bubbles:true})); };""")
+        base_dirty = js(window, "BV.workspace.dirtyCount()")
+        js(window, """[...document.querySelectorAll('.toolbar-slot .btn')]
+            .find(function(b){return b.textContent==='quick copy';}).click()""")
+        time.sleep(0.3)
+        check("qc.toggle_lights_up", bool(js(window, """(function(){
+            var b=[...document.querySelectorAll('.toolbar-slot .btn')]
+                .find(function(x){return x.textContent.indexOf('quick copy')>=0;});
+            return b.classList.contains('on');
+        })()""")))
+        hint = js(window, "[...document.querySelectorAll('.ws-armhint')].map(function(h){return h.textContent;}).join('')") or ""
+        check("qc.idle_hint", "highlight" in hint, f"({hint!r})")
+        # copy 'setup' out of editor 0 (chars 1..6 of its '!setup' first line)
+        js(window, "window._selIn(document.querySelectorAll('.lsed-code')[0],1,6); window._qcMouseup()")
+        time.sleep(0.3)
+        hint = js(window, "[...document.querySelectorAll('.ws-armhint')].map(function(h){return h.textContent;}).join('')") or ""
+        check("qc.highlight_arms_clip", "✂" in hint and "setup" in hint, f"({hint!r})")
+        # a highlight in the OTHER editor pastes over itself and clears the clip
+        js(window, "window._selIn(document.querySelectorAll('.lsed-code')[1],0,6); window._qcMouseup()")
+        time.sleep(0.4)
+        pasted = js(window, "document.querySelectorAll('.lsed-code')[1].textContent") or ""
+        check("qc.paste_replaces_highlight", pasted.startswith("setup\n"),
+              f"(editor B now starts {pasted[:12]!r})")
+        hint = js(window, "[...document.querySelectorAll('.ws-armhint')].map(function(h){return h.textContent;}).join('')") or ""
+        check("qc.clip_clears_on_paste", "✂" not in hint,
+              "(one paste per copy - a stray gesture cannot paste twice)")
+        js(window, """(function(){
+            var code=document.querySelectorAll('.lsed-code')[1];
+            code.dispatchEvent(new KeyboardEvent('keydown',
+                {key:'z',ctrlKey:true,bubbles:true,cancelable:true}));
+        })()""")
+        time.sleep(0.3)
+        check("qc.paste_is_one_undo_step",
+              (js(window, "document.querySelectorAll('.lsed-code')[1].textContent") or "").startswith("!setup"),
+              "(the paste rides the editor history)")
+        # the flow is symmetric: B -> A is the same two gestures
+        js(window, "window._selIn(document.querySelectorAll('.lsed-code')[1],1,6); window._qcMouseup()")
+        time.sleep(0.3)
+        js(window, "window._selIn(document.querySelectorAll('.lsed-code')[0],0,6); window._qcMouseup()")
+        time.sleep(0.4)
+        check("qc.works_both_ways",
+              (js(window, "document.querySelectorAll('.lsed-code')[0].textContent") or "").startswith("setup\n"))
+        js(window, """(function(){
+            var code=document.querySelectorAll('.lsed-code')[0];
+            code.dispatchEvent(new KeyboardEvent('keydown',
+                {key:'z',ctrlKey:true,bubbles:true,cancelable:true}));
+        })()""")
+        time.sleep(0.3)
+        # double-click on an EMPTY spot pastes at the caret
+        js(window, "window._selIn(document.querySelectorAll('.lsed-code')[0],1,6); window._qcMouseup()")
+        time.sleep(0.3)
+        js(window, """(function(){
+            window._selIn(document.querySelectorAll('.lsed-code')[1],0,0);
+            document.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
+        })()""")
+        time.sleep(0.4)
+        check("qc.dblclick_pastes_at_caret",
+              (js(window, "document.querySelectorAll('.lsed-code')[1].textContent") or "").startswith("setup!setup"),
+              "(collapsed caret: insert, not replace)")
+        js(window, """(function(){
+            var code=document.querySelectorAll('.lsed-code')[1];
+            code.dispatchEvent(new KeyboardEvent('keydown',
+                {key:'z',ctrlKey:true,bubbles:true,cancelable:true}));
+        })()""")
+        time.sleep(0.3)
+        # esc drops an armed clip; the next highlight COPIES instead of pasting
+        js(window, "window._selIn(document.querySelectorAll('.lsed-code')[0],1,6); window._qcMouseup()")
+        time.sleep(0.3)
+        js(window, """document.dispatchEvent(new KeyboardEvent('keydown',
+            {key:'Escape',bubbles:true,cancelable:true}))""")
+        time.sleep(0.3)
+        hint = js(window, "[...document.querySelectorAll('.ws-armhint')].map(function(h){return h.textContent;}).join('')") or ""
+        check("qc.esc_drops_clip", "✂" not in hint and "highlight" in hint, f"({hint!r})")
+        before_b = js(window, "document.querySelectorAll('.lsed-code')[1].textContent") or ""
+        js(window, "window._selIn(document.querySelectorAll('.lsed-code')[1],0,6); window._qcMouseup()")
+        time.sleep(0.3)
+        check("qc.after_esc_highlight_copies_not_pastes",
+              (js(window, "document.querySelectorAll('.lsed-code')[1].textContent") or "") == before_b
+              and "✂" in (js(window, "[...document.querySelectorAll('.ws-armhint')].map(function(h){return h.textContent;}).join('')") or ""))
+        # toggling the mode off clears everything and stops listening
+        js(window, """[...document.querySelectorAll('.toolbar-slot .btn')]
+            .find(function(b){return b.textContent.indexOf('quick copy')>=0;}).click()""")
+        time.sleep(0.3)
+        js(window, "window._selIn(document.querySelectorAll('.lsed-code')[0],1,6); window._qcMouseup()")
+        time.sleep(0.3)
+        hint = js(window, "[...document.querySelectorAll('.ws-armhint')].map(function(h){return h.textContent;}).join('')") or ""
+        check("qc.off_means_off", "✂" not in hint and "highlight" not in hint, f"({hint!r})")
+        check("qc.no_stray_edits_left",
+              js(window, "BV.workspace.dirtyCount()") == base_dirty,
+              "(every paste was undone - the mode itself must not dirty anything)")
+
         # ---- find/replace in the rail: identity-aware, scoped, grouped ----
         js(window, """[...document.querySelectorAll('.ws-railtab')]
             .find(function(t){return t.textContent.indexOf('find')>=0;}).click()""")
-        got = poll(window, "!!document.querySelector('.fp-inputs input')")
+        got = poll(window, "!!document.querySelector('.fp-find')")
         check("find.panel_in_rail", bool(got))
         check("find.code_still_visible",
               js(window, "document.querySelectorAll('.lsed-code').length") >= 1,
               "(the panel takes the rail, not the editors)")
+        # the inputs staple to a flex railbody; options + replace fold behind
+        # the ▸ caret and start CLOSED
+        check("find.railbody_is_flex_host", bool(js(window, """(function(){
+            var b=document.querySelector('.ws-railbody');
+            return b.classList.contains('fp-host') &&
+                   getComputedStyle(b).overflowY === 'hidden';
+        })()""")), "(the results list must be the only scroller)")
+        check("find.options_closed_by_default",
+              js(window, "getComputedStyle(document.querySelector('.fp-xtra')).display") == "none")
         js(window, """(function(){
-            var i=document.querySelector('.fp-inputs input');
+            var i=document.querySelector('.fp-find');
             i.value='R[21]';
             i.dispatchEvent(new Event('input',{bubbles:true}));
         })()""")
