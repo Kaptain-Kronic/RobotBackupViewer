@@ -8,11 +8,15 @@ fix, and every finding says why (the safety ethos - wrong data erodes trust
 worse than missing data).
 
 Adding a check = one entry in CHECKS + one function taking a _RobotData and
-returning {"status", "summary", "detail"?}:
+returning {"status", "summary", "detail"?, "items"?}:
     status "flag" - a problem worth a look (red)
     status "info" - a notable fact, not a fault (e.g. "has advanced DCS")
     status "ok"   - checked and fine
     status "na"   - could not be checked (missing file/section); says why
+"items" is the STRUCTURED finding list ([{"prog", "line"?, "text", "after"?}]):
+the report groups them per program with expand/collapse and offers per-program
+actions, so program-shaped checks should emit items and keep "detail" as the
+capped one-line fallback. Checks without a per-program shape use detail alone.
 
 Two checks are cross-robot: per robot they only collect a value; the verdicts
 are handed out in a fleet-wide pass after the loop. cloned_mastering groups
@@ -455,12 +459,16 @@ def _check_style_broken(ctx: _RobotData) -> dict:
     live = [t for t in missing if t.get("enabled", True)]
     parked = len(missing) - len(live)
     if live:
-        items = [f"style {t['style']} → {t['program']}" for t in live]
+        caps = [f"style {t['style']} → {t['program']}" for t in live]
         return {"status": "flag",
                 "summary": f"{len(live)} enabled style{'s' if len(live) != 1 else ''}"
                            " point at missing programs",
-                "detail": _cap(items) +
-                          (f" (+{parked} disabled slots missing theirs)" if parked else "")}
+                "detail": _cap(caps) +
+                          (f" (+{parked} disabled slots missing theirs)" if parked else ""),
+                # the MISSING program is the finding's subject - excluding a
+                # name the plant knowingly does not ship cuts it fleet-wide
+                "items": [{"prog": t["program"], "text": f"style {t['style']}"}
+                          for t in live]}
     if parked:
         return {"status": "ok", "summary": "all enabled style programs present",
                 "detail": f"{parked} disabled placeholder style(s) point at absent programs: " +
@@ -488,7 +496,8 @@ def _check_style_orphans(ctx: _RobotData) -> dict:
     if orphans:
         return {"status": "info",
                 "summary": f"{len(orphans)} S## programs never reached from a style",
-                "detail": _cap(orphans, 12)}
+                "detail": _cap(orphans, 12),
+                "items": [{"prog": p, "text": ""} for p in orphans]}
     return {"status": "ok", "summary": "every S## program is reachable"}
 
 
@@ -503,6 +512,7 @@ def _check_broken_calls(ctx: _RobotData) -> dict:
     graph = ctx.call_graph()
     karel = {k.upper() for k in (getattr(ctx.s, "karel_programs", None) or {})}
     missing: dict[str, set] = {}
+    pairs: list[tuple] = []           # (caller, "CALL TARGET") in call-graph order
     sites = 0
     for prog, edges in graph["calls"].items():
         for e in edges:
@@ -514,14 +524,19 @@ def _check_broken_calls(ctx: _RobotData) -> dict:
             if ctx.s.find(tgt + ".TP") or ctx.s.find(tgt + ".PC"):
                 continue
             missing.setdefault(tgt, set()).add(prog)
+            pairs.append((prog, e["kind"].upper() + " " + tgt))
             sites += e.get("count") or 1
     if not missing:
         return {"status": "ok", "summary": "every CALL/RUN target is in the backup"}
-    items = [t + " ← " + _cap(sorted(callers), 2) for t, callers in sorted(missing.items())]
+    caps = [t + " ← " + _cap(sorted(callers), 2) for t, callers in sorted(missing.items())]
+    # one finding per CALLER: the caller is the program a fix would edit, and
+    # it is what "exclude program X" must be able to cut
+    items = [{"prog": caller, "text": text} for caller, text in sorted(set(pairs))]
     return {"status": "info",
             "summary": f"{len(missing)} called program{'s' if len(missing) != 1 else ''}"
                        f" not in the backup ({sites} call site{'s' if sites != 1 else ''})",
-            "detail": _cap(items, 8)}
+            "detail": _cap(caps, 8),
+            "items": items}
 
 
 def _check_sw_version(ctx: _RobotData) -> dict:
@@ -606,7 +621,7 @@ def _remarks(ctx: _RobotData, motion: bool) -> dict:
     lines = ctx.mn_lines()
     if not lines:
         return _na("no .LS programs in this backup")
-    hits = []
+    items = []
     for prog in sorted(lines):
         seen = set()
         for n, t, _active in lines[prog]:
@@ -615,15 +630,16 @@ def _remarks(ctx: _RobotData, motion: bool) -> dict:
             if bool(_REMARK_MOTION.match(t)) != motion:
                 continue
             seen.add(n)               # a remarked circular counts once, not per row
-            hits.append(f"{prog} line {n}: {t}")
-    if not hits:
+            items.append({"prog": prog, "line": n, "text": t})
+    if not items:
         return {"status": "ok",
                 "summary": "no remarked " + ("motion lines" if motion else "logic lines")}
     noun = "remarked motion line" if motion else "remarked logic line"
     return {"status": "flag" if motion else "info",
-            "summary": f"{len(hits)} {noun}{'s' if len(hits) != 1 else ''}" +
+            "summary": f"{len(items)} {noun}{'s' if len(items) != 1 else ''}" +
                        (" — positions are being skipped" if motion else ""),
-            "detail": _cap(hits, 8)}
+            "detail": _cap([f"{i['prog']} line {i['line']}: {i['text']}" for i in items], 8),
+            "items": items}
 
 
 def _check_remarked_positions(ctx: _RobotData) -> dict:
@@ -843,14 +859,21 @@ def _check_uninit_prs(ctx: _RobotData) -> dict:
     ordered = unwritten + [i for i in sorted(reads) if writers.get(i)]
     detail = _cap([_item(i) for i in ordered], 8) + note
     n = len(reads)
+    # one finding per READING program: that program is where the fix lands.
+    # The writer note stays - "may be set at runtime" is evidence, not commentary.
+    items = [{"prog": prog,
+              "text": f"reads PR[{i}]" + (f" '{comments[i]}'" if i in comments else ""),
+              **({"after": "written by " + _cap(sorted(writers[i]), 2)}
+                 if writers.get(i) else {})}
+             for i in ordered for prog in sorted(reads[i])]
     if unwritten:
         return {"status": "flag",
                 "summary": f"programs read {n} uninitialized PR{'s' if n != 1 else ''}",
-                "detail": detail}
+                "detail": detail, "items": items}
     return {"status": "info",
             "summary": f"{n} uninitialized PR{'s' if n != 1 else ''} read — every one is"
                        " written by some program (may be set at runtime)",
-            "detail": detail}
+            "detail": detail, "items": items}
 
 
 def _check_override(ctx: _RobotData) -> dict:
@@ -977,9 +1000,17 @@ def _find_row(res: dict) -> dict:
         if n:
             parts.append(f"{n} {k}")
     top = _cap([p["program"] for p in progs], 5)
-    return {"status": "info",
-            "summary": f"{total} hits — " + " · ".join(parts),
-            "detail": top}
+    out = {"status": "info",
+           "summary": f"{total} hits — " + " · ".join(parts),
+           "detail": top}
+    if progs:
+        # program hits become findings, so a find section filters and adds to
+        # the editor exactly like a check does
+        out["items"] = [{"prog": p["program"],
+                         "text": str(p.get("count", 0)) +
+                                 (" hit" if p.get("count") == 1 else " hits")}
+                        for p in progs]
+    return out
 
 
 # -- the job -----------------------------------------------------------------------

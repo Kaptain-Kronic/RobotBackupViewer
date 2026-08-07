@@ -170,6 +170,8 @@ COMMENT\t\t= "POINTS";
    5:L P[R[4]] 200mm/sec FINE ;
    6:C P[1]
     :  P[4] 300mm/sec FINE ;
+   7:J P[...] 100% CNT100 ;
+   8:  //J P[...] 100% FINE ;
 /POS
 P[1]{
    GP1:
@@ -615,6 +617,9 @@ def test_broken_calls(tmp_path):
     assert "BINPROG" not in row["detail"]         # present as a binary .TP
     assert "KARELP" not in row["detail"]          # present as a KAREL program
     assert "S04SUB1" not in row["detail"]         # present as source
+    # findings are keyed by the CALLER: that is the program a fix edits, and
+    # what "exclude program X" must be able to cut out of a whole report
+    assert row["items"] == [{"prog": "MAIN1", "text": "CALL GONE1"}]
 
     clean = _check_broken_calls(_RobotData(FakeSession(
         {}, program_files=[_prog(tmp_path, "MAIN2", ["CALL SUB2"]),
@@ -642,6 +647,7 @@ def test_remarked_calls_are_not_edges(tmp_path):
     # GONE9/GONE8 never execute, so they are not "called programs missing"
     row = _check_broken_calls(ctx)
     assert row["status"] == "ok", row.get("detail", "")
+    assert "items" not in row                     # an ok row has nothing to list
 
     orph = _check_style_orphans(ctx)
     assert "S05LONE" in orph["detail"]            # a remarked call does not reach it
@@ -695,8 +701,10 @@ def test_remarked_positions_and_logic(tmp_path):
 
     pos = _check_remarked_positions(ctx)
     assert pos["status"] == "flag"
-    assert "1 remarked motion line" in pos["summary"]
+    # both remarked motions: the numbered one and the P[...] one
+    assert "2 remarked motion lines" in pos["summary"]
     assert "TESTPTS line 3: //J P[3] 50% FINE" in pos["detail"]
+    assert "TESTPTS line 8: //J P[...] 100% FINE" in pos["detail"]
     assert "LOGICP" not in pos["detail"]          # logic remarks are the other check's
 
     logic = _check_remarked_logic(ctx)
@@ -784,6 +792,25 @@ def test_uninit_points(tmp_path):
     assert "P[9]" not in row["detail"]             # comment mention never counts
     assert "1 indirect P[R[..]] ref not checkable" in row["detail"]
 
+    # P[...] — a motion carrying no position id. It used to slip through
+    # BOTH nets: not a numbered ref, not indirect, so it went unreported.
+    assert "1 motion line with no position (P[...])" in row["summary"]
+    # a finding is its LINE, carried verbatim - no prose in the row itself
+    assert {"prog": "TESTPTS", "line": 7,
+            "text": "J P[...] 100% CNT100"} in row["items"]
+    assert not any("P[...]" in i["text"] and i["line"] == 8 for i in row["items"])
+    assert all(" — " not in i["text"] for i in row["items"])
+
+    # a program that records NO positions while printing P[...] is said ONCE
+    # in the summary, never repeated as commentary on every line
+    bare = _check_uninit_points(_RobotData(FakeSession({}, program_files=[
+        _prog(tmp_path, "NOPOS", ["J P[...] 100% FINE", "L P[...] 500mm/sec FINE"])])))
+    assert bare["status"] == "flag"
+    assert "2 motion lines with no position" in bare["summary"]
+    assert "1 program records no positions at all" in bare["summary"]
+    assert [i["text"] for i in bare["items"]] == ["J P[...] 100% FINE",
+                                                  "L P[...] 500mm/sec FINE"]
+
     ok = _check_uninit_points(_RobotData(FakeSession({}, program_files=[
         _lsfile(tmp_path, "CLEANPTS", LS_POINTS_OK)])))
     assert ok["status"] == "ok"
@@ -798,6 +825,10 @@ def test_uninit_prs(tmp_path):
     assert "read 2 uninitialized PRs" in row["summary"]
     assert "PR[2] 'Home2'" in row["detail"] and "PR[7] 'Spare'" in row["detail"]
     assert "PRMOVE" in row["detail"]
+    # one finding per READING program, so the report can filter/add by program
+    assert [i["prog"] for i in row["items"]] == ["PRMOVE", "PRMOVE"]
+    assert row["items"][0]["text"] == "reads PR[2] 'Home2'"
+    assert "after" not in row["items"][0]         # nothing writes it
     assert "1 indirect/group-prefixed PR ref not checkable" in row["detail"]
 
     # a writer somewhere demotes the read to info - it may be set at runtime
@@ -808,6 +839,9 @@ def test_uninit_prs(tmp_path):
     assert demoted["status"] == "info"
     assert "written by some program" in demoted["summary"]
     assert "written by INITPR" in demoted["detail"]
+    # the writer note is EVIDENCE (it may be set at runtime), so it rides the
+    # finding's own field rather than being glued into the text
+    assert demoted["items"][0]["after"] == "written by INITPR"
 
     # writes alone are not reads
     writer_only = _RobotData(FakeSession({"POSREG.VA": POSREG_MIX}, program_files=[

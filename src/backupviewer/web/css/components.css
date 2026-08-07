@@ -1701,19 +1701,90 @@ button.btn.danger:disabled { opacity: 0.5; cursor: default; }
 .hs-sec-title { font-weight: 700; font-size: 0.84rem; }
 .hs-sec-counts { margin-left: auto; display: flex; align-items: center; gap: 0.45rem; font-size: 0.76rem; }
 .hs-sec.bv-collapsible:not(.open) > .hs-sec-body { display: none; }
-.hs-row {
-  display: flex; align-items: baseline; flex-wrap: wrap; gap: 0.5rem;
-  padding: 0.24rem 0.35rem; border-radius: 6px; cursor: pointer; font-size: 0.84rem;
+/* a result row is a TREE node now: the head line expands (left-click) into a
+   per-program breakdown; every action lives on right-click */
+.hs-row { border-radius: 6px; font-size: 0.84rem; }
+.hs-rowhead {
+  display: flex; align-items: baseline; gap: 0.5rem;
+  padding: 0.24rem 0.35rem; border-radius: 6px;
 }
-.hs-row:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.hs-row .hs-robot { font-weight: 600; }
-.hs-row .hs-line { color: var(--sub); font-size: 0.76rem; }
-.hs-row .hs-detail { flex-basis: 100%; color: var(--sub); font-size: 0.76rem; padding-left: 0.2rem; }
+.hs-rowhead.expandable { cursor: pointer; }
+.hs-rowhead:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.hs-rowhead .caret { width: 0.8em; flex: none; color: var(--sub); }
+.hs-rowhead .hs-robot { font-weight: 600; }
+.hs-rowhead .hs-line { color: var(--sub); font-size: 0.76rem; }
+.hs-rowhead .hs-sum { color: var(--text); min-width: 0; }
+.hs-rowhead .hs-shown { color: var(--warn); font-size: 0.72rem; margin-left: auto; flex: none; }
+.hs-rowbody { padding: 0.05rem 0.3rem 0.35rem 1.6rem; }
+.hs-rowbody .hs-detail { color: var(--sub); font-size: 0.76rem; overflow-wrap: break-word; }
+.hs-prog { margin: 0.1rem 0; }
+.hs-prog-h {
+  display: flex; align-items: center; gap: 0.4rem; cursor: pointer;
+  font-family: var(--font-mono); font-size: 0.78rem; color: var(--accent);
+  padding: 0.08rem 0.2rem; border-radius: 4px; user-select: none;
+}
+.hs-prog-h:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.hs-prog-h .caret { width: 0.8em; flex: none; color: var(--sub); }
+.hs-prog-h .n { color: var(--sub); font-size: 0.7rem; }
+.hs-item {
+  display: flex; align-items: baseline; gap: 0.5rem;
+  font-family: var(--font-mono); font-size: 0.76rem;
+  padding: 0.06rem 0.2rem 0.06rem 1.3rem; border-radius: 4px;
+}
+.hs-item:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.hs-item .ln { color: var(--sub-alt); flex: none; min-width: 3.6rem; }
+.hs-item .tx { color: var(--text); overflow-wrap: break-word; min-width: 0; }
+.hs-item .af { color: var(--warn); overflow-wrap: break-word; min-width: 0; }
+.hs-reset { color: var(--warn); }
+
+/* the workspace's program finder: one pattern, every robot, add in bulk */
+.modal.pf-modal { max-width: min(46rem, 94vw); }
+.pf { display: flex; flex-direction: column; min-height: 0; max-height: 62vh; }
+.pf-row { display: flex; gap: 0.4rem; flex: none; padding: 0.1rem 0.1rem 0.45rem; }
+.pf-row input {
+  flex: 1; min-width: 0; box-sizing: border-box; background: var(--bg);
+  color: var(--text); border: 1px solid var(--edge); border-radius: 4px;
+  padding: 0.28rem 0.5rem; font-family: var(--font-mono); font-size: 0.8rem;
+}
+.pf-row input:focus { border-color: var(--accent); outline: none; }
+.pf-out {
+  flex: 1; overflow: auto; min-height: 9rem;
+  border: 1px solid var(--edge-soft); border-radius: 6px; padding: 0.25rem;
+}
+.pf-rb {
+  display: flex; align-items: center; gap: 0.4rem;
+  font-family: var(--font-mono); font-size: 0.78rem; color: var(--accent);
+  padding: 0.3rem 0.3rem 0.1rem;
+}
+.pf-rb .ln { color: var(--sub); font-size: 0.7rem; }
+.pf-rb .n { margin-left: auto; color: var(--sub); font-size: 0.7rem; }
+.pf-ln {
+  display: flex; align-items: center; gap: 0.45rem; cursor: pointer;
+  font-family: var(--font-mono); font-size: 0.78rem;
+  padding: 0.08rem 0.3rem 0.08rem 1.2rem; border-radius: 4px;
+}
+.pf-ln:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.pf-ln .cm {
+  color: var(--sub); font-size: 0.72rem; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pf-foot { display: flex; align-items: center; gap: 0.5rem; padding-top: 0.5rem; flex: none; }
 
 /* picker categories: plain always-visible headers (no accordions), two
    columns when the modal is wide enough, each with its own select-all */
-.hs-cats { display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 0 1.4rem; align-items: start; margin-top: 0.25rem; }
-.hs-cat-head { display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.3rem 0.15rem; border-bottom: 1px solid var(--edge-soft, transparent); margin-bottom: 0.2rem; }
+/* ONE LIST, in columns. Not cards: a bordered box per category turned a
+   17-item list into a wall of rectangles. Categories FLOW (columns, not grid
+   cells), so a two-check category no longer reserves the tallest one's
+   height - which is where the dead space came from. */
+.hs-cats { columns: 3; column-gap: 1.6rem; margin-top: 0.1rem; }
+@media (max-width: 70rem) { .hs-cats { columns: 2; } }
+@media (max-width: 46rem) { .hs-cats { columns: 1; } }
+.hs-cat {
+  break-inside: avoid; -webkit-column-break-inside: avoid;
+  display: inline-block; width: 100%;      /* Chromium: keeps a block intact */
+  margin-bottom: 0.85rem;
+}
+.hs-cat-head { display: flex; align-items: center; gap: 0.6rem; padding: 0.15rem 0.2rem 0.25rem; border-bottom: 1px solid var(--edge); margin-bottom: 0.15rem; }
 .hs-cat-title { color: var(--sub); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; }
 .hs-cat-head .scan-selall { margin-left: auto; }
 .hs-cat-head .hs-desc { font-size: 0.74rem; color: var(--sub); margin-left: auto; }
