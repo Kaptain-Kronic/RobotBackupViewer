@@ -32,9 +32,11 @@
   roll-out; nothing is dropped until the final merged result says so.
 - **The library is a details view now.** Rows became dense aligned columns —
   name · ip · last backup · saved · cams · status — under a sticky column
-  header; clicking name/ip/last-backup sorts, clicking the same column again
-  flips the direction (the caret says which way), and the old chrome-bar
-  sort button survives only in the cam lens, which has no columns. Each
+  header; every column sorts (saved and cams by count, status by severity —
+  missing, then partial, then never-backed-up, worst first), clicking the
+  same column again flips the direction (the caret says which way), and the
+  old chrome-bar sort button survives only in the cam lens, which has no
+  columns. Each
   plant (and the ★ favorites strip, whose rows render exactly like tree rows
   — plant/line context rides the tooltip) is ONE bordered, frostable panel;
   the per-row card chrome, its per-row backdrop-filter, and the hairlines
@@ -50,9 +52,12 @@
   (its editor-open budget is re-baselined to the new density and says so).
 - **Robots fold their cameras.** Linked cameras collapse behind a caret that
   sits with the row controls (right of the favorite star), while the cams
-  column counts them — a number and a small camera glyph. The fold persists
-  per robot, the favorites strip honors the same fold, and a filter that
-  matches a hidden camera forces its robot open — a match never hides.
+  column counts them — a number and a small camera glyph. On a CAMERA row
+  that same column is its remote access point: an uncolored `remote` pill
+  straight into the live camera (Matrox web UI or CV-X screen mirror),
+  shown only when there is an IP to reach. The fold persists per robot, the
+  favorites strip honors the same fold, and a filter that matches a hidden
+  camera forces its robot open — a match never hides.
   Camera rows gained a direct "link to robot…" action (the same picker the
   edit modal uses, committing straight through the link endpoint), so
   linking no longer requires the full edit form.
