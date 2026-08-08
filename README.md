@@ -2,7 +2,7 @@
 
 A fast, light weight tool for taking, organizing, and viewing robot controller backups.
 
-![status](https://img.shields.io/badge/status-v1.4-e2b714)
+![status](https://img.shields.io/badge/status-v1.5-e2b714)
 ![license](https://img.shields.io/badge/license-GPLv3-7ec384)
 
 ## The library

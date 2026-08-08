@@ -1,6 +1,61 @@
 # Changelog
 
-## Unreleased
+## v1.5 — the library overhaul
+- **Renaming a robot no longer rescans the library.** Every app-initiated
+  metadata change — rename/relocate, camera link, note or IP edit, add,
+  merge, bulk add — already updates the library index in place, but its
+  `robot.json` write bumped the folder tree and the next listing paid a full
+  rescan for data it already had: seconds of blanked view and a lost scroll
+  position for a one-entry change. Those operations now claim their own tree
+  delta (the signature re-baselines only when the tree was clean *before*
+  the op, so an Explorer copy racing a rename still gets its rescan — files
+  stay law), and the post-action refresh is a cache read that repaints in
+  place through the existing scroll anchor.
+- **The library listing never blocks on a rescan.** A changed tree used to
+  hold the whole screen behind "checking library…" while the walk ran. Now
+  the last-known library is served instantly (stamped `scanning`), the
+  rescan runs on a background thread with the slim progress strip over the
+  live tree, and a push refetches the settled cache — a ms-cheap in-place
+  repaint. The disk walk also moved outside the library lock, so edits made
+  mid-scan aren't held behind it; a tree that moved *during* the walk is
+  never stamped as current (the runner re-walks until its start and end
+  signatures agree). The one blocking case left is a library with nothing
+  to serve — virgin install, wiped cache, or a switched root, where showing
+  an empty or wrong-root tree would be a lie. A listing during an active
+  backup run serves the cache quietly and leaves the scanning to the run's
+  end, exactly like the watcher always has.
+- **Cold scans stream the library in as it's found.** The first-ever look at
+  a big tree (and any blocking scan) publishes each robot as the walk leaves
+  its folder — favorites first, re-read from their own folders ahead of the
+  walk — and the home screen renders the growing library under the progress
+  bar instead of a dead spinner. Entries only ever appear or grow during the
+  roll-out; nothing is dropped until the final merged result says so.
+- **The library is a details view now.** Rows became dense aligned columns —
+  name · ip · last backup · saved · cams · status — under a sticky column
+  header; clicking name/ip/last-backup sorts, clicking the same column again
+  flips the direction (the caret says which way), and the old chrome-bar
+  sort button survives only in the cam lens, which has no columns. Each
+  plant (and the ★ favorites strip, whose rows render exactly like tree rows
+  — plant/line context rides the tooltip) is ONE bordered, frostable panel;
+  the per-row card chrome, its per-row backdrop-filter, and the hairlines
+  between robots are gone (separators belong to the line headers, robot
+  names sized with them). The robot model came out of the labels — it lives
+  in the row tooltip and the edit modal; only the small pills that identify
+  cameras remain. Selection boxes are hand-drawn now (an SVG mask painted by
+  the theme, star-sized, honest tri-state: box · box+X · box+dash). Notes
+  keep their inline editor as a dim second line; a running pull swaps the
+  row's data cells for its live progress bar. Row layout is flex on shared
+  column widths, deliberately not grid — a viewport shows ~50% more rows and
+  grid track resolution measured ~4× a flex pass on the 2400-row perf probe
+  (its editor-open budget is re-baselined to the new density and says so).
+- **Robots fold their cameras.** Linked cameras collapse behind a caret that
+  sits with the row controls (right of the favorite star), while the cams
+  column counts them — a number and a small camera glyph. The fold persists
+  per robot, the favorites strip honors the same fold, and a filter that
+  matches a hidden camera forces its robot open — a match never hides.
+  Camera rows gained a direct "link to robot…" action (the same picker the
+  edit modal uses, committing straight through the link endpoint), so
+  linking no longer requires the full edit form.
 - **"untaught positions" now catches `P[...]` too.** A motion line printed as
   `P[...]` carries no position id at all, so it matched neither the numbered
   `P[n]` reference nor the `P[R[..]]` indirect bucket — it slipped through

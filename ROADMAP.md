@@ -35,8 +35,16 @@ Each of these is deliberately scoped to land on its own. Good places to start.
   "move to → main window / <other window> / new window" menu on each tab, and
   a push so both windows repaint. Decided 2026-07-25 to ship the tear-off
   gesture first and leave this whole shape for its own slice.
-- 📋 **Workspace splash screen** — start the library load while the splash is
-  up, so the wait buys something instead of costing it.
+- ✅ **Library overhaul: incremental load + details view** — metadata edits
+  (rename, camera link, notes) no longer trigger full rescans; the listing
+  serves the cached library instantly and rescans on a background thread;
+  cold scans stream robots in as found, favorites first; the home screen
+  became a dense details view (aligned columns, sticky sortable header, one
+  frosted panel per plant) with linked cameras collapsed behind per-robot
+  expanders and a direct link-to-robot row action.
+- ~~📋 **Workspace splash screen**~~ — superseded by the library overhaul:
+  boot now serves the last-known library instantly and verifies behind it,
+  so there is no library wait left for a splash to hide.
 - 📋 **More scan checks** — simulated-IO-left-on, general override < 100%,
   alarm-frequency summary, controller clock drift, uninitialized PRs
   referenced by programs.
