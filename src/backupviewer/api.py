@@ -283,8 +283,11 @@ class Api:
         # (which rewrites the SAME Latest/ path) invalidates the cache.
         self._camera_sessions: dict[str, tuple] = {}
         self._lib_seeded = False  # _lib_sig lazily seeded from settings on the first listing
-        self._lib_progress = {"active": False, "done": 0, "total": 0, "current": ""}
+        self._lib_progress = {"active": False, "done": 0, "total": 0, "current": "",
+                              "entries": []}
         self._lib_progress_lock = threading.Lock()
+        self._scan_thread: threading.Thread | None = None  # the one background library scan
+        self._scan_thread_lock = threading.Lock()
 
     def bind(self, window, initial_backup: str | None = None):
         self._window = window
@@ -359,8 +362,10 @@ class Api:
                 # fire only when the tree differs from what the UI last saw:
                 # an app-initiated change (rename/merge/backup) refreshes the
                 # library itself, and re-notifying it produces a second,
-                # jarring repaint a few seconds after the first
-                if fire and sig != self._lib_sig:
+                # jarring repaint a few seconds after the first. A background
+                # rescan already in flight will push library-updated when it
+                # settles — piling library-dirty on top just double-paints.
+                if fire and sig != self._lib_sig and not self._scan_alive():
                     self._notify_library_changed()
             except Exception:  # noqa: BLE001 - the watcher must never die
                 log.exception("library watcher tick failed")
@@ -371,6 +376,19 @@ class Api:
             return
         try:
             w.evaluate_js("window.BV && BV.state && BV.state.emit && BV.state.emit('library-dirty')")
+        except Exception:  # noqa: BLE001 - window mid-teardown at app exit
+            pass
+
+    def _notify_library_updated(self):
+        """A background rescan settled: the cache is fresh, refetching is now
+        a ms-cheap cache read. (library-dirty means the opposite — the tree
+        changed and the cache is behind it.)"""
+        w = self._window
+        if w is None:
+            return
+        try:
+            w.evaluate_js(
+                "window.BV && BV.state && BV.state.emit && BV.state.emit('library-updated')")
         except Exception:  # noqa: BLE001 - window mid-teardown at app exit
             pass
 
@@ -2149,7 +2167,8 @@ class Api:
     @_endpoint
     def lib_link_camera(self, camera_id: str, robot_id: str = ""):
         """Link a camera to the robot it inspects (robot_id='' unlinks)."""
-        e = library.link_camera(camera_id, robot_id)
+        e = self._claim_tree_changes(
+            lambda: library.link_camera(camera_id, robot_id))
         if e is None:
             raise ApiError("NOT_FOUND", "camera not in library")
         return e
@@ -2158,7 +2177,7 @@ class Api:
     def lib_auto_link(self):
         """Auto-link unlinked cameras to robots by matching the station+robot in
         their names. Manual links are preserved. Returns linked/ambiguous/unmatched."""
-        return library.auto_link_cameras()
+        return self._claim_tree_changes(library.auto_link_cameras)
 
     # -- CV-X live remote-desktop (screen mirror + mouse) -----------------------------
     # A Keyence CV-X controller's live screen, mirrored over its custom TCP protocol
@@ -2839,7 +2858,7 @@ class Api:
         and return the reconciled set."""
         root = settings.library_root()
         data = self._scan_with_progress(root)
-        self._set_lib_sig(root, library.scan_signature(root))   # this scan IS the fresh baseline
+        self._set_lib_sig(root, library.settled_signature(root))   # this scan IS the fresh baseline
         return data
 
     def _saved_lib_sig(self) -> str | None:
@@ -2873,47 +2892,161 @@ class Api:
         except OSError:
             log.exception("could not persist the library signature")
 
+    def _seed_lib_sig(self) -> None:
+        """Adopt the previous run's persisted signature, once, lazily — so the
+        first listing (or the first mutation) starts from the boot baseline."""
+        if self._lib_sig is None and not self._lib_seeded:
+            self._lib_seeded = True
+            self._lib_sig = self._saved_lib_sig()
+
+    def _claim_tree_changes(self, mutate):
+        """Run a library mutation whose folder/sidecar writes are already
+        reflected into library.json by the operation itself (rename, merge,
+        camera link, config edit — they all update the entry in place AND
+        touch the tree). When the tree was CLEAN before the op, adopt the
+        post-op signature as the new baseline: the next lib_list serves the
+        cache the op just updated instead of paying a full rescan that would
+        only re-derive what the op already wrote (seconds of churn at plant
+        scale for a one-entry change, and the reason a rename used to blank
+        the library). A tree already dirty keeps its pending rescan — external
+        Explorer edits are never absorbed unseen. (A change landing DURING the
+        op's own window rides the claim — the same inherent race lib_list's
+        post-scan baseline accepts; any later touch re-dirties the tree, and
+        "refresh library" exists for exactly this.) Exceptions propagate
+        without claiming: a failed op leaves the tree dirty, so the next
+        listing rescans to the truth."""
+        root = settings.library_root()
+        self._seed_lib_sig()
+        before = library.scan_signature(root)
+        clean = bool(before) and before == self._lib_sig
+        result = mutate()
+        if clean:
+            # settled: a pre-flush mtime stored here would read as a phantom
+            # tree change on the very next listing — the rescan this exists
+            # to prevent. (A pre-flush `before` is harmless the other way:
+            # it fails the clean check and simply doesn't claim.)
+            self._set_lib_sig(root, library.settled_signature(root))
+        return result
+
     def _scan_with_progress(self, root):
         """library.scan_library_root with the shared progress snapshot raised so
-        lib_scan_progress polls (the home tab's loading bar) can watch it move."""
+        lib_scan_progress polls (the home tab's loading bar) can watch it move —
+        and, per robot the walk completes, an entry appended to the snapshot's
+        `entries` feed (favorites first), so a cold scan's UI can fill in the
+        library progressively instead of spinning."""
         def tick(done, total, current):
             with self._lib_progress_lock:
                 self._lib_progress.update(done=done, total=total, current=current)
+
+        def entry(g):
+            with self._lib_progress_lock:
+                self._lib_progress["entries"].append(g)
+
         with self._lib_progress_lock:
-            self._lib_progress.update(active=True, done=0, total=0, current="")
+            self._lib_progress.update(active=True, done=0, total=0, current="",
+                                      entries=[])
         try:
-            return library.scan_library_root(root, progress=tick)
+            return library.scan_library_root(root, progress=tick, on_entry=entry)
         finally:
             with self._lib_progress_lock:
                 self._lib_progress["active"] = False
 
     @_endpoint
-    def lib_scan_progress(self):
+    def lib_scan_progress(self, offset: int = 0):
         """The running library scan's snapshot (inactive zeros between scans) —
-        polled by the home tab while a lib_list/lib_rescan call is in flight."""
+        polled by the home tab while a scan is in flight. `offset` is how many
+        streamed entries the caller already holds: the reply carries only the
+        tail beyond it plus `count`, the new total — so the 400ms poll stays
+        small at plant scale."""
+        try:
+            off = max(0, int(offset or 0))
+        except (TypeError, ValueError):
+            off = 0
         with self._lib_progress_lock:
-            return dict(self._lib_progress)
+            p = dict(self._lib_progress)
+            ents = p.pop("entries", [])
+            p["count"] = len(ents)
+            p["entries"] = ents[off:]   # sliced under the lock: the scan thread appends
+        return p
+
+    def _scan_runner(self, root):
+        """One full rescan on the background thread. A tree that MOVED while
+        the walk ran (a rename mid-scan, an Explorer copy landing) can leave
+        the merged result reflecting the pre-move tree — so the walk repeats
+        until its start and end signatures agree, and only that quiesced
+        result is stamped as the current baseline. Never quiesces (a copy
+        still in flight) -> the signature stays stale, so the next listing
+        simply scans again. Always ends by telling the UI the cache settled."""
+        try:
+            for _ in range(3):
+                start = library.scan_signature(root)
+                self._scan_with_progress(root)
+                end = library.settled_signature(root)
+                if end == start:
+                    self._set_lib_sig(root, end)
+                    break
+        except Exception:  # noqa: BLE001 - a scan crash must not kill the app; sig stays stale
+            log.exception("background library scan failed")
+        finally:
+            with self._scan_thread_lock:
+                self._scan_thread = None
+            self._notify_library_updated()
+
+    def _scan_alive(self) -> bool:
+        with self._scan_thread_lock:
+            t = self._scan_thread
+            return t is not None and t.is_alive()
+
+    def _start_background_scan(self, root) -> None:
+        """Kick the one background rescan (no-op while one is running)."""
+        with self._scan_thread_lock:
+            if self._scan_thread is not None and self._scan_thread.is_alive():
+                return
+            t = threading.Thread(target=self._scan_runner, args=(str(root),),
+                                 name="libscan", daemon=True)
+            self._scan_thread = t
+            t.start()
 
     @_endpoint
     def lib_list(self):
-        """The library, freshly rescanned whenever the folder tree changed since
-        the last look (files are law - the tree IS the library, so Explorer
-        copies/deletes just show up). Unchanged tree -> the cached state, with
-        no scan and no library.json rewrite. An unreachable root always takes
-        the scan path, which serves the last known library marked stale."""
+        """The library. Unchanged tree -> the cached state, no scan, no
+        library.json rewrite. A changed tree (files are law - Explorer
+        copies/deletes just show up) -> the last-known library IMMEDIATELY,
+        stamped {"scanning": true}, with the rescan on a background thread;
+        a 'library-updated' push follows when the cache has settled, and the
+        refetch it triggers is a ms-cheap cache read. The one blocking case
+        left is a library with nothing to serve (virgin install / wiped
+        cache): an empty tree would be a lie, so that first scan is waited
+        out (the home tab draws its progress from lib_scan_progress). An
+        unreachable root serves the last known library with everything
+        pilled stale, scanning quietly behind it."""
         root = settings.library_root()
-        if self._lib_sig is None and not self._lib_seeded:
-            self._lib_seeded = True
-            self._lib_sig = self._saved_lib_sig()
+        self._seed_lib_sig()
         sig = library.scan_signature(root)
-        if sig != self._lib_sig or not sig:
+        if sig and sig == self._lib_sig:
+            return library.list_robots()
+        cached = library.list_robots()
+        if not cached.get("robots") or self._lib_sig is None:
+            # Nothing servable, or no baseline for THIS root (first-ever look,
+            # or a switched library root whose persisted stamp was refused):
+            # the cache can't honestly claim to be "the last known state of
+            # this tree", so the real scan is waited out - the one blocking
+            # case left, and the home tab draws its progress while it runs.
             data = self._scan_with_progress(root)
             # store the POST-scan signature: NTFS flushes directory-mtime
             # updates lazily, and the scan's own walk forces the flush - the
             # settled value is the one future listings will see.
-            self._set_lib_sig(root, library.scan_signature(root))
+            self._set_lib_sig(root, library.settled_signature(root))
             return data
-        return library.list_robots()
+        if self._backups_active():
+            # a running backup writes thousands of files into this tree —
+            # scanning under it is churn the watcher already refuses (it
+            # pauses for the same reason). Serve the cache quietly; the
+            # run's end triggers the refresh that scans for real.
+            return cached
+        self._start_background_scan(root)
+        cached["scanning"] = True
+        return cached
 
     def _materialize_robot_folder(self, e: dict) -> dict:
         """Files are law: a robot IS a folder. Ensure a just-added robot exists
@@ -2940,12 +3073,13 @@ class Api:
 
     @_endpoint
     def lib_add(self, entry: dict):
-        e = library.add_robot(entry or {})
-        return self._materialize_robot_folder(e)
+        return self._claim_tree_changes(
+            lambda: self._materialize_robot_folder(library.add_robot(entry or {})))
 
     @_endpoint
     def lib_update(self, robot_id: str, patch: dict):
-        e = library.update_robot(robot_id, patch or {})
+        e = self._claim_tree_changes(
+            lambda: library.update_robot(robot_id, patch or {}))
         if e is None:
             raise ApiError("NOT_FOUND", "robot not in library")
         return e
@@ -3183,33 +3317,40 @@ class Api:
         result rather than aborting the batch. Failures carry the robot's label and
         the reason ({id, robot, error}) - the UI shows them verbatim."""
         renamed, merged, failed = [], [], []
-        for it in (items or []):
-            rid = it.get("id")
-            e = library.get_robot(rid)
-            if e is None:
-                failed.append({"id": rid, "robot": it.get("robot", "") or str(rid),
-                               "error": "robot not in library"})
-                continue
-            label = e.get("robot", "") or str(rid)
-            plant = it.get("plant", e.get("plant", ""))
-            line = it.get("line", e.get("line", ""))
-            robot = it.get("robot", e.get("robot", ""))
-            target = str(library._robot_dir_for(library._root(), plant, line, robot))
-            self._release_sessions_under(e.get("history_root"), e.get("latest_path"), target)
-            try:
-                res = library.relocate_robot(rid, plant, line, robot)
-            except library.PathGuard as ex:
-                failed.append({"id": rid, "robot": label, "error": f"BAD_PATH: {ex}"})
-                continue
-            except (ValueError, OSError) as ex:
-                failed.append({"id": rid, "robot": label, "error": str(ex)})
-                continue
-            if res.get("action") == "blocked":
-                # the collision-merge had nothing to fold: the move did NOT happen
-                failed.append({"id": rid, "robot": label,
-                               "error": "not merged: " + res.get("reason", "")})
-                continue
-            (merged if res.get("action") == "merged" else renamed).append(res)
+
+        def apply():
+            for it in (items or []):
+                rid = it.get("id")
+                e = library.get_robot(rid)
+                if e is None:
+                    failed.append({"id": rid, "robot": it.get("robot", "") or str(rid),
+                                   "error": "robot not in library"})
+                    continue
+                label = e.get("robot", "") or str(rid)
+                plant = it.get("plant", e.get("plant", ""))
+                line = it.get("line", e.get("line", ""))
+                robot = it.get("robot", e.get("robot", ""))
+                target = str(library._robot_dir_for(library._root(), plant, line, robot))
+                self._release_sessions_under(e.get("history_root"), e.get("latest_path"), target)
+                try:
+                    res = library.relocate_robot(rid, plant, line, robot)
+                except library.PathGuard as ex:
+                    failed.append({"id": rid, "robot": label, "error": f"BAD_PATH: {ex}"})
+                    continue
+                except (ValueError, OSError) as ex:
+                    failed.append({"id": rid, "robot": label, "error": str(ex)})
+                    continue
+                if res.get("action") == "blocked":
+                    # the collision-merge had nothing to fold: the move did NOT happen
+                    failed.append({"id": rid, "robot": label,
+                                   "error": "not merged: " + res.get("reason", "")})
+                    continue
+                (merged if res.get("action") == "merged" else renamed).append(res)
+
+        # one claim for the whole batch: every successful move is already in
+        # library.json, and a per-item failure is safe to claim over because a
+        # failed relocate moves nothing (transactional — source left intact)
+        self._claim_tree_changes(apply)
         return {"renamed": renamed, "merged": merged, "failed": failed}
 
     @_endpoint
@@ -3220,27 +3361,31 @@ class Api:
         if isinstance(secondary_ids, str):
             secondary_ids = [secondary_ids]
         merged, refused, failed, blocked = [], [], [], []
-        for sid in (secondary_ids or []):
-            prim, sec = library.get_robot(primary_id), library.get_robot(sid)
-            if prim is None or sec is None:
-                failed.append({"id": sid, "error": "robot not in library"})
-                continue
-            self._release_sessions_under(prim.get("history_root"), prim.get("latest_path"),
-                                         sec.get("history_root"), sec.get("latest_path"))
-            try:
-                res = library.merge_robots(primary_id, sid)
-            except library.PathGuard as ex:
-                failed.append({"id": sid, "error": f"BAD_PATH: {ex}"})
-                continue
-            except (ValueError, OSError) as ex:
-                failed.append({"id": sid, "error": str(ex)})
-                continue
-            if res.get("action") == "refused":
-                refused.append(res)
-            elif res.get("action") == "blocked":
-                blocked.append(res)
-            else:
-                merged.append(res)
+
+        def apply():
+            for sid in (secondary_ids or []):
+                prim, sec = library.get_robot(primary_id), library.get_robot(sid)
+                if prim is None or sec is None:
+                    failed.append({"id": sid, "error": "robot not in library"})
+                    continue
+                self._release_sessions_under(prim.get("history_root"), prim.get("latest_path"),
+                                             sec.get("history_root"), sec.get("latest_path"))
+                try:
+                    res = library.merge_robots(primary_id, sid)
+                except library.PathGuard as ex:
+                    failed.append({"id": sid, "error": f"BAD_PATH: {ex}"})
+                    continue
+                except (ValueError, OSError) as ex:
+                    failed.append({"id": sid, "error": str(ex)})
+                    continue
+                if res.get("action") == "refused":
+                    refused.append(res)
+                elif res.get("action") == "blocked":
+                    blocked.append(res)
+                else:
+                    merged.append(res)
+
+        self._claim_tree_changes(apply)
         return {"merged": merged, "refused": refused, "blocked": blocked, "failed": failed}
 
     @_endpoint
@@ -3253,7 +3398,8 @@ class Api:
         target = str(library._robot_dir_for(library._root(), plant, line, robot))
         self._release_sessions_under(e.get("history_root"), e.get("latest_path"), target)
         try:
-            return library.relocate_robot(robot_id, plant, line, robot)
+            return self._claim_tree_changes(
+                lambda: library.relocate_robot(robot_id, plant, line, robot))
         except library.PathGuard as ex:
             raise ApiError("BAD_PATH", str(ex))
         except ValueError as ex:
@@ -3577,13 +3723,16 @@ class Api:
         except OSError as ex:
             raise ApiError("BAD_PATH",
                            f"could not create the library folder {root}: {ex}")
-        res = library.bulk_add(entries or [], plant=plant, line=line)
-        materialized = []
-        for e in res.get("added", []):
-            try:
-                materialized.append(self._materialize_robot_folder(e))
-            except ApiError as ex:
-                log.warning("could not create folder for %r: %s", e.get("robot", ""), ex)
-                materialized.append(e)
-        res["added"] = materialized
-        return res
+        def apply():
+            res = library.bulk_add(entries or [], plant=plant, line=line)
+            materialized = []
+            for e in res.get("added", []):
+                try:
+                    materialized.append(self._materialize_robot_folder(e))
+                except ApiError as ex:
+                    log.warning("could not create folder for %r: %s", e.get("robot", ""), ex)
+                    materialized.append(e)
+            res["added"] = materialized
+            return res
+
+        return self._claim_tree_changes(apply)

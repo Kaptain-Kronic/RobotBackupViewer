@@ -651,7 +651,64 @@ def scan_signature(root: str | Path) -> str:
     return h.hexdigest()
 
 
-def _scan_disk(root: Path, stats: dict | None = None, progress=None, expect: int = 0) -> tuple:
+def settled_signature(root: str | Path, tries: int = 5) -> str:
+    """scan_signature re-walked until two consecutive reads agree. NTFS flushes
+    directory-mtime updates lazily, so the first walk right after writes can
+    observe pre-flush values (the walk itself nudges the flush along). Callers
+    that STORE a signature as a baseline want the settled value — the one
+    future listings will see — or the very next look reads as a phantom tree
+    change and pays a rescan for nothing."""
+    s = scan_signature(root)
+    for _ in range(tries):
+        s2 = scan_signature(root)
+        if s2 == s:
+            return s
+        s = s2
+    return s
+
+
+def _finalize_group(g: dict) -> dict:
+    """A walk group shaped for consumers: `_snaps` becomes backups[] newest-
+    first with latest_path/last_backup derived (partials never latest). Copies
+    — the walk's own group keeps accumulating (an absorbed twin folder later
+    in the walk may still add snapshots)."""
+    out = {k: v for k, v in g.items() if k != "_snaps"}
+    snaps = sorted(g.get("_snaps", []), key=lambda b: b.get("taken", ""), reverse=True)
+    out["backups"] = snaps
+    newest = _pick_latest(snaps)
+    out["latest_path"] = newest["path"] if newest else ""
+    out["last_backup"] = newest["taken"] if newest else ""
+    return out
+
+
+def _favorite_preview(e: dict) -> dict | None:
+    """A display-ready copy of a favorite's last-known entry, its backups
+    freshly re-read from its own folder — published ahead of the walk so
+    starred robots land first on a cold/blocking scan. Preview only: the
+    walk republishes this folder authoritatively and the final merge is
+    unaffected. None when the folder is unreachable (preview must not claim
+    a robot the walk may be about to drop)."""
+    d = Path(e.get("history_root") or "")
+    if not d.is_dir():
+        return None
+    snaps = _scan_robot_backups(d)
+    g = {
+        "id": e.get("id", ""), "plant": e.get("plant", ""), "line": e.get("line", ""),
+        "robot": e.get("robot", ""), "device_type": e.get("device_type", "robot"),
+        "linked_robot_id": e.get("linked_robot_id", ""), "model": e.get("model", ""),
+        "f_number": e.get("f_number", ""), "ips": list(e.get("ips", []) or []),
+        "notes": e.get("notes", ""), "history_root": str(d),
+        "hidden": bool(e.get("hidden")), "favorite": True,
+        "backups": snaps,
+    }
+    newest = _pick_latest(snaps)
+    g["latest_path"] = newest["path"] if newest else ""
+    g["last_backup"] = newest.get("taken", "") if newest else ""
+    return g
+
+
+def _scan_disk(root: Path, stats: dict | None = None, progress=None, expect: int = 0,
+               on_entry=None) -> tuple:
     """Walk the tree for backup snapshots and group them by robot. Identity is
     the folder's LOCATION (<root>/[plant/]<line>/<robot> — files are law);
     sidecars supply id + config only. Also surfaces the folder skeleton: robot
@@ -659,12 +716,18 @@ def _scan_disk(root: Path, stats: dict | None = None, progress=None, expect: int
     folders inside plants. Read-only. Returns ({key: disk_entry} with backups[]
     newest-first, {"plants": [...], "lines": [{plant, line}]}).
     `progress(done, total, current)` ticks once per snapshot read; `expect` is
-    the previous scan's snapshot count (0 = first ever, total unknown)."""
+    the previous scan's snapshot count (0 = first ever, total unknown).
+    `on_entry(group)`, when given, is called with a finalized COPY of each
+    robot group as the walk leaves its folder (and per skeleton robot) — the
+    progressive feed a cold-scan UI renders while the walk runs. Entries only
+    ever appear or grow through this feed; nothing is dropped by it (a missing
+    robot means "not reached yet", and deletions settle in the final merge)."""
     from . import session  # local import: avoids any import-time coupling
 
     groups: dict = {}
     sidecars: dict = {}   # robot_dir -> parsed sidecar: one read per robot, not per snapshot
     done = 0
+    prev_g: dict | None = None   # the group the walk is currently filling (for on_entry)
 
     def _tick(current: str) -> None:
         if progress:
@@ -721,7 +784,15 @@ def _scan_disk(root: Path, stats: dict | None = None, progress=None, expect: int
             # spawning a twin. Count them so the scan can SAY so; silent absorption
             # reads as "my copied folder never showed up".
             g["_absorbed"] = g.get("_absorbed", 0) + 1
+        # the walk moved on to another robot: the one it just left is complete
+        # (an absorbed twin later in the walk republishes it, grown)
+        if on_entry is not None and prev_g is not None and g is not prev_g:
+            on_entry(_finalize_group(prev_g))
+        prev_g = g
         g["_snaps"].append(_backup_record(snap, meta))
+
+    if on_entry is not None and prev_g is not None:
+        on_entry(_finalize_group(prev_g))              # the walk's last robot
 
     # second pass: the folder SKELETON. The tree the user built in Explorer IS
     # the library: a folder at robot depth is a robot even with no backups yet
@@ -768,6 +839,8 @@ def _scan_disk(root: Path, stats: dict | None = None, progress=None, expect: int
             "aliases": list(rj.get("aliases", []) or []),
             "history_root": str(c), "_snaps": [],
         }
+        if on_entry is not None:
+            on_entry(_finalize_group(groups[key]))     # skeleton robots stream too
 
     def _sidecar(d: Path) -> dict | None:
         """The folder's robot.json ({} when unreadable) — None when the file is
@@ -801,14 +874,7 @@ def _scan_disk(root: Path, stats: dict | None = None, progress=None, expect: int
                 if p3 not in seen_dirs:
                     _add_skeleton_robot(p3, _sidecar(p3) or {})
 
-    out: dict = {}
-    for key, g in groups.items():
-        snaps = sorted(g.pop("_snaps"), key=lambda b: b.get("taken", ""), reverse=True)
-        g["backups"] = snaps
-        newest = _pick_latest(snaps)
-        g["latest_path"] = newest["path"] if newest else ""
-        g["last_backup"] = newest["taken"] if newest else ""
-        out[key] = g
+    out = {key: _finalize_group(g) for key, g in groups.items()}
     return out, {"plants": sorted(empty_plants),
                  "lines": sorted(empty_lines, key=lambda x: (x["plant"], x["line"]))}
 
@@ -919,7 +985,7 @@ def _merge_scan(data: dict, scanned: dict, absorbed: list | None = None) -> set:
     return applied
 
 
-def scan_library_root(root: str | Path, progress=None) -> dict:
+def scan_library_root(root: str | Path, progress=None, on_entry=None) -> dict:
     """Rebuild the library from the backup folder tree — THE source of truth.
     A robot exists because its folder exists: folders found on disk are
     added/refreshed (overlay data like the hidden flag and user edits survive
@@ -932,15 +998,51 @@ def scan_library_root(root: str | Path, progress=None) -> dict:
 
     `progress(done, total, current)`, when given, ticks as snapshots are read —
     total is the previous scan's snapshot count (an estimate; 0 = first ever),
-    so a boot-time progress bar has something honest to draw."""
+    so a boot-time progress bar has something honest to draw.
+
+    `on_entry(entry)`, when given, streams a display-ready copy of each robot
+    as the walk completes its folder — favorites (from the last-known overlay)
+    are published FIRST, so a cold scan's UI fills starred robots before the
+    walk reaches them. The stream only ever adds or grows entries (same key =
+    newer copy); drops are decided solely by the final merged result."""
     root = Path(root)
+    scanned = empty_folders = None
+    stats: dict = {}
+    if root.is_dir():
+        # The slow disk walk runs OUTSIDE the lock: with the scan on a
+        # background thread, a rename/note edit landing mid-walk must not
+        # block behind the whole walk. The merge below re-loads under the
+        # lock, so it folds onto the freshest overlay; a folder the walk saw
+        # at its pre-move path merges stale, which the scan runner detects
+        # (its start/end signatures differ) and answers with another pass —
+        # a stale result is never stamped as the current baseline.
+        with _LOCK:
+            data0 = load()
+            expect = sum(len(e.get("backups", []) or []) for e in data0.get("robots", []))
+            # overlay bits the stream folds onto walked groups for DISPLAY
+            # (the real merge does this authoritatively at the end)
+            flags = {e["id"]: (bool(e.get("hidden")), bool(e.get("favorite")))
+                     for e in data0.get("robots", []) if e.get("id")}
+            favs = [e for e in data0.get("robots", [])
+                    if e.get("favorite") and e.get("history_root")] if on_entry else []
+        publish = None
+        if on_entry is not None:
+            for e in favs:                             # starred robots land first
+                pv = _favorite_preview(e)
+                if pv is not None:
+                    on_entry(pv)
+
+            def publish(g):
+                g.pop("_absorbed", None)               # walk bookkeeping, not display
+                h, f = flags.get(g.get("id") or "", (False, False))
+                g["hidden"], g["favorite"] = h, f
+                on_entry(g)
+        scanned, empty_folders = _scan_disk(root, stats, progress=progress, expect=expect,
+                                            on_entry=publish)
     with _LOCK:
         data = load()
         absorbed_raw: list = []
-        if root.is_dir():
-            stats: dict = {}
-            expect = sum(len(e.get("backups", []) or []) for e in data.get("robots", []))
-            scanned, empty_folders = _scan_disk(root, stats, progress=progress, expect=expect)
+        if scanned is not None:
             data["empty_folders"] = empty_folders
             # snapshots folded into a robot by IDENTITY while living in another
             # folder (a copied tree carrying its robot.json) — pull the counts
