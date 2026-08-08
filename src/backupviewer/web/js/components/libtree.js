@@ -38,6 +38,12 @@
                                BV.libTree.defaultMatches is exposed so a custom
                                matcher can extend it instead of re-listing fields)
        noun: "cameras"         what the no-match note calls the rows ("robots")
+       nestOpen(robotId)->bool linked cameras render under their robot only
+                               while this says so (the caller owns fold state;
+                               a live filter that matches a nested camera
+                               forces its robot open so matches never hide).
+                               Omit for the legacy always-expanded nesting
+                               (the pickers keep their flat look).
        skeleton: true          show the "empty plant/line folder" notes (the
                                files-are-law skeleton; leave off for pickers)
        counts: true            robot-count badge on plant + line heads (for
@@ -173,7 +179,11 @@
             /* nest linked cameras under the robot they inspect (same line);
                unlinked cameras and cross-line links stay at top level so
                nothing disappears. visible gets the NESTED order — it must
-               match what the user sees for shift+click ranges */
+               match what the user sees for shift+click ranges. With a
+               nestOpen owner, a robot's cameras render only while its fold
+               is open (or a live filter matches one of them — a match must
+               never hide); collapsed cameras are NOT in visible, exactly
+               like rows inside a folded line. */
             var lineRobotIds = {};
             lineRobots.forEach(function (r) {
               if ((r.device_type || "robot") === "robot") lineRobotIds[r.id] = 1;
@@ -183,11 +193,17 @@
               if (isCam && r.linked_robot_id && lineRobotIds[r.linked_robot_id]) return;
               visible.push(r);
               lineBody.appendChild(opts.row(r));
-              lineRobots.forEach(function (c) {
-                if ((c.device_type || "").indexOf("camera") === 0 && c.linked_robot_id === r.id) {
-                  visible.push(c);
-                  lineBody.appendChild(opts.row(c, true));
-                }
+              var cams = lineRobots.filter(function (c) {
+                return (c.device_type || "").indexOf("camera") === 0 &&
+                  c.linked_robot_id === r.id;
+              });
+              if (!cams.length) return;
+              var open = !opts.nestOpen || opts.nestOpen(r.id) ||
+                (!!q && cams.some(function (c) { return matches(c, q); }));
+              if (!open) return;
+              cams.forEach(function (c) {
+                visible.push(c);
+                lineBody.appendChild(opts.row(c, true));
               });
             });
             fold(lineNode, lineHead, lineBody, key, "line", !!q);

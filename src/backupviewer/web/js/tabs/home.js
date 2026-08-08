@@ -32,7 +32,14 @@
   var _camTimer = null;         /* multi-cam live-image refresher (self-stops off-screen) */
   var _camRobotNames = {};      /* robot id -> name, for the tiles' "↳ robot" note */
 
-  var SORT_LABELS = { name: "name", ip: "IP", date: "last backup" };
+  var SORT_LABELS = { name: "name", ip: "IP", date: "last backup",
+                      saved: "saved", cams: "cams", status: "status" };
+  /* each column's natural first direction: names/IPs read A-to-Z; dates read
+     newest-first (that is what a tech means by "sort by last backup"); the
+     magnitude columns read most-first; status reads worst-first (triage) */
+  var SORT_DEFAULT_DIR = { name: "asc", ip: "asc", date: "desc",
+                           saved: "desc", cams: "desc", status: "desc" };
+  var _sortDir = "";            /* asc | desc; lazily read from settings (lib_sort_dir) */
   var CAM_REFRESH_MS = 2000;    /* live tile refresh — a beat gentler than the HMI's 1s */
 
   function sortMode() {
@@ -43,12 +50,31 @@
     return _sortMode;
   }
 
+  function sortDir() {
+    if (!_sortDir) {
+      _sortDir = ((BV.state.settings || {}).lib_sort_dir) || SORT_DEFAULT_DIR[sortMode()];
+      if (_sortDir !== "asc" && _sortDir !== "desc") _sortDir = "asc";
+    }
+    return _sortDir;
+  }
+
   function setSortMode(mode) {
-    _sortMode = mode;
-    if (BV.state.settings) BV.state.settings.lib_sort = mode;
-    BV.api.call("set_setting", "lib_sort", mode).catch(function () {});
+    if (mode === sortMode()) {
+      /* same column again = flip the direction (the Explorer convention the
+         column headers promise) */
+      _sortDir = sortDir() === "asc" ? "desc" : "asc";
+    } else {
+      _sortMode = mode;
+      _sortDir = SORT_DEFAULT_DIR[mode] || "asc";
+    }
+    if (BV.state.settings) {
+      BV.state.settings.lib_sort = _sortMode;
+      BV.state.settings.lib_sort_dir = _sortDir;
+    }
+    BV.api.call("set_setting", "lib_sort", _sortMode).catch(function () {});
+    BV.api.call("set_setting", "lib_sort_dir", _sortDir).catch(function () {});
     var b = _libWrap && _libWrap.querySelector(".lib-sort");
-    if (b) b.textContent = "sort: " + SORT_LABELS[mode];   /* head persists across refreshes */
+    if (b) b.textContent = "sort: " + SORT_LABELS[_sortMode];   /* head persists across refreshes */
     /* sorting is client-side ordering: re-render the cached listing. Hitting
        lib_list here forced a full rescan whenever the tree had changed — and
        DURING a mass backup the tree changes every second, so flipping the sort
@@ -89,6 +115,10 @@
     /* (the selection count hides itself whenever the selection is empty -
        syncToolbar - which covers the cam lens for free: tiles can't select) */
     if (_filterBox) _filterBox.input.placeholder = cam ? "filter cameras…" : "filter robots…";
+    /* the backup lens sorts by its column headers now — the chrome button
+       stays only for the cam lens, which has no columns to click */
+    var sb = _tslot && _tslot.querySelector(".lib-sort");
+    if (sb) sb.classList.toggle("hidden", !cam);
   }
 
   function nameCmp(a, b) { return (a.robot || "").localeCompare(b.robot || ""); }
@@ -99,23 +129,85 @@
     return (+m[1]) * 16777216 + (+m[2]) * 65536 + (+m[3]) * 256 + (+m[4]);
   }
 
+  /* severity for the status-column sort — worst first under its default desc:
+     folder missing > newest snapshot partial > never backed up > ok. Derived
+     from the same facts the row's pills show. */
+  function statusRank(r) {
+    if (r.stale) return 3;
+    if (r.backups && r.backups.length && r.backups[0].partial) return 2;
+    if (!r.latest_path && !(r.backups && r.backups.length)) return 1;
+    return 0;
+  }
+
   function robotComparator() {
     var mode = sortMode();
+    var dir = sortDir() === "desc" ? -1 : 1;
+    var base = nameCmp;
     if (mode === "ip") {
-      return function (a, b) {
+      base = function (a, b) {
         var ia = ipNum(a), ib = ipNum(b);
         if (ia !== ib) return ia < ib ? -1 : 1;      /* octet-numeric, not lexicographic */
         return nameCmp(a, b);
       };
-    }
-    if (mode === "date") {
-      return function (a, b) {
+    } else if (mode === "date") {
+      base = function (a, b) {
+        /* ascending base (oldest first); the default desc direction flips it
+           to newest-first with never-backed-up ("") sinking last, exactly the
+           old single-direction behavior */
         var da = a.last_backup || "", db = b.last_backup || "";
-        if (da !== db) return da < db ? 1 : -1;      /* ISO strings: newest first, never-backed-up last */
+        if (da !== db) return da < db ? -1 : 1;
+        return nameCmp(a, b);
+      };
+    } else if (mode === "saved") {
+      base = function (a, b) {
+        var na = (a.backups || []).length, nb = (b.backups || []).length;
+        if (na !== nb) return na - nb;
+        return nameCmp(a, b);
+      };
+    } else if (mode === "cams") {
+      /* _camCounts is rebuilt at the top of every tree paint, before any
+         comparator runs — cameras themselves count 0 and fall to names */
+      base = function (a, b) {
+        var ca = _camCounts[a.id] || 0, cb = _camCounts[b.id] || 0;
+        if (ca !== cb) return ca - cb;
+        return nameCmp(a, b);
+      };
+    } else if (mode === "status") {
+      base = function (a, b) {
+        var sa = statusRank(a), sb = statusRank(b);
+        if (sa !== sb) return sa - sb;
         return nameCmp(a, b);
       };
     }
-    return nameCmp;
+    return dir === 1 ? base : function (a, b) { return -base(a, b); };
+  }
+
+  /* ---- linked-camera folds ----
+     A robot COLLAPSES its linked cameras by default (the cams cell's ▸ opens
+     them) so the list is robots-first; per-robot state persists like the
+     tree folds. A live filter matching a camera forces its robot open in
+     libtree — a match must never hide. */
+  var _camFolds = null;                 /* robotId -> true(open); null = not hydrated */
+
+  function camFolds() {
+    if (_camFolds === null) {
+      var saved = (BV.state.settings || {}).lib_cam_folds;
+      _camFolds = (saved && typeof saved === "object") ? Object.assign({}, saved) : {};
+    }
+    return _camFolds;
+  }
+
+  var _saveCamFolds = BV.debounce(function () {
+    if (BV.state.settings) BV.state.settings.lib_cam_folds = camFolds();
+    BV.api.call("set_setting", "lib_cam_folds", camFolds()).catch(function () {});
+  }, 500);
+
+  function camFoldOpen(robotId) { return !!camFolds()[robotId]; }
+
+  function toggleCamFold(robotId) {
+    camFolds()[robotId] = !camFolds()[robotId];
+    _saveCamFolds();
+    rerenderFromCache();
   }
 
   /* the shared library tree renders the PLANT -> LINE folders (grouping, sort,
@@ -125,6 +217,7 @@
   var _tree = BV.libTree({
     skeleton: true,
     persistKey: "lib_folds",
+    nestOpen: camFoldOpen,
     row: function (r, nested) { return robotRow(r, nested); },
     /* line header extras = the select-all box only; action buttons live ONCE
        in the sticky library header (with 50+ lines, per-line rows ate the screen) */
@@ -175,18 +268,46 @@
   /* poll the backend's library-scan snapshot into `el` while a lib_list /
      lib_rescan call is in flight; returns stop(). The first look at a plant-
      scale tree is a full rescan (10s+), and a dead "loading…" reads as a
-     crash - this shows the scan actually moving (done/total · current robot). */
-  function watchScanProgress(el) {
+     crash - this shows the scan actually moving (done/total · current robot).
+     `onEntries(list)`, when given, receives the scan's streamed robot entries
+     (favorites first) — the offset cursor keeps each poll's payload to the
+     tail the caller hasn't seen. */
+  function watchScanProgress(el, onEntries) {
+    var got = 0;                       /* entries already received (the cursor) */
     var iv = setInterval(function () {
-      BV.api.call("lib_scan_progress").then(function (p) {
+      BV.api.call("lib_scan_progress", got).then(function (p) {
         if (!p || !p.active) return;   /* signature check / cache path: keep the quiet label */
         renderScanBar(el, {
           status: "scanning", scanned: p.done, total: p.total, current: p.current,
           found: p.total ? 0 : p.done, /* first-ever scan has no estimate: show a count instead */
         });
+        if (typeof p.count === "number") got = p.count;
+        if (onEntries && p.entries && p.entries.length) onEntries(p.entries);
       }).catch(function () {});        /* no bridge / transient: stay quiet */
     }, 400);
     return function stop() { clearInterval(iv); };
+  }
+
+  /* The cache-first listing (data.scanning) keeps the tree on screen while a
+     background rescan runs; this slim strip above it shows the scan moving.
+     Re-synced after every tree paint — the tree render wipes the body, and a
+     poll left pointing at a detached strip would tick into nothing. */
+  var _isScanning = false;      /* last lib_list said a background scan is running */
+  var _stopScanWatch = null;    /* the strip's progress poll, if ticking */
+
+  function syncScanStrip(body) {
+    var old = body.querySelector(".home-lib-scanstrip");
+    if (!_isScanning) {
+      if (_stopScanWatch) { _stopScanWatch(); _stopScanWatch = null; }
+      if (old) old.remove();
+      return;
+    }
+    if (old) return;                       /* already ticking on this body */
+    if (_stopScanWatch) _stopScanWatch();  /* was ticking on a wiped body */
+    var strip = BV.el("div", { class: "home-lib-loading home-lib-scanstrip" },
+      '<div class="dim">rescanning library…</div>');
+    body.insertBefore(strip, body.firstChild);
+    _stopScanWatch = watchScanProgress(strip);
   }
 
   function loadLibrary() {
@@ -201,18 +322,43 @@
       var loading = BV.el("div", { class: "home-lib-loading" },
         '<div class="dim">checking library…</div>');
       body.appendChild(loading);
-      stopProgress = watchScanProgress(loading);
+      /* a COLD scan (nothing cached: virgin install, wiped cache, switched
+         root) blocks lib_list for the whole walk — but the scan streams each
+         robot as its folder completes, favorites first, so the library fills
+         in under the bar instead of hiding behind a spinner. The resolved
+         lib_list below repaints the settled truth over this. */
+      var holder = BV.el("div", { class: "home-lib-coldtree" });
+      body.appendChild(holder);
+      var acc = {};                              /* stream key -> latest entry copy */
+      var lastPaint = 0;
+      stopProgress = watchScanProgress(loading, function (ents) {
+        ents.forEach(function (g) {
+          var key = g.id ||
+            ((g.plant || "") + "|" + (g.line || "") + "|" + (g.robot || ""));
+          if (!g.id) g.id = "pending:" + key;    /* anchors/checkboxes need an id */
+          acc[key] = g;                          /* same robot again = newer copy */
+        });
+        var now = Date.now();
+        if (now - lastPaint < 900) return;       /* growing-tree paints stay cheap */
+        lastPaint = now;
+        if (!document.body.contains(holder)) return;
+        renderTree(holder, {
+          robots: Object.keys(acc).map(function (k) { return acc[k]; }),
+        });
+      });
     }
 
     BV.api.call("lib_list").then(function (data) {
       if (stopProgress) stopProgress();
       _robots = (data && data.robots) || [];
       _lastData = data;
+      _isScanning = !!(data && data.scanning);
       /* repaint IN PLACE: the old tree stays on screen until the new one is
          built, and the scroll position survives — refreshes (post-action or
          watcher-triggered) stop flashing and jumping back to the top */
       saveLensScroll();
       renderTree(body, data);
+      syncScanStrip(body);
       restoreLensScroll();
       reattachProgress();   /* repaint any backups already running */
       if (data && data.scan_truncated && !_warnedTruncated) {
@@ -389,10 +535,27 @@
   /* the backend watcher saw the library folder change on disk (Explorer copy /
      delete). Refresh only when it's safe and useful: on the library screen,
      no modal open, no backups being started from here. */
-  BV.state.on("library-dirty", function () {
+  /* is a quiet in-place repaint welcome right now? Shared by both push
+     handlers below: only on the library screen, never under a modal or an
+     open context menu (a repaint replaces every row - yanking the DOM out
+     from under a menu the user is aiming at), never mid-backup-run (the
+     run's end refreshes). A skipped refresh costs nothing: the next mount
+     or action lists fresh anyway. */
+  function refreshWelcome() {
     var onHome = !location.hash || location.hash === "#" || location.hash === "#home";
-    if (!onHome || BV.modalOpen() || BV.jobs.activeCount()) return;
-    refresh();
+    return onHome && !BV.modalOpen() && !document.querySelector(".ctx-menu") &&
+      !BV.jobs.activeCount();
+  }
+
+  BV.state.on("library-dirty", function () {
+    if (refreshWelcome()) refresh();
+  });
+
+  /* the background rescan settled: the cache is fresh and this refetch is a
+     ms-cheap cache read landing through the anchored in-place repaint. */
+  BV.state.on("library-updated", function () {
+    _isScanning = false;
+    if (refreshWelcome()) refresh();
   });
 
   /* per-row progress bars: painted from the global jobs poller's events
@@ -451,6 +614,7 @@
     if (!body || !_lastData) { refresh(); return; }
     saveLensScroll();
     renderTree(body, _lastData);
+    syncScanStrip(body);   /* a lens/sort/filter repaint mid-rescan keeps the strip */
     restoreLensScroll();
     reattachProgress();
   }
@@ -581,7 +745,15 @@
     favs.forEach(function (r) {
       bodyEl.appendChild(robotRow(r, false, { where: true }));
       total++;
-      (camsByRobot[r.id] || []).sort(robotComparator()).forEach(function (c) {
+      var rides = camsByRobot[r.id] || [];
+      if (!rides.length) return;
+      /* ride-along cameras honor the same per-robot fold as the tree (and
+         the same filter-forces-open rule) — one expander, one truth */
+      var open = camFoldOpen(r.id) || (!!q && rides.some(function (c) {
+        return BV.libTree.defaultMatches(c, q);
+      }));
+      if (!open) return;
+      rides.sort(robotComparator()).forEach(function (c) {
         bodyEl.appendChild(robotRow(c, true, { where: true }));
         total++;
       });
@@ -598,6 +770,36 @@
       },
     });
     return node;
+  }
+
+  /* the sticky column-label row — Explorer's details header. One per render,
+     on the shared --librow-grid template so labels align with every panel's
+     cells; name / ip / last click through to the existing sort modes. */
+  function columnsRow() {
+    var cols = BV.el("div", { class: "home-lib-cols" });
+    var mode = sortMode();
+    var caret = sortDir() === "asc" ? " ▴" : " ▾";
+    /* [label, sortMode, the row cells' sizing class — shared, so the labels
+       sit exactly over their columns] */
+    [["", null, "lib-cell-ctl"], ["name", "name", "lib-cell-name"],
+     ["ip", "ip", "lib-cell-ip"], ["last backup", "date", "lib-cell-last"],
+     ["saved", "saved", "lib-cell-saved"], ["cams", "cams", "lib-cell-cams"],
+     ["status", "status", "lib-cell-status"], ["", null, "lib-robot-acts"]]
+      .forEach(function (c) {
+        var label = c[0], sk = c[1], size = c[2];
+        var cell;
+        if (sk) {
+          cell = BV.el("button", { class: "hlc-cell hlc-sort " + size +
+            (mode === sk ? " on" : ""),
+            title: "sort by " + (label || sk) + " (again to flip)" },
+            label + (mode === sk ? caret : ""));
+          cell.addEventListener("click", function () { setSortMode(sk); });
+        } else {
+          cell = BV.el("span", { class: "hlc-cell " + size }, label);
+        }
+        cols.appendChild(cell);
+      });
+    return cols;
   }
 
   function renderTree(body, data) {
@@ -653,9 +855,11 @@
     var res = _tree.render(body,
       { robots: shownList, emptyPlants: emptyPlants, emptyLines: emptyLines },
       { q: _filter, cmp: robotComparator() });
-    /* favorites pin ABOVE the tree (the tree render just wiped `body`) */
+    /* favorites pin ABOVE the tree (the tree render just wiped `body`), and
+       the column-label header above everything */
     var favNode = favSection(shownList);
     if (favNode) body.insertBefore(favNode, body.firstChild);
+    body.insertBefore(columnsRow(), body.firstChild);
     /* the tree returns the robots IN RENDER ORDER (sorted groups + sorted
        robots), not cache order — anything order-sensitive (shift+click
        ranges) must see the list exactly as the user does */
@@ -664,22 +868,25 @@
     _cl.sync();
   }
 
-  /* opts (favorites-strip copies): where = show plant/line in the meta (a
+  /* opts (favorites-strip copies): where = show plant/line under the name (a
      pinned row is far from its folders). Strip rows are FULL rows — checkbox
      included, so backup-the-selection works straight from favorites (the
-     checklist repaints every bound copy of a key). */
+     checklist repaints every bound copy of a key).
+
+     One row = one grid line on the shared --librow-grid template:
+     [ctl] [name(+model/pill, where, note)] [ip] [last] [saved] [cams] [status] [⋯]
+     — the details-view columns; the live progress bar overlays ip..status. */
   function robotRow(r, nested, opts) {
     opts = opts || {};
     var row = BV.el("div", { class: "lib-robot" + (r.stale ? " stale" : "") +
       (r.hidden ? " hidden-robot" : "") + (nested ? " lib-robot-nested" : "") });
-    if (nested) row.style.cssText =
-      "margin-left:1.6rem;border-left:2px solid var(--sub-alt);padding-left:0.6rem";
     row.setAttribute("data-robot-id", r.id);
 
+    var ctl = BV.el("span", { class: "lib-cell lib-cell-ctl" });
     var cb = BV.el("input", { type: "checkbox", class: "lf-check lib-check",
       title: "select (shift+click selects a range)" });
     _cl.bind(cb, r.id);
-    row.appendChild(cb);
+    ctl.appendChild(cb);
 
     /* the star lives by the checkbox (both are "act on this row" controls).
        Toggling is INSTANT: flip the cached entry and repaint from cache — a
@@ -699,51 +906,102 @@
         BV.toast(err.message);
       });
     });
-    row.appendChild(favBtn);
+    ctl.appendChild(favBtn);
 
-    var main = BV.el("div", { class: "lib-robot-main" });
-    var nameHtml = '<span class="lib-robot-name">' + BV.esc(r.robot || "(unnamed)") + "</span>";
-    if (r.model) nameHtml += '<span class="lib-robot-model">' + BV.esc(r.model) + "</span>";
+    /* the cams CARET lives with the row controls (right of the star); the
+       cams column further along just says "N cams" — count where the data
+       columns are, control where the controls are */
+    var nCams = ((r.device_type || "robot") === "robot") ? (_camCounts[r.id] || 0) : 0;
+    var camsOpen = nCams ? camFoldOpen(r.id) : false;
+    if (nCams) {
+      var camBtn = BV.el("button", { class: "lib-cams-toggle" + (camsOpen ? " open" : ""),
+        title: (camsOpen ? "hide" : "show") + " linked cameras" }, camsOpen ? "▾" : "▸");
+      camBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        toggleCamFold(r.id);
+      });
+      ctl.appendChild(camBtn);
+    }
+    row.appendChild(ctl);
+
+    var main = BV.el("div", { class: "lib-cell lib-cell-name lib-robot-main" });
+    /* the label is the NAME alone — a camera's identifying pill rides along,
+       but the robot model was clutter at list scale (it lives in the tooltip
+       and the edit modal) */
+    var nameHtml = (nested ? '<span class="lib-nest-arrow">↳</span>' : "") +
+      '<span class="lib-robot-name">' + BV.esc(r.robot || "(unnamed)") + "</span>";
     if (r.device_type === "camera-mtx") nameHtml += ' <span class="pill acc">mtx cam</span>';
     else if (r.device_type === "camera-keyence") nameHtml += ' <span class="pill acc">cv-x cam</span>';
-    else {
-      /* which twin holds the cameras? (duplicate robot names exist across lines,
-         and a link to the WRONG twin looks like "nothing happened") */
-      var nCams = _camCounts[r.id] || 0;
-      if (nCams) nameHtml += ' <span class="pill acc">' + nCams + " cam" + (nCams > 1 ? "s" : "") + "</span>";
-    }
-    main.appendChild(BV.el("div", null, nameHtml));
-    var meta = [];
+    main.appendChild(BV.el("div", { class: "lib-robot-title" }, nameHtml));
+    var tips = [];
+    if (r.model) tips.push(r.model);
     if (opts.where) {
+      /* strip copies sit far from their folders — the plant/line context
+         rides the tooltip, so the row itself renders exactly like a tree row */
       var where = [r.plant, r.line].filter(Boolean).join(" / ");
-      if (where) meta.push(BV.esc(where));
+      if (where) tips.push(where);
     }
-    if (r.ips && r.ips.length) meta.push(BV.esc(r.ips[0]));
-    if (r.last_backup) meta.push("last " + BV.esc(r.last_backup));
-    if (r.backups && r.backups.length) meta.push(r.backups.length + " saved");
-    if (r.stale) meta.push('<span class="pill warn">missing</span>');
+    if (tips.length) row.title = tips.join("  ·  ");
+    appendNote(main, r);
+    row.appendChild(main);
+
+    row.appendChild(BV.el("span", { class: "lib-cell lib-cell-ip",
+      title: (r.ips || []).join(", ") }, BV.esc((r.ips && r.ips[0]) || "")));
+    /* seconds add nothing a tech acts on — the column header says what it is */
+    var last = (r.last_backup || "").slice(0, 16).replace("T", " ");
+    row.appendChild(BV.el("span", { class: "lib-cell lib-cell-last" }, BV.esc(last)));
+    row.appendChild(BV.el("span", { class: "lib-cell lib-cell-saved" },
+      (r.backups && r.backups.length) ? String(r.backups.length) : ""));
+
+    /* the cams count column (the caret that folds them lives up in the row
+       controls). The count stays visible even while folded: which twin holds
+       the cameras matters — duplicate robot names exist across lines, and a
+       link to the WRONG twin looks like "nothing happened". */
+    var camsCell = BV.el("span", { class: "lib-cell lib-cell-cams" });
+    if (nCams) {
+      camsCell.appendChild(BV.el("span", { class: "lib-cams-n",
+        title: nCams + " linked camera" + (nCams > 1 ? "s" : "") },
+        nCams + " " + BV.icon("camera")));
+    } else if ((r.device_type || "").indexOf("camera") === 0 && r.ips && r.ips[0]) {
+      /* a CAMERA row's cams cell is its remote-operation access point — an
+         uncolored pill straight to the live camera (same openers the cam
+         tiles and photos tab use). No IP on record -> no pill: a surface
+         that can't work vanishes, it doesn't grey out. */
+      var rip = r.ips[0];
+      var remoteBtn = BV.el("button", { class: "pill ghost lib-remote-pill",
+        title: "remote operation · " + rip }, "remote");
+      remoteBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        if (r.device_type === "camera-keyence") BV.openCvxRemote(rip, r.robot || rip);
+        else BV.openMtxRemote(rip, r.robot || rip);
+      });
+      camsCell.appendChild(remoteBtn);
+    }
+    row.appendChild(camsCell);
+
+    var status = BV.el("span", { class: "lib-cell lib-cell-status" });
+    var pills = [];
+    if (r.stale) pills.push('<span class="pill warn">missing</span>');
     /* while a pull is RUNNING for this robot its newest snapshot is partial by
        design — the row's live progress bar tells that story; the warning pills
        below would just cry wolf about a backup that is still being written */
     var backingUp = BV.jobs && BV.jobs.isRobotActive && BV.jobs.isRobotActive(r, _liveTargets);
     /* newest snapshot is a partial (a pull that died mid-download): say so -
-       "last <date>" above is already the last COMPLETE one */
+       the last-backup column is already the last COMPLETE one */
     if (!backingUp && r.backups && r.backups.length && r.backups[0].partial) {
-      meta.push('<span class="pill warn" title="the newest snapshot is a partial backup ' +
+      pills.push('<span class="pill warn" title="the newest snapshot is a partial backup ' +
         '(the pull never finished) — opening latest uses the last complete one">partial</span>');
     }
     if (!backingUp && !r.latest_path && !(r.backups && r.backups.length) && !r.stale) {
-      meta.push('<span class="pill ghost">no backup</span>');
+      pills.push('<span class="pill ghost">no backup</span>');
     }
-    main.appendChild(BV.el("div", { class: "lib-robot-meta" },
-      meta.join(' <span class="sep">·</span> ')));
-    appendNote(main, r);
-    row.appendChild(main);
+    status.innerHTML = pills.join(" ");
+    row.appendChild(status);
 
     var prog = BV.el("div", { class: "lib-robot-progress" });
     row.appendChild(prog);
 
-    var acts = BV.el("div", { class: "lib-robot-acts" });
+    var acts = BV.el("div", { class: "lib-cell lib-robot-acts" });
     var moreBtn = BV.el("button", { class: "btn lib-robot-more",
       title: "actions (or right-click the row)" }, "⋯");
     moreBtn.addEventListener("click", function (e) {
@@ -797,16 +1055,96 @@
   var NO_OPEN_SEL = ".lib-note-edit, .lib-robot-note, .lib-robot-note-head, " +
     ".lib-check, .lib-fav, .lib-robot-acts";
 
+  /* standalone linked-robot picker for a camera ROW (⋯ → link to robot…):
+     the same libTree modal the edit modal's picker builds, but committing
+     straight through lib_link_camera — link a camera without opening the
+     whole edit form. (Second copy of this shape; promote both into a shared
+     primitive if a third appears, per the composition rule.) */
+  function linkCameraPicker(cam) {
+    var robots = _robots.filter(function (r) { return (r.device_type || "robot") === "robot"; });
+    if (!robots.length) { BV.toast("no robots in the library to link"); return; }
+    var pmodal;
+    function commit(robotId) {
+      var prev = cam.linked_robot_id || "";
+      pmodal.close(true);
+      if (robotId === prev) return;
+      cam.linked_robot_id = robotId;            /* instant, like the star */
+      rerenderFromCache();
+      BV.api.call("lib_link_camera", cam.id, robotId).then(function () {
+        BV.toast(robotId ? "camera linked" : "link cleared");
+      }).catch(function (err) {
+        cam.linked_robot_id = prev;
+        rerenderFromCache();
+        BV.toast(err.message);
+      });
+    }
+    var tree = BV.libTree({
+      counts: true,
+      /* land on the camera's own plant — the robot a camera inspects is
+         almost always nearby; the rest starts folded with count badges */
+      startOpen: function (key, kind) {
+        if (kind !== "plant") return true;
+        var pl = (cam.plant || "").toUpperCase();
+        return !pl || key.toUpperCase() === pl;
+      },
+      row: function (r) {
+        var row = BV.el("div", { class: "opt-row cmp-pick-row" +
+          (r.id === (cam.linked_robot_id || "") ? " sel" : "") },
+          '<span class="name">' + BV.esc(r.robot || "(unnamed)") +
+          (r.model ? '<span class="lib-robot-model">' + BV.esc(r.model) + "</span>" : "") +
+          "</span>" +
+          ((r.ips && r.ips[0])
+            ? '<span class="lib-robot-meta">' + BV.esc(r.ips[0]) + "</span>" : ""));
+        row.addEventListener("click", function () { commit(r.id); });
+        return row;
+      },
+    });
+    var pbody = BV.el("div", { class: "cmp-pick" });
+    var sb = BV.searchBox({ placeholder: "filter robots…",
+      onChange: function (q) { paint(q); } });
+    var search = BV.el("div", { class: "cmp-pick-search" });
+    search.appendChild(sb.el);
+    pbody.appendChild(search);
+    if (cam.linked_robot_id) {
+      var clearRow = BV.el("div", { class: "opt-row cmp-pick-row" },
+        '<span class="name" style="color:var(--sub)">✕ clear link (none)</span>');
+      clearRow.addEventListener("click", function () { commit(""); });
+      pbody.appendChild(clearRow);
+    }
+    var treeBody = BV.el("div");
+    pbody.appendChild(treeBody);
+    function paint(q) {
+      var res = tree.render(treeBody, { robots: robots }, { q: q });
+      sb.setCount(q ? res.shown : undefined, res.total);
+    }
+    paint("");
+    pmodal = BV.modal("link to robot", pbody, {
+      /* Esc clears a live filter first (the search-box convention) */
+      beforeClose: function () {
+        if (sb.value()) { sb.input.value = ""; paint(""); return false; }
+        return true;
+      },
+    });
+    sb.focus();
+  }
+
   /* one menu for the ⋯ button AND right-click on the row. No delete here:
      files are law — hide covers the everyday case, and a true delete is done
      in Explorer ("open folder"); the library follows. */
   function rowMenuItems(r, main) {
     var items = [
       { label: "edit", onClick: function () { editRobotModal(r, false); } },
+    ];
+    if ((r.device_type || "").indexOf("camera") === 0) {
+      /* linking straight from the row — the edit modal's picker stays for
+         edits that touch more than the link */
+      items.push({ label: "link to robot…",
+        onClick: function () { linkCameraPicker(r); } });
+    }
+    items.push(
       { label: r.notes ? "edit note" : "add note",
         onClick: function () { editNoteInline(main, r); } },
-      { label: r.hidden ? "unhide" : "hide", onClick: function () { setHidden(r, !r.hidden); } },
-    ];
+      { label: r.hidden ? "unhide" : "hide", onClick: function () { setHidden(r, !r.hidden); } });
     if (r.history_root) {
       items.push({ label: "open folder", onClick: function () { openLocation(r.history_root); } });
     }
@@ -1610,6 +1948,12 @@
     var slots = rowProgressSlots(robotId);
     if (!slots.length) return;
     var html;
+    slots.forEach(function (slot) {
+      /* the details-view row swaps its data cells for the bar while a pull
+         runs — renderRowProgress is the one writer, so it owns the flag */
+      var row = slot.closest(".lib-robot");
+      if (row) row.classList.add("pulling");
+    });
     if (BV.jobs.isTerminal(p)) {
       var cls, txt;
       if (p.status === "done") { cls = "ok"; txt = "✓ " + p.done + " files"; }

@@ -37,7 +37,11 @@
     remote: '<rect x="3.2" y="4.8" width="17.6" height="12.4" rx="1.6"/>' +
       '<path d="M12 17.2 L12 19.6 M8.4 19.6 L15.6 19.6"/>' +
       '<path d="M9.8 6.4 L9.8 13.3 L11.5 11.6 L12.7 14 L14.1 13.3 L12.9 11 L15.2 10.8 Z" ' +
-      'fill="currentColor" stroke="none"/>'
+      'fill="currentColor" stroke="none"/>',
+    /* body + viewfinder hump + lens: the library's linked-cameras count */
+    camera: '<rect x="2.8" y="7.4" width="18.4" height="11.8" rx="1.8"/>' +
+      '<path d="M8.3 7.4 L9.7 4.9 L14.3 4.9 L15.7 7.4"/>' +
+      '<circle cx="12" cy="13.2" r="3.5"/>'
   };
 
   BV.icon = function (name) {

@@ -197,6 +197,20 @@ def probe(window):
         check("home.rows", nrows == 43, f"(got {nrows})")
         check("home.no_fav_strip_initially",
               not js(window, "!!document.querySelector('.lib-favs')"))
+        # the details-view chrome: sticky column labels with sortable headers,
+        # rows as grid cells inside ONE panel per plant (frost lives on the
+        # panel now — a row must not carry its own backdrop-filter)
+        check("home.columns_header", bool(js(window,
+              "!!document.querySelector('.home-lib-cols .hlc-sort')")))
+        check("home.rows_not_individually_frosted", bool(js(window, """(function(){
+            document.documentElement.classList.add('frosted');
+            var row=document.querySelector('.lib-robot');
+            var panel=document.querySelector('.home-library .lib-plant');
+            var rowBf=getComputedStyle(row).backdropFilter;
+            var panelBf=getComputedStyle(panel).backdropFilter;
+            document.documentElement.classList.remove('frosted');
+            return (rowBf==='none' || !rowBf) && panelBf && panelBf!=='none';
+        })()""")))
 
         # ---- row menu: edit folded in, ⋯ toggles, right-click at the mouse ----
         check("menu.no_standalone_edit_button",
@@ -520,8 +534,35 @@ def probe(window):
               }).catch(function(){});
             }, 400);""")
         check("pick.saved_link", poll(window, "window.__link") == "ok")
+        # linked cameras COLLAPSE behind the robot's cams expander (details
+        # view): the link materializes as the ▸ count, not as an always-open
+        # nested row — opening the expander nests the camera
+        check("pick.link_shows_cams_expander", bool(poll(window,
+              "!!document.querySelector('.lib-cams-toggle')")))
+        check("pick.camera_hidden_while_folded",
+              not js(window, "!!document.querySelector('.lib-robot-nested')"))
+        js(window, """(function(){
+            var row=[...document.querySelectorAll('.lib-robot')].find(function(r){
+                return r.textContent.indexOf('RB010R01B01')>=0;});
+            row.querySelector('.lib-cams-toggle').click();
+        })()""")
         check("pick.camera_nests_under_robot", bool(poll(window,
               "!!document.querySelector('.lib-robot-nested')")))
+        # (the fold stays OPEN for the sections below: the favorites strip's
+        # ride-along and the 44-row lens counts all see the nested camera)
+
+        # the camera row's menu carries the direct link action now
+        camMenu = js(window, """(function(){
+            var row=[...document.querySelectorAll('.lib-robot')].find(function(r){
+                return r.textContent.indexOf('CELL-01CAM01')>=0;});
+            row.querySelector('.lib-robot-more').click();
+            return JSON.stringify([...document.querySelectorAll('.ctx-menu .ctx-item')]
+                .map(function(b){return b.textContent;}));
+        })()""")
+        check("cammenu.link_action_present",
+              "link to robot…" in json.loads(camMenu or "[]"), f"({camMenu})")
+        time.sleep(0.4)   # the menu's outside-click listeners attach deferred
+        js(window, "document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))")
 
         # ---- favorites: instant pin, full rows, linked cams ride along ----
         fav = js(window, """(function(){
@@ -547,12 +588,15 @@ def probe(window):
             return JSON.stringify({
               head: s.querySelector('.lib-plant-h').textContent,
               robot: top ? top.textContent.indexOf('RB010R01B01')>=0 : false,
-              where: top ? top.textContent.indexOf('FakePlant / LINE01')>=0 : false,
+              where: top ? ((top.getAttribute('title')||'')
+                  .indexOf('FakePlant / LINE01')>=0) : false,
               camAlong: cam ? cam.textContent.indexOf('CELL-01CAM01')>=0 : false,
-              starByCheck: top ? (top.children[0].classList.contains('lib-check')
-                              && top.children[1].classList.contains('lib-fav')) : false,
+              starByCheck: top ? (function(ctl){
+                  return !!ctl && ctl.children[0].classList.contains('lib-check')
+                              && ctl.children[1].classList.contains('lib-fav');
+                })(top.querySelector('.lib-cell-ctl')) : false,
               hasCheckbox: !!(top && top.querySelector('.lib-check')),
-              first: document.querySelector('.home-lib-body').firstElementChild===s,
+              first: document.querySelector('.home-lib-body .lib-plant')===s,
               starOn: !![...document.querySelectorAll(
                   '.lib-plant:not(.lib-favs) .lib-fav.on')].length,
             });
@@ -560,7 +604,9 @@ def probe(window):
         strip = json.loads(strip or "{}")
         check("fav.head", "favorites" in (strip.get("head") or ""), f"({strip})")
         check("fav.row_is_pinned_robot", strip.get("robot") is True)
-        check("fav.row_shows_plant_line", strip.get("where") is True)
+        # strip rows render EXACTLY like tree rows; the plant/line context
+        # rides the row tooltip instead of a second line
+        check("fav.where_rides_the_tooltip", strip.get("where") is True)
         check("fav.linked_cam_rides_along", strip.get("camAlong") is True)
         check("fav.star_next_to_checkbox", strip.get("starByCheck") is True)
         check("fav.row_selectable", strip.get("hasCheckbox") is True)
@@ -635,6 +681,65 @@ def probe(window):
         js(window, "BV.state.emit('library-dirty')")
         check("cam.cvx_lists_in_backup_lens", bool(poll(window,
               "document.querySelectorAll('.lib-robot').length===44 ? 'y' : ''")))
+
+        # a camera row's cams cell is its remote access point: an uncolored
+        # pill that opens the live remote — present only with an IP to reach
+        # (CAM01 has none on record, so its cell stays empty), and clicking it
+        # must open the REMOTE, never the backup under it
+        rem = js(window, """(function(){
+            var rows=[...document.querySelectorAll('.lib-robot')];
+            var cvx=rows.find(function(r){return r.textContent.indexOf('CELL-01CVX01')>=0;});
+            var cam=rows.find(function(r){return r.textContent.indexOf('CELL-01CAM01')>=0;});
+            window.__remoteCalls=[]; var real=BV.openCvxRemote;
+            BV.openCvxRemote=function(ip,label){window.__remoteCalls.push([ip,label]);};
+            var pill=cvx ? cvx.querySelector('.lib-remote-pill') : null;
+            if(pill) pill.click();
+            BV.openCvxRemote=real;
+            return JSON.stringify({
+              cvxPill: !!pill,
+              camPill: !!(cam && cam.querySelector('.lib-remote-pill')),
+              calls: window.__remoteCalls, hash: location.hash });
+        })()""")
+        rem = json.loads(rem or "{}")
+        check("cam.remote_pill_on_ip_camera", rem.get("cvxPill") is True, f"({rem})")
+        check("cam.remote_pill_absent_without_ip", rem.get("camPill") is False)
+        check("cam.remote_pill_opens_remote_not_backup",
+              rem.get("calls") == [["192.0.2.162", "CELL-01CVX01"]]
+              and rem.get("hash") in ("#home", "", "#"), f"({rem})")
+
+        # every column sorts: six clickable headers. saved's default desc
+        # sinks the backup-less CVX entry (and flips the name tiebreak); the
+        # second click flips asc and floats it. Sort ends back on name for
+        # the order-sensitive sections below.
+        srt = js(window, """(function(){
+            function sorter(label){
+              return [...document.querySelectorAll('.home-lib-cols .hlc-sort')]
+                .find(function(b){return b.textContent.indexOf(label)>=0;});
+            }
+            function firstInLine01(){
+              var head=[...document.querySelectorAll('.lib-line-h')].find(function(h){
+                  return h.textContent.indexOf('LINE01')>=0;});
+              var row=head.parentElement.querySelector('.lib-line-body .lib-robot');
+              return row ? row.textContent.slice(0, 40) : '';
+            }
+            var n=document.querySelectorAll('.home-lib-cols .hlc-sort').length;
+            sorter('saved').click();
+            var descFirst=firstInLine01();
+            sorter('saved').click();
+            var ascFirst=firstInLine01();
+            sorter('name').click();
+            var nameOn=sorter('name').textContent.indexOf('▴')>=0;
+            return JSON.stringify({n:n, descFirst:descFirst, ascFirst:ascFirst,
+                                   nameOn:nameOn});
+        })()""")
+        srt = json.loads(srt or "{}")
+        check("cols.all_six_sortable", srt.get("n") == 6, f"({srt})")
+        check("cols.saved_desc_most_first",
+              "RB" in (srt.get("descFirst") or "")
+              and "CELL-01CVX01" not in (srt.get("descFirst") or ""), f"({srt})")
+        check("cols.saved_flips_to_asc",
+              "CELL-01CVX01" in (srt.get("ascFirst") or ""), f"({srt})")
+        check("cols.back_on_name_asc", srt.get("nameOn") is True, f"({srt})")
 
         # seed the backup lens: select a robot and scroll well into the tree
         js(window, """(function(){

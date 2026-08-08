@@ -54,7 +54,10 @@ html.frosted .vtable,
 html.frosted .dcs-entry,
 html.frosted .dcs-dash-cell,
 html.frosted .sysvar-node,
-html.frosted .lib-robot,
+/* the library's --panel surface is the PLANT PANEL, not the row: the
+   details-view rows are flat hairlines inside it, so a plant-scale tree
+   costs one blur per section instead of one per robot */
+html.frosted .home-library .lib-plant,
 html.frosted .cam-tile,
 html.frosted .v3-row,
 html.frosted .stab,
@@ -1490,6 +1493,8 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
   grid-template-columns: repeat(auto-fill, minmax(min(16rem, 100%), 1fr));
   gap: 0.7rem; padding: 0.2rem 0 0.6rem 0.6rem;
 }
+/* inside the details-view panels the tile grid breathes on all sides */
+.home-library .lib-line-body.cam-grid { padding: 0.55rem 0.65rem 0.65rem; }
 .bv-collapsible.open > .lib-line-body.cam-grid { display: grid; }
 .cam-tile {
   border: 1px solid var(--edge); border-radius: var(--radius); background: var(--panel);
@@ -1533,17 +1538,91 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 /* folder count badge (libtree opts.counts): what's inside when it's folded */
 .lib-count { color: var(--sub); font-size: 0.74em; font-weight: 400; }
 
+/* ---- the details-view library ----
+   Each plant (and the ★ favorites strip) is ONE frosted --panel surface; the
+   rows inside are flat hairline rows of FLEX cells on shared column widths
+   (the .lib-cell-* sizing classes below, worn by rows AND the label header),
+   so the screen reads like the jobstrip details panel — dense, aligned, one
+   glass sheet per section — instead of a stack of per-row cards.
+   Flex, not grid, deliberately: a viewport shows ~27 of these rows and every
+   forced reflow lays each visible one out — grid track resolution per row
+   measured ~4x a flex pass on the 2400-row perf probe. */
+
+/* the shared column widths — one place, both the rows and the header.
+   saved + cams are CENTERED and a touch wider so their values never butt up
+   against each other; the room comes out of status, which was mostly air */
+.lib-cell-ctl { flex: 0 0 4.6rem; }
+.lib-cell-name { flex: 1.6 1 12rem; }
+.lib-cell-ip { flex: 0 1 9.5rem; }
+.lib-cell-last { flex: 0 1 10.5rem; }
+.lib-cell-saved { flex: 0 0 4.4rem; }
+.lib-cell-cams { flex: 0 0 5.8rem; }
+.lib-cell-status { flex: 1 1 3rem; }
+/* (.lib-robot-acts carries its own flex-basis where its display rule lives
+   below — one rule per property, or the later one silently wins) */
+
+/* sticky column labels (Explorer's details header), wearing the same sizing
+   classes as the row cells so labels sit over their columns; carries its own
+   glass like .hero.stick (deliberately not in the html.frosted set — it
+   blurs on its own) */
+.home-lib-cols {
+  position: sticky;
+  /* sticky offsets resolve against the scrollport inset by #view's own
+     padding — -0.75rem cancels exactly that breathing room (hero.stick) */
+  top: -0.75rem;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 0 0.5rem;
+  /* +1px mirrors the panels' border so columns line up under the labels */
+  padding: 0.3rem 0.55rem 0.3rem calc(0.55rem + 1px);
+  margin: 0 0 0.55rem;
+  background: var(--glass);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: 0 1px 0 var(--edge-soft, var(--edge));
+}
+/* header typography outranks the cells' own colors (.home-lib-cols wins) */
+.home-lib-cols .hlc-cell {
+  appearance: none; background: none; border: none; padding: 0; text-align: left;
+  font: inherit; font-size: 0.72rem; color: var(--sub); letter-spacing: 0.03em;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 0;
+}
+.home-lib-cols button.hlc-cell { cursor: pointer; }
+.home-lib-cols button.hlc-cell:hover { color: var(--text); }
+.home-lib-cols .hlc-sort.on { color: var(--accent); }
+.home-lib-cols .lib-cell-saved,
+.home-lib-cols .lib-cell-cams { text-align: center; }
+
+.home-library .lib-plant {
+  background: var(--panel); border: 1px solid var(--edge);
+  border-radius: var(--radius); margin: 0 0 0.9rem;
+  overflow: hidden;          /* row hover tint respects the panel rounding */
+}
 .lib-plant { margin-bottom: 1rem; }
 .lib-plant-h {
   font-size: 1.05rem; color: var(--sub); text-transform: uppercase; letter-spacing: 0.06em;
   margin-bottom: 0.45rem; display: flex; align-items: center; gap: 0.4rem;
 }
+.home-library .lib-plant-h {
+  font-size: 0.9rem; margin: 0; padding: 0.42rem 0.65rem;
+  box-shadow: inset 0 -1px 0 var(--edge);
+}
 .lib-plant-body { margin-left: 0.3rem; }
+.home-library .lib-plant-body { margin: 0; }
 .lib-empty-note { padding: 0.1rem 0 0.35rem 1.2rem; font-size: 0.85rem; }
+.home-library .lib-empty-note { padding: 0.35rem 0.8rem 0.45rem; }
 .lib-line { margin: 0 0 0.6rem 0.4rem; }
+.home-library .lib-line { margin: 0; }
 .lib-line-h {
   font-size: 0.98rem; color: var(--accent); margin-bottom: 0.3rem;
   display: flex; align-items: center; gap: 0.5rem;
+}
+.home-library .lib-line-h {
+  font-size: 0.84rem; margin: 0; padding: 0.3rem 0.65rem;
+  background: color-mix(in srgb, var(--sub-alt) 7%, transparent);
+  /* the line header owns BOTH separators now that robot rows carry none */
+  box-shadow: inset 0 1px 0 var(--edge-soft, var(--edge)),
+              inset 0 -1px 0 var(--edge-soft, var(--edge));
 }
 .lib-line-name { font-weight: 600; }
 .lib-line-controls { display: flex; align-items: center; gap: 0.3rem; margin-left: auto; }
@@ -1551,10 +1630,14 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .lib-line-selall { margin: 0 0.15rem; }
 
 .lib-robot {
-  display: flex; align-items: center; gap: 0.7rem;
-  background: var(--panel); border: 1px solid var(--edge); border-radius: var(--radius);
-  padding: 0.5rem 0.6rem 0.5rem 0.7rem; margin: 0 0 0.35rem 0.6rem; cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0 0.5rem;
+  padding: 0.24rem 0.55rem;
+  cursor: pointer;
   transition: background var(--trans);
+  /* no hairline between robot rows (the hover tint delineates them) — the
+     separators belong to the LINE headers, which carry both edges below */
   /* Only rows on screen get laid out. A plant library is thousands of rows,
      and without this EVERY layout anywhere in the tree re-flows all of them:
      measured on a 2400-row tree, one keystroke in a note cost 174ms, opening
@@ -1565,13 +1648,75 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
      the `auto` keyword the second declaration is dropped, and an unparsed one
      would collapse every off-screen row to zero height. */
   content-visibility: auto;
-  contain-intrinsic-size: 46px;
-  contain-intrinsic-size: auto 46px;
+  contain-intrinsic-size: 28px;
+  contain-intrinsic-size: auto 28px;
 }
-.lib-robot:hover { background: color-mix(in srgb, var(--sub-alt) 22%, var(--bg2)); }
+.lib-robot:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .lib-robot.stale { opacity: 0.6; }
+.lib-cell { min-width: 0; }
+.lib-cell-ctl { display: flex; align-items: center; gap: 0.3rem; }
 .lib-check { flex: none; }
-.lib-robot-main { flex: 1 1 auto; min-width: 0; }
+.lib-robot-main { min-width: 0; }
+.lib-robot-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* names sized WITH the line headers (0.84rem) — the line is the landmark,
+   the robot must not outrank it */
+.home-library .lib-robot-name { font-size: 0.84rem; }
+.lib-nest-arrow { color: var(--sub-alt); margin-right: 0.4rem; }
+.lib-robot-nested .lib-robot-main { padding-left: 0.9rem; }
+.lib-robot.lib-robot-nested {
+  background: color-mix(in srgb, var(--sub-alt) 6%, transparent);
+}
+.lib-robot.lib-robot-nested:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.lib-cell-ip, .lib-cell-last, .lib-cell-saved {
+  color: var(--sub); font-size: 0.78rem; user-select: text;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.lib-cell-saved, .lib-cell-cams { text-align: center; }
+/* the cams CARET rides the row controls, right of the star */
+.lib-cams-toggle {
+  appearance: none; background: none; border: none; cursor: pointer;
+  font: inherit; font-size: 0.8rem; line-height: 1; color: var(--sub);
+  padding: 0 0.1rem; opacity: 0.7; transition: opacity var(--trans);
+}
+.lib-cams-toggle:hover { opacity: 1; color: var(--text); }
+.lib-cams-toggle.open { color: var(--accent); opacity: 1; }
+/* ...and the cams column just counts: a number and a small camera */
+.lib-cams-n { color: var(--sub); font-size: 0.78rem; white-space: nowrap; }
+.lib-cams-n .bv-ico { width: 0.9em; height: 0.9em; vertical-align: -0.12em; margin-left: 0.15em; }
+/* a camera row's remote access point: pill geometry + ghost colors, plus the
+   button resets a real <button> needs; hover lights it so it reads clickable */
+button.lib-remote-pill {
+  appearance: none; font: inherit; font-size: 0.7rem; cursor: pointer;
+  transition: color var(--trans), border-color var(--trans);
+}
+button.lib-remote-pill:hover { color: var(--accent); border-color: var(--accent); }
+.lib-cell-status { display: flex; align-items: center; gap: 0.3rem; overflow: hidden; }
+
+/* hand-drawn selection boxes: appearance:none + an SVG mask painted with the
+   theme's own colors (a data-URI can't read CSS variables; a mask can be
+   FILLED by them), sized with the favorite star beside them. The tri-state
+   stays honest: empty box · box+X (checked) · box+dash (partial select-all). */
+.home-library .lf-check {
+  appearance: none; -webkit-appearance: none;
+  width: 0.95rem; height: 0.95rem; margin: 0; cursor: pointer;
+  background-color: var(--sub); opacity: 0.55; transition: opacity var(--trans);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2.5 3.2C5.3 2.5 10.9 2.6 13.5 2.9C13.9 5.6 13.8 10.2 13.6 12.9C10.6 13.5 5.5 13.4 2.8 13.1C2.4 10.3 2.3 6 2.5 3.2Z' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center / contain;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2.5 3.2C5.3 2.5 10.9 2.6 13.5 2.9C13.9 5.6 13.8 10.2 13.6 12.9C10.6 13.5 5.5 13.4 2.8 13.1C2.4 10.3 2.3 6 2.5 3.2Z' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center / contain;
+}
+.home-library .lf-check:hover { opacity: 1; }
+.home-library .lf-check:checked {
+  background-color: var(--accent); opacity: 1;
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2.5 3.2C5.3 2.5 10.9 2.6 13.5 2.9C13.9 5.6 13.8 10.2 13.6 12.9C10.6 13.5 5.5 13.4 2.8 13.1C2.4 10.3 2.3 6 2.5 3.2Z' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M4.9 5.2C6.9 7.2 9.1 9.5 10.9 11.2M10.8 5C9 7.1 6.9 9.3 5.1 11.1' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2.5 3.2C5.3 2.5 10.9 2.6 13.5 2.9C13.9 5.6 13.8 10.2 13.6 12.9C10.6 13.5 5.5 13.4 2.8 13.1C2.4 10.3 2.3 6 2.5 3.2Z' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M4.9 5.2C6.9 7.2 9.1 9.5 10.9 11.2M10.8 5C9 7.1 6.9 9.3 5.1 11.1' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round'/%3E%3C/svg%3E");
+}
+.home-library .lf-check:indeterminate {
+  background-color: var(--accent); opacity: 0.85;
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2.5 3.2C5.3 2.5 10.9 2.6 13.5 2.9C13.9 5.6 13.8 10.2 13.6 12.9C10.6 13.5 5.5 13.4 2.8 13.1C2.4 10.3 2.3 6 2.5 3.2Z' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M4.8 8.2C7 7.9 9.4 8.3 11.3 8.1' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2.5 3.2C5.3 2.5 10.9 2.6 13.5 2.9C13.9 5.6 13.8 10.2 13.6 12.9C10.6 13.5 5.5 13.4 2.8 13.1C2.4 10.3 2.3 6 2.5 3.2Z' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M4.8 8.2C7 7.9 9.4 8.3 11.3 8.1' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round'/%3E%3C/svg%3E");
+}
+.home-library .lf-check:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; opacity: 1; }
 .lib-robot-name { color: var(--text); font-weight: 600; }
 .lib-robot-model { color: var(--accent); font-size: 0.82rem; margin-left: 0.6em; }
 .lib-robot-meta { color: var(--sub); font-size: 0.78rem; margin-top: 0.1rem; }
@@ -1586,7 +1731,17 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .lib-robot-note-head .note-line { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lib-robot-note-head .bv-caret { flex: none; }
 .lib-robot-note-body { color: var(--sub); font-size: 0.78rem; white-space: pre-wrap; margin-top: 0.2rem; user-select: text; }
-.lib-robot-progress { flex: 1 1 16rem; min-width: 0; max-width: 24rem; }
+/* while a pull runs (.pulling, set by renderRowProgress) the bar IS the
+   row's story: the data cells step aside and it takes their span */
+.lib-robot-progress { display: none; }
+.lib-robot.pulling .lib-robot-progress {
+  display: block; flex: 1 1 auto; min-width: 0; padding: 0 0.2rem;
+}
+.lib-robot.pulling .lib-cell-ip,
+.lib-robot.pulling .lib-cell-last,
+.lib-robot.pulling .lib-cell-saved,
+.lib-robot.pulling .lib-cell-cams,
+.lib-robot.pulling .lib-cell-status { display: none; }
 .lib-robot-progress:empty { display: none; }
 .lib-robot-progress .membar { margin-bottom: 0; }
 /* one ellipsized line, never a row-stretcher: long FTP errors clamp here and
@@ -1597,7 +1752,7 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 }
 .lib-robot-result.ok { color: var(--ok); }
 .lib-robot-result.err { color: var(--error); cursor: pointer; }
-.lib-robot-acts { display: flex; gap: 0.25rem; flex: none; }
+.lib-robot-acts { display: flex; gap: 0.25rem; flex: 0 0 2.4rem; justify-content: flex-end; }
 .lib-robot-acts .btn { padding: 0.24rem 0.6rem; font-size: 0.8rem; }
 .lib-robot-more { font-weight: 700; line-height: 1; }
 .lib-robot.hidden-robot { opacity: 0.5; }

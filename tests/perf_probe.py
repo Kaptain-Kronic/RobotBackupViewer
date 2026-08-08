@@ -35,7 +35,12 @@ poll = poller(tries=60, delay=0.25)
 # dev box, so the numbers we accept are the ones that survive that.
 BUDGET = {
     "keystroke": 25,      # typing in a note must fit inside a frame
-    "editor_open": 80,    # double-click a note -> box is there
+    # rebaselined 80 -> 110 with the details-view density (2026-08): rows went
+    # 46px -> 31px, so a viewport holds ~50% more of them and the editor-open
+    # reflow shifts them all. The cliff this guards (the 120ms-at-old-density
+    # open, ~180 at this density) still trips it; measured 82 on the day the
+    # density landed.
+    "editor_open": 110,   # double-click a note -> box is there
     "editor_close": 80,
     "star_toggle": 500,   # pins the row + rebuilds the strip
     "shift_range": 800,   # selecting ~900 rows at once
