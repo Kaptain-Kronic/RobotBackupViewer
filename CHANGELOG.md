@@ -44,7 +44,12 @@
   triangle soup punches gaps, so the cap is worth real milliseconds. Measured
   redraw in the real window (5,144-tri part 23 ms · 48,066-tri scan 34 ms ·
   32,250-tri arm 81 ms · 481,039-tri gripper 413 ms) put the cap at 60k: every
-  real mesh but the giant gripper now draws whole.
+  real mesh but the giant gripper now draws whole. The model list proves a
+  gripper's mesh exists from a bounded prefix rather than decoding it (a probe
+  costs ~0.3 s against 1.2-1.9 s) and leaves its triangle count honestly blank
+  until you open it; the arm is the exception, because its block sits ~290 KB
+  in, so a probe would cost 93% of a real decode and answer nothing - it is
+  decoded properly and counted.
 - **Extract STL** writes any viewable model as a real binary `.stl` (byte-exact
   facet records, full detail even when the viewer decimates) to a user-picked
   folder through the house export contract — never into a backup, `.part` →

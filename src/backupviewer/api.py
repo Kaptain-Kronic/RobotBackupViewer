@@ -2258,7 +2258,7 @@ class Api:
                                   or Path(rel).stem),
                          "kind": ekind, "tris": None, "viewable": False,
                          "dup_of": None}
-                if kind in _CVX_RAW_MESH_KINDS:
+                if kind == "hand":
                     # Deliberately a PROBE, not a decode: the bounded prefix
                     # proves a real self-validating facet block is in there
                     # (see CVX_MESH_PROBE_BYTES for why the list may not pay
@@ -2270,6 +2270,18 @@ class Api:
                     # was: recognized, honestly not drawn.
                     if cvx_models.raw_facets(data[:CVX_MESH_PROBE_BYTES]):
                         entry["viewable"] = True
+                elif kind == "robot":
+                    # The arm is the one family where probing does not pay:
+                    # its block sits ~290 KB in (vs ~48 KB on every real
+                    # hand), so a bounded probe measured 1658 ms against a
+                    # 1790 ms full decode - 93% of the price for none of the
+                    # answer. Decode it properly and report a real count.
+                    # There is at most one robot model per backup, so this
+                    # costs the list one decode, once, behind its cache.
+                    mesh = cvx_models.raw_facets(data)
+                    if mesh:
+                        entry["viewable"] = True
+                        entry["tris"] = mesh["tri_count"]
                 if kind == "robot":
                     # the arm draws AND names itself; the identity is read
                     # from its own slots either way
