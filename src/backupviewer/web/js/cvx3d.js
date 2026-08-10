@@ -302,20 +302,65 @@
       GROUPS.forEach(function (g) { known[g[0]] = 1; });
       var lists = GROUPS.map(function (g) { return [g[1], grouped[g[0]] || []]; });
       lists.push(["other", models.filter(function (e) { return !known[e.kind]; })]);
-      lists.forEach(function (gl) {
-        if (!gl[1].length) return;   /* empty groups vanish */
-        rail.appendChild(BV.el("div", { style:
+
+      /* the rail leads with what the viewer can actually draw; families whose
+         encodings are not decoded (hand/robot/calibration/templates today)
+         fold behind an explicit toggle - hidden by default, never dropped.
+         When a family's decode lands its entries turn viewable and move up
+         on their own. If NOTHING is drawable the undecoded list starts open
+         (an all-hidden rail would claim the backup holds no models). */
+      function groupHead(gl) {
+        return BV.el("div", { style:
           "margin:.7rem 0 .15rem;padding:0 .5rem;font-size:.72rem;color:var(--sub);" +
           "letter-spacing:.04em" },
-          BV.esc(gl[0]) + ' <span style="opacity:.7">' + gl[1].length + "</span>"));
+          BV.esc(gl[0]) + ' <span style="opacity:.7">' + gl[1].length + "</span>");
+      }
+      var drawable = [], undecoded = [];
+      lists.forEach(function (gl) {
+        if (!gl[1].length) return;   /* empty groups vanish */
+        (gl[1].some(function (e) { return e.viewable; }) ? drawable : undecoded).push(gl);
+      });
+      drawable.forEach(function (gl) {
+        rail.appendChild(groupHead(gl));
         gl[1].forEach(function (e) { rail.appendChild(railRow(e)); });
       });
+      var rawCount = undecoded.reduce(function (n, gl) { return n + gl[1].length; }, 0);
+      var repaintRaw = function () {};
+      if (rawCount) {
+        if (s.showRaw === undefined) s.showRaw = !drawable.length;
+        var rawHost = BV.el("div");
+        var toggle = BV.el("button", { class: "btn", style:
+          "margin:.9rem .5rem .2rem;font-size:.78rem" });
+        function paintRaw() {
+          toggle.textContent = (s.showRaw ? "hide" : "show") +
+            " undecoded files (" + rawCount + ")";
+          rawHost.style.display = s.showRaw ? "" : "none";
+        }
+        toggle.addEventListener("click", function () {
+          s.showRaw = !s.showRaw;
+          paintRaw();
+        });
+        undecoded.forEach(function (gl) {
+          rawHost.appendChild(groupHead(gl));
+          gl[1].forEach(function (e) { rawHost.appendChild(railRow(e)); });
+        });
+        rail.appendChild(toggle);
+        rail.appendChild(rawHost);
+        paintRaw();
+        repaintRaw = paintRaw;
+      }
       BV.persistScroll("view3d-rail", rail);
 
       /* restore the last selection when it still exists; else first drawable */
       var init = s.sel && byKey[s.sel.rel + BV.KEYSEP + s.sel.stream];
       if (!init) {
         init = models.find(function (e) { return e.viewable && !e.dup_of; }) || models[0];
+      }
+      /* a restored selection may live in the folded undecoded list - unfold
+         so the highlighted row is never invisible */
+      if (init && !init.viewable && !s.showRaw) {
+        s.showRaw = true;
+        repaintRaw();
       }
       select(init);
 
