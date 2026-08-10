@@ -28,11 +28,16 @@ points: a TDC part CAD of 5,144 facets spanning 36x100x71 mm, and WSM
 workspace scans of 48,066 + 31,686 facets in ~1.3-1.5 m robot-world
 coordinates.
 
-What could NOT be proved, and is therefore not parsed here: the HND gripper
-assembly layout (raw uncompressed floats, no zlib, unreversed - header
-labels only), the TDM template record structure, the RMD kinematics and its
-proprietary ~1.8 MB mesh encoding (the maker/model name slots are all we
-read), and the calibration file's record stride (0x88 on the one file seen,
+The HND gripper assembly and the RMD robot arm joined that decode on
+2026-08-10 (see raw_facets): same facet triples, 48-byte records,
+uncompressed, at an offset 2 mod 4 - the misalignment that made an earlier
+pass read both as noise.
+
+What could NOT be proved, and is therefore not parsed here: the trailing
+~2 MB after an HND mesh block (a smooth byte ramp - a texture or preview,
+not geometry), the TDM template record structure, the RMD
+kinematics doubles (its mesh now decodes; the joint table does not), and
+the calibration file's record stride (0x88 on the one file seen,
 so records are found by scanning + self-validation, never by hardcoding a
 stride).
 
@@ -51,6 +56,11 @@ KIND_1001 = "container-1001"
 KIND_1C = "container-1c"
 
 FACET = 50                       # one binary-STL record: 12 float32 + u16 attribute
+HND_FACET = 48                   # the HND mesh's own record: the same 12 float32,
+                                 # no attribute word (see raw_facets)
+_HND_RUN = 24                    # consecutive self-proving records that mark it
+_HND_MIN = 64                    # a block smaller than this is not a model
+_HND_MAX_MM = 1e5                # a coordinate past this is not a tool dimension
 
 _JP_SLOT = 0x0E                  # Shift-JIS name, NUL-terminated
 _EN_SLOT = 0x4A                  # English name; further languages sit higher
@@ -174,6 +184,113 @@ def _facet_bounds(facets: bytes) -> dict:
     if any(l > h for l, h in zip(lo, hi)):
         return {"min": [0.0, 0.0, 0.0], "max": [0.0, 0.0, 0.0]}
     return {"min": lo, "max": hi}
+
+
+def _facet_like(data: bytes, off: int) -> bool:
+    """One 48-byte record reads as a facet: finite floats, tool-scale
+    coordinates, a normal that is ~unit or exactly zero, and at least one
+    non-zero vertex component. That last clause is what stops a block's edge
+    from eating the zero padding around it - a padding record is all zeros,
+    while a genuinely degenerate facet still carries its vertices."""
+    if off + HND_FACET > len(data):
+        return False
+    rec = struct.unpack_from("<12f", data, off)
+    if not all(math.isfinite(v) and abs(v) < _HND_MAX_MM for v in rec):
+        return False
+    if not any(rec[i] for i in range(3, 12)):
+        return False
+    m2 = rec[0] * rec[0] + rec[1] * rec[1] + rec[2] * rec[2]
+    return m2 == 0.0 or _UNIT_LO2 <= m2 <= _UNIT_HI2
+
+
+def _unit_run(data: bytes, off: int, want: int) -> bool:
+    """`want` consecutive HND records from `off` all open with a ~unit or
+    exactly-zero normal. A zero normal is legal (STL's "you compute it"), so
+    a run must also contain at least one real unit normal to count."""
+    seen_unit = False
+    for i in range(want):
+        o = off + i * HND_FACET
+        if o + 12 > len(data):
+            return False
+        nx, ny, nz = struct.unpack_from("<3f", data, o)
+        m2 = nx * nx + ny * ny + nz * nz
+        if _UNIT_LO2 <= m2 <= _UNIT_HI2:
+            seen_unit = True
+        elif m2 != 0.0:
+            return False
+    return seen_unit
+
+
+def raw_facets(data: bytes) -> dict:
+    """An uncompressed facet block, or `{}` - the mesh inside an
+    `HND_L_*.tbd` gripper AND the arm inside a `RBT_G_RMD_*.dat`.
+
+    Same facet triples as the zlib path, three differences paid for by a
+    2026-08-10 re-read of real files (two hand models and a robot model):
+    records here are **48 bytes** - twelve float32, no u16 attribute - they
+    are **not compressed**, and the block sits at an offset that is *2 mod
+    4*, which is why an earlier pass reading 4-aligned floats saw noise and
+    wrote the file off as an unreversed encoding.
+
+    Nothing here is taken on faith. Blocks are *found*, never assumed: a
+    candidate must open with a run of records whose normals prove themselves
+    unit (or exactly zero, which STL allows), and it is then grown in both
+    directions only over records that still read as facets. A sub-header
+    ahead of a hand's block does carry the stride and a count - 46,946 and
+    481,016 on the two hand files - and the decode lands within a handful of
+    that without being told it, which is corroboration rather than
+    instruction. The layout itself was proved geometrically: the stored
+    normal equals the cross product of the record's own vertex winding to
+    1.0000 on every file tried, which no accidental alignment survives.
+
+    The robot arm in `RBT_G_RMD_*.dat` turned out to use the same encoding
+    (32,250 facets, one contiguous block, an M-20iD/35 at its saved pose) -
+    the file's ~1.8 MB "proprietary mesh" was the same 48-byte records all
+    along. It is ONE fused mesh, not per-link geometry, so it can be drawn
+    but not posed by joint angles.
+
+    Returns `{"facets": bytes (repacked to the 50-byte form the rest of this
+    module speaks), "tri_count": int, "offset": int, "blocks": int,
+    "bounds": {...}}`; `{}` when no self-validating block is found.
+    """
+    limit = len(data) - HND_FACET
+    blocks: list[tuple[int, int]] = []           # (start, record count)
+    off = HEAD_1001
+    while off < limit:
+        if not _unit_run(data, off, _HND_RUN):
+            off += 2
+            continue
+        # walk back over records that still read as facets (a block can open
+        # with degenerate ones), then forward to its end
+        start = off
+        while start - HND_FACET >= HEAD_1001 and _facet_like(data, start - HND_FACET):
+            start -= HND_FACET
+        end = off + _HND_RUN * HND_FACET
+        while end <= limit and _facet_like(data, end):
+            end += HND_FACET
+        blocks.append((start, (end - start) // HND_FACET))
+        off = end
+    blocks = [(s, n) for s, n in blocks if n >= _HND_MIN]
+    if not blocks:
+        return {}
+
+    out = bytearray()
+    kept = 0
+    for start, n in blocks:
+        for i in range(n):
+            rec = struct.unpack_from("<12f", data, start + i * HND_FACET)
+            if not all(math.isfinite(v) for v in rec):
+                continue                  # a torn record is dropped, not drawn
+            out += struct.pack("<12f", *rec) + b"\x00\x00"
+            kept += 1
+    if not kept:
+        return {}
+    facets = bytes(out)
+    bounds = _facet_bounds(facets)
+    if bounds["min"] == bounds["max"]:     # a point is not a model
+        return {}
+    return {"facets": facets, "tri_count": kept, "offset": blocks[0][0],
+            "blocks": len(blocks), "bounds": bounds}
 
 
 def stl_streams(data: bytes) -> list[dict]:

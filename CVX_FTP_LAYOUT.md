@@ -53,7 +53,18 @@ byte-exact: file = header + declared payload):
 
 The zlib streams in `TDC_L` (part CAD) and `WSM_L` (workspace scan, or a part
 copy in check tools) are **headerless binary-STL facet records** (50 B each).
-`RBT_G_RMD_*.dat` names the cell's robot ("FANUC", "M-20iD/35") ahead of an
-unreversed mesh; `3D_RBT_G_CLB_*.dat` holds the hand-eye calibration run as
-16-double pose-pair records; `HND_L`/`TDM_L` payload encodings remain undecoded.
+`RBT_G_RMD_*.dat` names the cell's robot ("FANUC", "M-20iD/35") ahead of its
+arm mesh - which uses the same uncompressed 48-byte records as `HND_L` (see
+below): 32,250 facets, one fused mesh at the saved pose, not per-link parts.
+`3D_RBT_G_CLB_*.dat` holds the hand-eye calibration run as 16-double pose-pair
+records.
+
+`HND_L` (gripper/EOAT) and the `RBT_G_RMD` arm decoded 2026-08-10: the same facet geometry, but
+**uncompressed** and in **48-byte** records (twelve float32 — unit normal + 3
+vertices, mm — with no u16 attribute word), starting at a file offset that is
+**2 mod 4**. That misalignment is why an earlier pass, reading 4-aligned
+floats, saw noise and called the encoding unreversed. Blocks are found by
+self-validation (a run of records with unit-or-zero normals, grown outward),
+never by a hardcoded offset; two real hand files decode to 46,952 and 481,039
+facets. `TDM_L` (matching template) payload encoding remains undecoded.
 Parser: `src/backupviewer/parsers/cvx_models.py`; viewer: the camera 3d view.

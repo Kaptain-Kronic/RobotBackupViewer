@@ -21,10 +21,30 @@
   geometry only when its records prove unit normals) — and renders them in a
   hand-rolled canvas-2d mesh viewer on the existing `proj3d` math (orbit /
   pan / zoom-about-cursor / mm ruler / enlarge lightbox; WebGL stays parked).
-  Hand model, matching templates, the FANUC robot identity and the hand-eye
-  calibration run (38 recorded pose pairs on the real camera) are listed as
-  honest info cards — recognized, sized, labeled, and explicitly *not*
-  rendered, because their encodings are not decoded.
+  Matching templates, the FANUC robot identity and the hand-eye calibration
+  run (38 recorded pose pairs on the real camera) are listed as honest info
+  cards — recognized, sized, labeled, and explicitly *not* rendered, because
+  their encodings are not decoded.
+- **The gripper and the robot arm render too.** The `HND_L` hand/EOAT blob had been
+  written off as an unreversed encoding — wrongly, and the reason was
+  alignment: the mesh is the same binary-STL facet geometry, but stored
+  uncompressed, in 48-byte records (twelve float32, no attribute word), at a
+  file offset that is *2 mod 4*, so the earlier pass reading 4-aligned floats
+  saw nothing but noise. It decodes now, and a hand draws and extracts to
+  `.stl` exactly like the part CAD. Nothing is hardcoded: blocks are located
+  by a run of records whose normals prove themselves unit (or exactly zero,
+  which STL allows) and grown outward while the bytes still read as facets, so
+  a file with no mesh honestly yields nothing. Real hands decode at 46,952 and
+  481,039 facets — and pointing the same decoder at `RBT_G_RMD`, whose ~1.8 MB
+  of "proprietary mesh" had been written off for the same reason, produced a
+  whole FANUC M-20iD/35 (32,250 facets) with no robot-specific code. The arm
+  is one fused mesh at its saved pose, so it draws but cannot be posed.
+- **Meshes stop being decimated for no reason.** The display cap was 30k
+  triangles, which halved a 32k robot arm into visible holes — sampling a
+  triangle soup punches gaps, so the cap is worth real milliseconds. Measured
+  redraw in the real window (5,144-tri part 23 ms · 48,066-tri scan 34 ms ·
+  32,250-tri arm 81 ms · 481,039-tri gripper 413 ms) put the cap at 60k: every
+  real mesh but the giant gripper now draws whole.
 - **Extract STL** writes any viewable model as a real binary `.stl` (byte-exact
   facet records, full detail even when the viewer decimates) to a user-picked
   folder through the house export contract — never into a backup, `.part` →

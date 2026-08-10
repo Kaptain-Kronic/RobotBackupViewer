@@ -61,15 +61,34 @@ DISPLAY_MAX_DIM = 1200
 _IMAGE_MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                ".png": "image/png", ".bmp": "image/bmp"}
 # CV-X 3D models: cap on triangles crossing the JS bridge per mesh (the viewer
-# says "decimated" when it bites), and the part-vs-scan split for a WSM stream -
+# says "decimated" when it bites). Set from measured redraw cost in the real
+# window 2026-08-10, because sampling a triangle SOUP punches visible holes -
+# it is worth paying real milliseconds to avoid decimating at all. Cost tracks
+# filled pixels more than triangle count: 5,144-tri part 23 ms, 48,066-tri scan
+# 34 ms, 32,250-tri robot arm 81 ms, 481,039-tri gripper 413 ms. 60k therefore
+# draws every real mesh measured except the giant gripper whole, and the old
+# 30k cap was halving a 32k arm into swiss cheese for nothing.
+# And the part-vs-scan split for a WSM stream -
 # a registered part CAD is part-local mm (origin-centered, every real one fits
 # well inside a half-metre reach) while a workspace scan sits in robot-world
 # coordinates ~1.3-1.5 m from the base - its SPAN can be small, so the split
 # keys on how far the geometry sits from the origin, not on its size
 # (measured 2026-08-10: a real fixture scan spanned only 109x227x191 mm but sat
 # 1.26-1.5 m out; the real part CADs all reach < 110 mm).
-CVX_MODEL_MAX_TRIS = 30_000
+CVX_MODEL_MAX_TRIS = 60_000
 _CVX_PART_REACH_MM = 700.0
+# An uncompressed mesh (HND gripper, RMD robot arm) has to be FOUND by
+# scanning, so a full decode costs real time: 1.2-3.6 s on the six real hand
+# files measured 2026-08-10 (3.3-12.9 MB, 32k-180k facets) and ~2 s on a robot,
+# and the scan - not the mesh - is most of it. The models LIST must not pay
+# that per file, so it only proves a mesh EXISTS from a bounded prefix and
+# leaves the counting to the mesh endpoint. The window has to clear the header
+# region each family puts ahead of its block: ~48 KB on every real hand
+# (48454 B on one plant's cameras, 48742 B on another's) but 291,674 B on the
+# robot model, so 512 KB covers the largest measured case with room and still
+# costs well under a second. A mesh whose block sits past the window stays
+# honestly "recognized, not drawn" rather than promising a view.
+CVX_MESH_PROBE_BYTES = 524_288
 
 
 def _is_ls_program(p: Path) -> bool:
@@ -101,16 +120,36 @@ def _cvx_setting_parts(rel: str) -> tuple[str, str]:
     return program, tool
 
 
+# the families whose geometry is stored uncompressed (see cvx_models.raw_facets)
+_CVX_RAW_MESH_KINDS = ("hand", "robot")
+
+
 def _cvx_stream_kind(file_kind: str, bounds: dict) -> str:
     """A model stream's display kind. TDC files ("part") hold the registered
-    part CAD. WSM files ("model") hold a workspace scan in pick tools but a
-    COPY of the part CAD in check tools, so the content decides: part-local
-    geometry stays inside _CVX_PART_REACH_MM of the origin, robot-world scans
-    sit beyond it (see the constant's comment for the measured basis)."""
-    if file_kind == "part":
-        return "part"
+    part CAD and HND files ("hand") the gripper/EOAT assembly - both are named
+    by the family their container proves, never by where the geometry sits.
+    WSM files ("model") hold a workspace scan in pick tools but a COPY of the
+    part CAD in check tools, so there the content decides: part-local geometry
+    stays inside _CVX_PART_REACH_MM of the origin, robot-world scans sit beyond
+    it (see the constant's comment for the measured basis)."""
+    if file_kind in ("part", "hand", "robot"):
+        return file_kind
     reach = max(abs(x) for x in bounds["min"] + bounds["max"])
     return "part" if reach < _CVX_PART_REACH_MM else "scan"
+
+
+def _cvx_streams(rel: str, data: bytes) -> list[dict]:
+    """Every drawable geometry stream a vouched model container yields, all in
+    the one shape the rest of this file speaks (`{offset, facets, tri_count,
+    bounds}`, facets in 50-byte binary-STL records): the zlib->STL streams of a
+    TDC/WSM, and the uncompressed 48-byte-record block of an HND gripper or an
+    RMD robot arm - each a single fused mesh, so stream 0 is the only index
+    those have. Empty when the bytes prove no geometry; absence is a finding,
+    not an error."""
+    if cvx_models.classify(rel) in _CVX_RAW_MESH_KINDS:
+        mesh = cvx_models.raw_facets(data)
+        return [mesh] if mesh else []
+    return cvx_models.stl_streams(data)
 
 
 class ApiError(Exception):
@@ -2219,7 +2258,21 @@ class Api:
                                   or Path(rel).stem),
                          "kind": ekind, "tris": None, "viewable": False,
                          "dup_of": None}
+                if kind in _CVX_RAW_MESH_KINDS:
+                    # Deliberately a PROBE, not a decode: the bounded prefix
+                    # proves a real self-validating facet block is in there
+                    # (see CVX_MESH_PROBE_BYTES for why the list may not pay
+                    # for the whole scan), so `viewable` is earned - but the
+                    # triangle count is not, and stays null rather than
+                    # becoming a number nobody counted. cvx_model does the
+                    # full decode when the user actually picks it. No
+                    # block in the window -> the entry is left exactly as it
+                    # was: recognized, honestly not drawn.
+                    if cvx_models.raw_facets(data[:CVX_MESH_PROBE_BYTES]):
+                        entry["viewable"] = True
                 if kind == "robot":
+                    # the arm draws AND names itself; the identity is read
+                    # from its own slots either way
                     ident = cvx_models.rmd_identity(data)
                     entry.update(ident)
                     if robot is None or not (robot["maker"] or robot["model"]):
@@ -2248,7 +2301,10 @@ class Api:
         """One model stream as the flat mesh arrays the 3D viewer draws,
         decimated to CVX_MODEL_MAX_TRIS (the payload says when it was). Only
         files the session's model index vouches for are served - anything
-        else is NOT_FOUND, never parsed on faith."""
+        else is NOT_FOUND, never parsed on faith. A hand or robot carries
+        exactly one mesh, so any stream but 0 is NOT_FOUND like any other
+        missing stream; its full decode (seconds on a big gripper) is paid
+        once per session by the same cache the compressed streams use."""
         s = self._need_session(sid)
         stream = int(stream or 0)
         p = s.find(rel)
@@ -2262,7 +2318,7 @@ class Api:
                 data = p.read_bytes()
             except OSError as e:
                 raise ApiError("UNREADABLE", f"cannot read {p.name}: {e}") from e
-            streams = cvx_models.stl_streams(data)
+            streams = _cvx_streams(crel, data)
             if not 0 <= stream < len(streams):
                 raise ApiError("NOT_FOUND", f"no geometry stream {stream} in {crel}")
             st = streams[stream]
@@ -2327,7 +2383,7 @@ class Api:
             done.add((crel.upper(), stream))
             if crel not in parsed:
                 try:
-                    parsed[crel] = cvx_models.stl_streams(p.read_bytes())
+                    parsed[crel] = _cvx_streams(crel, p.read_bytes())
                 except OSError as e:
                     raise ApiError("UNREADABLE", f"cannot read {p.name}: {e}") from e
             streams = parsed[crel]

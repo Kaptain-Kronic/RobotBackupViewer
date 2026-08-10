@@ -546,3 +546,146 @@ def test_cvx_overview_refuses_a_robot_backup(api, tmp_path):
     (d / "SUMMARY.DG").write_text("F Number: F999999\n", encoding="cp1252")
     res = api.cvx_overview(_sid(api, d))
     assert not res["ok"] and res["error"]["code"] == "NOT_CVX"
+
+
+# -- the HND gripper mesh (48-byte records, uncompressed, offset 2 mod 4) ---------
+
+def hnd_records(count=64, scale=1.0):
+    """`count` HND facet records: 48 bytes each - twelve float32, no u16
+    attribute word. Built by re-packing tetra_facets()'s own records, each
+    repeat of the four faces scaled further out from the origin so the block
+    spans a real box; uniform scaling about the origin leaves a face normal
+    untouched, so the normals stay the computed ones (never hand-typed).
+    64 records span +/-16 mm, and 64 is exactly cvx_models._HND_MIN."""
+    src = tetra_facets()
+    out = bytearray()
+    for i in range(count):
+        rec = list(struct.unpack_from("<12f", src, (i % 4) * cvx_models.FACET))
+        k = scale * (1 + i // 4)
+        for j in range(3, 12):             # the three vertices; [0:3] is the normal
+            rec[j] *= k
+        out += struct.pack("<12f", *rec)
+    return bytes(out)
+
+
+def stl_records(records):
+    """The same facets in the 50-byte binary-STL form the rest of the module
+    speaks - each 48-byte record with the u16 attribute word (built
+    programmatically) put back. What a faithful 48->50 repack must produce."""
+    step = cvx_models.HND_FACET
+    return b"".join(records[i:i + step] + bytes(2)
+                    for i in range(0, len(records), step))
+
+
+def hand_file(records, pre=4, tail=256):
+    """A synthetic HND_L_*.tbd: the 1001-style header, `pre` NUL bytes, the
+    raw mesh block, then NUL padding after it. The default `pre` lands the
+    block at HEAD_1001 + 4 = 2 mod 4 - the misalignment that is the whole
+    point of this format, and what made an earlier pass read the file as
+    noise."""
+    return container_1001(bytes(pre) + records + bytes(tail))
+
+
+def noise_bytes(n, seed=12345):
+    """Deterministic pseudo-random filler - an LCG, so the fixture is the
+    same bytes on every machine and no test depends on randomness."""
+    out = bytearray()
+    x = seed
+    while len(out) < n:
+        x = (1103515245 * x + 12345) & 0x7FFFFFFF
+        out += struct.pack("<I", x)
+    return bytes(out[:n])
+
+
+def test_raw_facets_round_trips_a_planted_block():
+    """The block is found where it was planted (not at a hardcoded offset),
+    every planted record comes back, the bounds are the planted geometry's,
+    and the 48->50 repack is byte-faithful - so faithful that the module's
+    own facet gate accepts the result, which is what lets stl_bytes /
+    mesh_arrays / _facet_bounds take these records unchanged."""
+    recs = hnd_records(64)
+    got = cvx_models.raw_facets(hand_file(recs))
+    assert got["tri_count"] == 64
+    assert got["blocks"] == 1
+    assert got["offset"] == cvx_models.HEAD_1001 + 4
+    assert got["bounds"] == {"min": [-16.0, -16.0, -16.0],
+                             "max": [16.0, 16.0, 16.0]}
+    assert got["facets"] == stl_records(recs)   # every record, byte-exact
+    assert cvx_models._looks_like_facets(got["facets"])
+    assert cvx_models.mesh_arrays(got["facets"])["shown_tris"] == 64
+
+
+def test_raw_facets_normals_match_their_own_winding():
+    """The geometric proof of the layout, rather than an assumption about it:
+    for every returned record the stored first vector IS the unit normal of
+    that same record's vertex winding (dot ~ +1.0). A field read one float
+    early or late - exactly what a 2-mod-4 offset invites - could not survive
+    this check."""
+    got = cvx_models.raw_facets(hand_file(hnd_records(64)))
+    worst = 1.0
+    for i in range(got["tri_count"]):
+        rec = struct.unpack_from("<12f", got["facets"], i * cvx_models.FACET)
+        va, vb, vc = rec[3:6], rec[6:9], rec[9:12]
+        u = [vb[j] - va[j] for j in range(3)]
+        v = [vc[j] - va[j] for j in range(3)]
+        n = [u[1] * v[2] - u[2] * v[1],
+             u[2] * v[0] - u[0] * v[2],
+             u[0] * v[1] - u[1] * v[0]]
+        mag = (n[0] ** 2 + n[1] ** 2 + n[2] ** 2) ** 0.5
+        worst = min(worst, sum(a * b / mag for a, b in zip(rec[0:3], n)))
+    assert worst > 1.0 - 1e-6               # float32 storage is the only error
+
+
+@pytest.mark.parametrize("data", [
+    # the same geometry, zlib-packed in a TDC-style container: a real model
+    # file, but not this one - stl_streams is what reads it
+    container_1c(zlib.compress(stl_records(hnd_records(600)))),
+    hand_file(hnd_records(63)),            # one record short of _HND_MIN
+    hand_file(hnd_records(24)),            # a bare _HND_RUN proves nothing
+    bytes(8192),                           # all-NUL: padding is not a model
+    b"The quick brown fox jumps over the lazy dog. " * 200,
+    noise_bytes(8192),
+    container_1001(noise_bytes(8192)),     # a real hand header over junk: the
+], ids=[                                   # header alone never vouches
+    # ids are spelled out because pytest builds them from the parameter, and
+    # a multi-KB blob's id overflows the PYTEST_CURRENT_TEST environment
+    # variable (32767 chars) on Windows
+    "tdc-style zlib container", "63 records", "24 records", "all NUL",
+    "text", "noise", "noise under a hand header"])
+def test_raw_facets_refuses_what_is_not_a_hand_mesh(data):
+    """Absence is an empty dict, never a guess: a zlib container, a block too
+    short to be a model, NUL padding, text, and noise - inside a genuine
+    1001 hand header or not - all come back {}."""
+    assert cvx_models.raw_facets(data) == {}
+
+
+def test_raw_facets_does_not_eat_the_padding_between_blocks():
+    """Two planted blocks come back as two blocks whose records are exactly
+    the ones planted - the NUL gap between them is neither drawn as geometry
+    nor allowed to fuse the blocks into one."""
+    # the gap is deliberately shorter than one 48-byte record: the real files
+    # carry a sub-header there, and a run may legally open on zero normals,
+    # so a whole-record gap of NULs is a case this fixture does not claim.
+    a, b = hnd_records(64), hnd_records(80, scale=2.0)
+    got = cvx_models.raw_facets(hand_file(a + bytes(8) + b))
+    assert got["blocks"] == 2
+    assert got["tri_count"] == 64 + 80
+    assert got["offset"] == cvx_models.HEAD_1001 + 4      # the FIRST block
+    assert got["facets"] == stl_records(a) + stl_records(b)
+    assert bytes(cvx_models.HND_FACET) not in got["facets"]   # no NUL record
+    assert got["bounds"] == {"min": [-40.0, -40.0, -40.0],
+                             "max": [40.0, 40.0, 40.0]}
+
+
+@pytest.mark.parametrize("pre,mod4", [(2, 0), (4, 2)])
+def test_raw_facets_tolerates_the_offset_without_depending_on_it(pre, mod4):
+    """The scan finds the same mesh whether the block starts 4-aligned or at
+    the real files' 2-mod-4 offset. The misalignment is tolerated, not
+    required - a decoder that keyed on it would be as wrong as the 4-aligned
+    pass that first read these files as noise."""
+    recs = hnd_records(64)
+    got = cvx_models.raw_facets(hand_file(recs, pre=pre))
+    assert got["offset"] == cvx_models.HEAD_1001 + pre
+    assert got["offset"] % 4 == mod4
+    assert got["tri_count"] == 64 and got["blocks"] == 1
+    assert got["facets"] == stl_records(recs)
