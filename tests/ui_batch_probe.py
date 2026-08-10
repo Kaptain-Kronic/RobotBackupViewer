@@ -323,12 +323,21 @@ def probe(window):
         check("notes.caret_expands_in_place",
               expand.get("open") is True and expand.get("body") is True and
               expand.get("stillHome") is True, f"({expand})")
+        # v1.5 metadata saves land in-place with the disk write behind them, so
+        # a single lib_list can race the save and freeze '' forever - re-issue
+        # the call on every poll tick until the note (or a timeout) shows up
         js(window, """window.__notes=null;
-            BV.api.call('lib_list').then(function(d){
-              var r=d.robots.find(function(x){return x.robot==='RB020R01B01';});
-              window.__notes = r ? r.notes : 'missing';
-            });""")
-        saved = poll(window, "window.__notes")
+            window.__notesTick=function(){
+              BV.api.call('lib_list').then(function(d){
+                var r=d.robots.find(function(x){return x.robot==='RB020R01B01';});
+                window.__notes = (r && r.notes) ? r.notes : null;
+              });
+            };
+            window.__notesTick();""")
+        saved = poll(window, """(function(){
+            if(!window.__notes) window.__notesTick();
+            return window.__notes;
+        })()""")
         check("notes.saved_with_newlines_and_tab",
               saved == "first line\n\tsecond indented\nthird", f"(got {saved!r})")
         redit = js(window, """(function(){
