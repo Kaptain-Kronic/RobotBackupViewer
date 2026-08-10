@@ -1526,16 +1526,25 @@ def probe(window):
                 return r.textContent.indexOf('CELL-01CAM01')>=0;});
             row.click();
         })()""")
-        # a camera-only backup has no overview, so route() falls back - and the
-        # fallback must land on a tab you could have CLICKED, never on one of
-        # the hidden always-on ones (edit/search/compare/pdiff)
-        check("photos.route_replaced_to_photos",
-              poll(window, "location.hash==='#photos' ? 'y' : ''") == "y",
+        # cameras grew their own overview (the "*camera" tab special), so a
+        # camera backup now LANDS there instead of falling back to photos
+        check("photos.camera_lands_on_overview",
+              poll(window, "location.hash==='#overview' ? 'y' : ''") == "y",
+              f"(hash={js(window, 'location.hash')!r})")
+        # the fallback invariant still holds: a robot-only hash must replace
+        # to a tab you could have CLICKED, never one of the hidden always-on
+        # ones (edit/search/compare/pdiff)
+        js(window, "location.replace('#registers')")
+        check("photos.disabled_hash_falls_back",
+              poll(window, "location.hash==='#overview' ? 'y' : ''") == "y",
               f"(hash={js(window, 'location.hash')!r})")
         check("photos.fallback_skips_hidden_tabs",
               not js(window, """BV.tabs.filter(function(t){return t.hidden;})
                   .some(function(t){return location.hash === '#' + t.id;})"""),
               "(a hidden always-on tab must never be a route fallback)")
+        # replace, not a hash push: the back.* section below counts on the
+        # camera open having left exactly one history entry
+        js(window, "location.replace('#photos')")
         check("photos.hero", bool(poll(window, "!!document.querySelector('#photo-hero img')")))
 
         layout = js(window, """(function(){
