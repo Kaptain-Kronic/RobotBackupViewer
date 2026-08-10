@@ -50,6 +50,7 @@
     get_overview: 0, get_styles: 0, get_program: 1,
     get_call_tree: 2, get_alarm_files: 0, get_alarms: 4, list_files: 0,
     get_file: 1, get_photos: 0, get_image: 1,
+    cvx_models: 0, cvx_model: 2, cvx_model_export: 3, cvx_overview: 0,
     /* the ws_* edit-workspace endpoints are deliberately absent: they are
        path-addressed and take no sid, so a solo window needs no injection. */
   };

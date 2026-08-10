@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Callable
 
 from .ftpbackup import long_path
-from .parsers import TAB_REQUIREMENTS, cvx_image
+from .parsers import TAB_REQUIREMENTS, cvx_image, cvx_models
 from .parsers.common import read_text
 
 log = logging.getLogger(__name__)
@@ -326,6 +326,37 @@ class BackupSession:
 
         return self.cached("cvx_images", build)
 
+    def cvx_model_files(self) -> list[tuple[str, Path]]:
+        """Every vouched CV-X 3D-model container in the camera's `cv-x/` tree,
+        as (rel, path) pairs in index order: part CAD (TDC), workspace models
+        (WSM), gripper (HND), templates (TDM), robot model (RMD), hand-eye
+        calibration (CLB), screen layouts (LYT).
+
+        Mirrors cvx_image_files: the filename only CLAIMS a model family
+        (cvx_models.classify), the first bytes must prove a container header
+        before the file counts - this is what decides whether the 3D tab
+        appears. Cheap: a real camera carries a few dozen of these, 64 bytes
+        read from each."""
+        def build():
+            out = []
+            for key in sorted(self.files):
+                parts = key.split("/")
+                if "CV-X" not in parts[:-1] or not key.endswith((".TBD", ".DAT")):
+                    continue
+                if not cvx_models.classify(key):
+                    continue
+                p = self.files[key]
+                try:
+                    with open(p, "rb") as fh:      # indexed paths are already \\?\
+                        head = fh.read(64)
+                except OSError:
+                    continue
+                if cvx_models.header_kind(head):
+                    out.append((self.rel(p), p))
+            return out
+
+        return self.cached("cvx_models", build)
+
     def _is_keyence(self) -> bool:
         """A Keyence CV-X backup: the camera's `cv-x/` tree (setting/, box/)."""
         for key in self.files:
@@ -369,6 +400,25 @@ class BackupSession:
 
     # -- manifest -----------------------------------------------------------
 
+    def _tab_need(self, need: str) -> bool:
+        """One TAB_REQUIREMENTS item: a plain name is an index lookup, the
+        "*"-prefixed specials ask the session. A tab lights when ANY of its
+        items is met, so each item is judged on its own."""
+        if need == "*programs":
+            return bool(self.program_files) or self.has_binary_programs()
+        if need == "*alarms":
+            return bool(self.alarm_files())
+        if need == "*photos":
+            return self.has_photos()
+        if need == "*camera":
+            return self.backup_type.endswith("camera")
+        if need == "*cvx3d":
+            # gated on _is_keyence so a robot backup never pays the model
+            # scan just to decide view3d (its DCS files already decided it)
+            return self._is_keyence() and any(
+                cvx_models.classify(rel) for rel, _p in self.cvx_model_files())
+        return self.find(need) is not None
+
     def manifest(self) -> dict:
         f_number = ""
         summary = self.find("SUMMARY.DG")
@@ -384,16 +434,7 @@ class BackupSession:
 
         tabs = {}
         for tab, needs in TAB_REQUIREMENTS.items():
-            if not needs:
-                tabs[tab] = True
-            elif needs == ["*programs"]:
-                tabs[tab] = bool(self.program_files) or self.has_binary_programs()
-            elif needs == ["*alarms"]:
-                tabs[tab] = bool(self.alarm_files())
-            elif needs == ["*photos"]:
-                tabs[tab] = self.has_photos()
-            else:
-                tabs[tab] = any(self.find(n) for n in needs)
+            tabs[tab] = not needs or any(self._tab_need(n) for n in needs)
 
         try:
             root_key = str(Path(self.root).resolve())
