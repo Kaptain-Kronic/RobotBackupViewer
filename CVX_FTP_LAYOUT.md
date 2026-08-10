@@ -38,3 +38,22 @@ the controller type/grade (searched, three cameras), so the IP has to come from
 the job that dialed the camera. All 50 real-camera samples report ControllerType
 `12` and SoftwareGrade `1078219315` — which is packed ASCII, `"@DR3"` big-endian
 (the simulator's own new-workspace default is `1078021196` = `"@ALL"`).
+
+## 3D-pick model blobs (decoded 2026-08-07/10, one real 3D-pick backup)
+
+`setting/<NNN>/T<xxx>/` folders on a 3D robot-pick program carry the vision
+units' model data. Two container headers (both little-endian, verified
+byte-exact: file = header + declared payload):
+
+- `1001`-style (`.dat`, multi-section `.tbd`): u32 1001 · u32 1342 (header
+  size) · u32 payload · u16 type id · cp932 label @0x0E · English label @0x4A
+  (plus DE/FR/IT copies deeper in).
+- `0x1c`-style (`TDC_L`/`WSM_L`/`LYT_G`): u32 28 · u32 1001 · … · u32 payload
+  @0x10; payload holds zlib streams.
+
+The zlib streams in `TDC_L` (part CAD) and `WSM_L` (workspace scan, or a part
+copy in check tools) are **headerless binary-STL facet records** (50 B each).
+`RBT_G_RMD_*.dat` names the cell's robot ("FANUC", "M-20iD/35") ahead of an
+unreversed mesh; `3D_RBT_G_CLB_*.dat` holds the hand-eye calibration run as
+16-double pose-pair records; `HND_L`/`TDM_L` payload encodings remain undecoded.
+Parser: `src/backupviewer/parsers/cvx_models.py`; viewer: the camera 3d view.

@@ -1,5 +1,38 @@
 # Changelog
 
+## unreleased — the camera gets its 3d view
+- **A Keyence camera backup now has an overview and a 3d view.** The tab strip
+  used to offer a CV-X backup nothing but photos and files; the robot-only
+  screens are gone for cameras (they always were on v1.5 source — the greyed
+  strip lived only in pre-63f7196 builds) and two camera surfaces light up in
+  their place, both data-driven through `TAB_REQUIREMENTS` specials
+  (`"*camera"`, `"*cvx3d"`), so badges, digit keys and the screens menu all
+  agree for free.
+- **The camera overview** keeps the dated-backup picker/compare/remote
+  toolbar, and pairs the CV-X crossfade hero (greyscale⇆height, the same
+  slider the photos tab grew in v1.3 — now extracted into a shared
+  `BV.photoFigure` so one renderer serves both tabs) with summary cards:
+  camera identity, the controller's own program names, and a 3d card
+  (model counts · the cell's robot · calibration pairs) linking to the viewer.
+- **The camera 3d view** decodes the backup's own model blobs — the
+  registered part CAD and workspace scans hide inside `TDC_L`/`WSM_L`
+  containers as zlib-wrapped binary-STL facets (`parsers/cvx_models.py`,
+  format read off a real 3D-pick backup and self-validating: a stream is
+  geometry only when its records prove unit normals) — and renders them in a
+  hand-rolled canvas-2d mesh viewer on the existing `proj3d` math (orbit /
+  pan / zoom-about-cursor / mm ruler / enlarge lightbox; WebGL stays parked).
+  Hand model, matching templates, the FANUC robot identity and the hand-eye
+  calibration run (38 recorded pose pairs on the real camera) are listed as
+  honest info cards — recognized, sized, labeled, and explicitly *not*
+  rendered, because their encodings are not decoded.
+- **Extract STL** writes any viewable model as a real binary `.stl` (byte-exact
+  facet records, full detail even when the viewer decimates) to a user-picked
+  folder through the house export contract — never into a backup, `.part` →
+  rename, reveal-in-explorer — one model or all of them at once.
+- Probe: `ui_cvx3d_probe.py` (tabs light/vanish, canvas paints pixels, extract
+  modal, enlarge overlay). Inventory: dropped the three long-deleted
+  `*_sandbox.html` rows that were blocking `update_inventory.py`.
+
 ## v1.5 — the library overhaul
 - **Renaming a robot no longer rescans the library.** Every app-initiated
   metadata change — rename/relocate, camera link, note or IP edit, add,

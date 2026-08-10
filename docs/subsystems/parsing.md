@@ -3,12 +3,15 @@
 *Subsystem doc #1. Written 2026-07-31 against `main` @ `0dca2d0`, clean tree.
 Line-number cites are against that revision and drift with edits; the anchor
 commit is the reference. §5 invariant 10, §7 Coverage and §8 items 1–2 updated
-2026-08-01 after the fixture repair (`e99fc3b` · `8804f62` · `c502ad5`).*
+2026-08-01 after the fixture repair (`e99fc3b` · `8804f62` · `c502ad5`).
+§2, §7 and the CV-X facts updated 2026-08-10 with the `cvx_models` parser
+(the cvx-camera-tabs slice).*
 
 Covers: src/backupviewer/session.py, src/backupviewer/parsers/__init__.py,
 src/backupviewer/parsers/alarms.py, src/backupviewer/parsers/callgraph.py,
 src/backupviewer/parsers/common.py, src/backupviewer/parsers/curpos.py,
 src/backupviewer/parsers/cvx_image.py, src/backupviewer/parsers/cvx_inspect.py,
+src/backupviewer/parsers/cvx_models.py,
 src/backupviewer/parsers/dcs.py, src/backupviewer/parsers/dcszones.py,
 src/backupviewer/parsers/frames.py, src/backupviewer/parsers/gmwizlog.py,
 src/backupviewer/parsers/io_dg.py, src/backupviewer/parsers/kinematics.py,
@@ -20,7 +23,7 @@ src/backupviewer/parsers/payloads.py, src/backupviewer/parsers/registers.py,
 src/backupviewer/parsers/roboguidedef.py, src/backupviewer/parsers/styles.py,
 src/backupviewer/parsers/summary_dg.py, src/backupviewer/parsers/sysvars.py,
 src/backupviewer/parsers/va.py
-(29 files)
+(30 files)
 
 *Four of those — `curpos`, `dcszones`, `kinematics`, `roboguidedef` — are also
 claimed by [3d-viewer.md](3d-viewer.md), which uses what they produce. Here they
@@ -61,10 +64,11 @@ counted but never decoded — only text formats are parsed, by design.
 
 Per-file descriptions live in the [INVENTORY map](../INVENTORY.md); this is
 the structure the flat listing hides. The folder is *not* one subsystem — the
-inventory assigns its 28 files to four: **backup parsing** (19: the engine
+inventory assigns its 29 files to four: **backup parsing** (19: the engine
 plus the robot-file leaves), **3D viewer** (4: `curpos`, `dcszones`,
-`kinematics`, `roboguidedef`), **cameras** (4: `cvx_image`, `cvx_inspect`,
-`mtx_portal`, `mtx_saved_image`), **program editor** (1: `ls_edit`).
+`kinematics`, `roboguidedef`), **cameras** (5: `cvx_image`, `cvx_inspect`,
+`cvx_models`, `mtx_portal`, `mtx_saved_image`), **program editor** (1:
+`ls_edit`).
 `session.py` is backup parsing (also cameras). Use those assignments; don't
 reinvent them.
 
@@ -245,6 +249,12 @@ verified* — or an honest **assumed**. The evidence tags:
 | A CV-X carries no readable controller name over FTP (banner = model only; env.dat = paths, no identity); the inspection *program names* are the camera's own account of itself | `cvx_inspect.py:3-9` |
 | `inspect.dat` holds the program name at 0x4C and a byte-for-byte echo at 0x398; the two agreed in **154/154** real files (13 cameras, 2026-07-25) — so the parser *requires* agreement, making the read self-validating against mis-seeks and impostor files (nearby fields hold localized factory defaults like `Neu115` a looser scan would grab) | `cvx_inspect.py:11-23` |
 | One camera name out of many drifting program names: most-frequent wins, ties break to the lowest program slot (oldest, plainest); verified to pick right for all 13 sample cameras | `cvx_inspect.py:66-88` |
+| CV-X 3D-pick model blobs use two container headers: u32 `1001` + u32 `1342` (header size) + payload size + u16 type id + a cp932 label at 0x0E with an English copy at 0x4A; or u32 `28` + u32 `1001` with the payload size at 0x10 — both verified byte-exact against one real 3D-pick backup (file = header + payload to the byte) | **corpus-measured** 2026-08-07/10: `cvx_models.py:1-40` |
+| The geometry inside `TDC_L`/`WSM_L` blobs is zlib streams of raw binary-STL facet records (50 B: unit normal + 3 vertices + u16 attr, no STL header); a stream is geometry only if its length divides by 50 AND ≥90 % of sampled records carry a unit first vector — name is never evidence | `cvx_models.py` `stl_streams`; real T101 part = 5,144 facets, decompressed size matches the container's own count field |
+| A WSM stream is a part-CAD *copy* or a workspace *scan*; the split keys on distance from origin (part-local CAD sits inside 700 mm, robot-world scans sit 1.26–1.5 m out) — span is useless, a real fixture scan spanned only 109×227×191 mm | `api.py` `_cvx_stream_kind`; measured 2026-08-10 |
+| `RBT_G_RMD_*.dat` self-identifies the cell's robot in two NUL-padded 64-byte slots at 0x53E/0x57E ("FANUC", "M-20iD/35"); a slot is accepted only if it is printable ASCII with a clean NUL tail; the ~1.8 MB mesh that follows is a NON-zlib encoding that remains unreversed — shown as identity only, never guessed geometry | `cvx_models.py` `rmd_identity` |
+| `3D_RBT_G_CLB_*.dat` holds the hand-eye calibration run as 16-double records (robot pose + camera-measured pose + 4 extra); records are accepted only when the first six self-validate as a pose, so noise scans yield an honest empty list — the real camera yields 38 pairs on a 300×200 mm grid | `cvx_models.py` `calibration_records` |
+| `HND_L` (gripper CAD) and `TDM_L` (matching templates) containers are recognized and listed with their labels, but their payload encodings are NOT decoded — the viewer says so instead of rendering a guess | `cvx_models.py:1-40` docstring, the not-proved list |
 | Matrox saved photos come as jpg/png/txt triples; the `.txt` sidecar's values contain colons (timestamps, MACs) so keys split on the FIRST colon only; a colon-less line starts a section | `mtx_saved_image.py:3-33` |
 | Older Matrox portals write literal DesignAssistant links; DA 9.x never does — each project row carries a `prj-name` attribute (unquoted in the wild) and the portal builds the URL in JS, so the parser builds the same one | `mtx_portal.py:6-12` |
 
@@ -396,7 +406,8 @@ the fixture gate's visible "0 backup roots present" line.
 **Tracked, direct** (run on any clone) — 122 tests across 11 files:
 `test_ls_edit` (31, incl. the byte-round-trip engine), `test_cvx_image` (29),
 `test_dcszones` (12), `test_kinematics` (11, synthetic `.def`; FK
-expectations hand-derived), `test_cvx_inspect` (10), `test_sysvar_merge` (9),
+expectations hand-derived), `test_cvx_inspect` (10), `test_cvx_models` (62, incl. the
+session/api integration over a synthetic pull), `test_sysvar_merge` (9),
 `test_backup_formats` (7: format detection, recursive index, dupe-basename
 priority, per-format tabs, io-from-summary fallback — synthetic trees,
 the tracked successor to the retired real-corpus format tests),

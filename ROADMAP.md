@@ -171,12 +171,22 @@ one click backs up the robot + all its cameras together.
   15-bit range value (`H = (G<<7)|(R<<4)|B`, all-zero = no data), read off real
   files and pinned by tests — see `parsers/cvx_image.py`, which also records
   what could NOT be proved (a true height of 0 is indistinguishable from no
-  data) and the dead end (the `.tbd` blobs carry no images: no signature, no
-  raster stride, `HND_L` at 7.32 bits/byte entropy). Rendered to PNG through
+  data) and the dead end (the `.tbd` blobs carry no *images* — though the
+  2026-08-07 decode showed they DO carry zlib-wrapped binary-STL geometry;
+  see the CV-X 3D models bullet below). Rendered to PNG through
   the phone view's stdlib encoder, decimated during the decode so a 12 MB
   master costs ~0.4 s and the stack stays locked. What there is to show is
   mostly taught masters; timestamped triggers only exist when a tech turned
   image logging on. Landing on the `cvx-photos` branch.
+
+- ✅ **CV-X 3D models: viewer + STL extract** (landed on `cvx-camera-tabs`) —
+  a camera backup's `TDC_L`/`WSM_L` blobs decode to the registered part CAD
+  and workspace scans (zlib-wrapped binary-STL facets, `parsers/cvx_models.py`);
+  the camera's 3d view tab renders them in a canvas-2d viewer on `proj3d`
+  math and exports real `.stl` files; overview gains the crossfade hero +
+  program/robot/calibration cards. Hand model / templates / robot mesh stay
+  honest info cards — their encodings are unreversed. WebGL still parked;
+  canvas 2d works under software rendering.
 
 - 🔨 **Discovery** — agreed direction: probe the DesignAssistant web portal
   (:80/:443) and EtherNet/IP ListIdentity (UDP 44818, Matrox vendor ID) for
