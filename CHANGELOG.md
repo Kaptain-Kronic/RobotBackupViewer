@@ -1,6 +1,6 @@
 # Changelog
 
-## unreleased — the camera gets its 3d view, and the files tab extracts
+## unreleased — the camera gets its 3d view, the files tab extracts, and the scan window tightens up
 - **The files tab extracts to USB.** Every row grew a checkbox — tick one,
   shift-click a range, or take the header box, which selects exactly what the
   filter shows (the `tp` chip plus one click is every TP file in the backup).
@@ -118,6 +118,42 @@
 - Probe: `ui_cvx3d_probe.py` (tabs light/vanish, canvas paints pixels, extract
   modal, enlarge overlay). Inventory: dropped the three long-deleted
   `*_sandbox.html` rows that were blocking `update_inventory.py`.
+- **The fleet-scan picker is a compact flat list.** No category headers, no
+  per-category select-alls — every check in one list, two tight side-by-side
+  columns under a single "all" box. The window now hugs the list (the full
+  80vh frame comes back when a report paints), the find bar and scan button
+  sit flush at its bottom edge, and the close button is gone — the ✕ and Esc
+  already do that job. Text still sitting in the find box when scan is
+  clicked rides along without needing Enter (it always did; now it's pinned
+  by a probe and the tooltip says so).
+- **The style table is checked in both directions.** "style table broken"
+  still flags an enabled style row pointing at a program the backup doesn't
+  have — and now also flags a STYLE-named main sitting in the backup with no
+  style row at all (the PLC starts styles through the table, so an unlisted
+  STYLE07 can never run). Disabled rows still count as deliberate parking,
+  in both directions.
+- **"unused S## programs" grew into "S## subroutine discipline."** Same
+  check, wider truth: S## subs never reached from a style's call tree are
+  still listed (dead style code, info) — and a sub reached by the WRONG
+  style (an S61 program inside STYLE04's tree) is now a flag, with the call
+  path named. Style chaining is understood: the walk stops where STYLE04
+  calls STYLE05, so the next style's own kit never false-flags.
+- **"scan again" always shows the live check list.** The picker used to
+  rebuild from the kept report's own snapshot of the checks, so reopening
+  an old report and hitting "scan again" resurrected outdated labels — and
+  would have silently hidden any check added since that report ran. The
+  snapshot is now id+label only (just enough to title the report's
+  sections) and the picker re-pulls the registry every time.
+- **Clock drift reads like a clock, not a stopwatch.** Drift and tolerance
+  now print as a unit cascade — `+2M 4D 10H 43m 12s`, or just `+7m` when
+  that's the whole story. The robot whose RTC died years ago reads
+  `+15Y 11M 28D 8H` instead of a six-digit pile of hours.
+- **One checkbox, everywhere.** The library's hand-drawn selection box
+  (the sketched square with the X) is now the app-wide checkbox: the scan
+  picker, the programs pick column, the editor workspace (program finder,
+  find/replace tree, search options), the network scan, the 3D zone list,
+  and every modal checklist all wear it. It was scoped to the library by
+  accident of birth; the style is shared now, so a restyle lands once.
 
 ## v1.5 — the library overhaul
 - **Renaming a robot no longer rescans the library.** Every app-initiated
