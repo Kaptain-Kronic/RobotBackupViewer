@@ -67,6 +67,16 @@
   its closing `ENDIF`. Runs of decoded rubbish that are technically comments
   (`'5` repeated) no longer count as scripts, while a technician's notes-only
   tool still does.
+- **The logic tab leads with the Calculation units.** A program's block holds
+  more script-shaped text than the controller lists as a Calculation — helper
+  expressions belonging to other tools share the region — and a technician
+  comparing the tab against the camera sees only their calculations. The rail
+  now leads with the units whose own first comment names them one (the shop's
+  convention: `'Dual Bin 1 Calculation Redundancy`, `'Path priority
+  Calculation`), and the rest folds behind a "show other script text" toggle.
+  It is a convention rather than a guarantee of the format, so nothing is
+  dropped, and a program whose scripts name none of themselves shows all of
+  them rather than going blank.
 - **The 3D view leads with the part models.** The registered part CAD is what
   that screen is for; the workspace scans, gripper, arm, calibration and
   templates the backup also carries now fold behind one "other models & data"

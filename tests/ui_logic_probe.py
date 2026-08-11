@@ -178,6 +178,20 @@ def probe(window):
                   return (a && a._bvScrollKey) + '|' + (b && b._bvScrollKey);
               })()""") == "logic-rail|logic-code")
 
+        # The rail leads with the units a technician calls a Calculation (their
+        # own naming convention) and folds the rest. This fixture's scripts name
+        # none of themselves that way, so the fallback must show them ALL - a
+        # camera whose scripts follow no convention must never get an empty tab.
+        shown = js(window, """(function(){
+            return [...document.querySelectorAll('.logic-row')]
+                .filter(function(r){ return r.offsetParent !== null; }).length;
+        })()""")
+        check("fallback.no_convention_shows_all", shown == 3, f"({shown} visible rows)")
+        check("fallback.no_toggle_when_nothing_folded", js(window, """(function(){
+            return ![...document.querySelectorAll('.logic-rail button')]
+                .some(function(b){ return b.textContent.indexOf('other script') >= 0; });
+        })()"""))
+
         # ---- a robot backup never reaches this screen ----
         rb = _TMP / "rb"
         rb.mkdir()
@@ -186,6 +200,7 @@ def probe(window):
             BV.session.open(m); BV.state.setManifest(m);
         })""" % repr(str(rb)).replace("'", '"'))
         time.sleep(1.5)
+
         check("robot.tab_dark", not js(window, "!!BV.state.manifest.tabs.logic"))
     finally:
         report()

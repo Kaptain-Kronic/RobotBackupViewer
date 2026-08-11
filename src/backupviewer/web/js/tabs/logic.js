@@ -20,6 +20,11 @@
 (function () {
   "use strict";
 
+  /* a Calculation unit names itself in its own first comment - the shop's
+     convention, and the only signal that separates the units the controller
+     lists from helper expressions in the same block */
+  var CALC_TITLE = /calculation/i;
+
   /* the language's own cross-tool reference - Tnnn.RSLT.MNEMONIC[i]:MS. It is
      the ONE token worth an accent: it says "this line reads another tool's
      result", which is the thing a troubleshooter is hunting. Everything else
@@ -227,6 +232,8 @@
          carries none - its name list is still evidence, so the program never
          vanishes from the rail */
       var entries = [];
+      var extras = [];        /* the ones behind the toggle */
+      var extraHost = BV.el("div");
       progs.forEach(function (p) {
         if (progs.length > 1) rail.appendChild(groupHead(p, p.scripts.length));
         if (!p.scripts.length) {
@@ -235,12 +242,48 @@
           rail.appendChild(railRow(e0));
           return;
         }
-        p.scripts.forEach(function (sc, i) {
-          var e = { p: p, sc: sc, i: i };
+        /* A program's block holds more script-shaped text than the controller
+           shows as a Calculation unit: helper expressions belonging to other
+           tools sit in the same region. The technicians' own convention is the
+           only thing that separates them - a Calculation unit's first comment
+           names it one ("'Dual Bin 1 Calculation Redundancy", "'Path priority
+           Calculation") - so that is what leads the rail. It is a CONVENTION,
+           not a fact the format guarantees, which is why the rest folds behind
+           a toggle instead of being dropped, and why a program whose scripts
+           name none of themselves shows all of them rather than nothing. */
+        var main = p.scripts.filter(function (sc) { return CALC_TITLE.test(sc.title || ""); });
+        var rest = p.scripts.filter(function (sc) { return !CALC_TITLE.test(sc.title || ""); });
+        if (!main.length) { main = p.scripts; rest = []; }
+        main.forEach(function (sc) {
+          var e = { p: p, sc: sc, i: p.scripts.indexOf(sc) };
           entries.push(e);
           rail.appendChild(railRow(e));
         });
+        rest.forEach(function (sc) {
+          var e = { p: p, sc: sc, i: p.scripts.indexOf(sc) };
+          entries.push(e);
+          extras.push(e);
+          extraHost.appendChild(railRow(e));
+        });
       });
+      var paintOther = function () {};   /* hoisted: the restore below calls it */
+      if (extras.length) {
+        if (s.showOther === undefined) s.showOther = false;
+        var otherBtn = BV.el("button", { class: "btn", style:
+          "margin:.7rem .5rem .2rem;font-size:.78rem" });
+        paintOther = function () {
+          otherBtn.textContent = (s.showOther ? "hide" : "show") +
+            " other script text (" + extras.length + ")";
+          extraHost.style.display = s.showOther ? "" : "none";
+        };
+        otherBtn.addEventListener("click", function () {
+          s.showOther = !s.showOther;
+          paintOther();
+        });
+        rail.appendChild(otherBtn);
+        rail.appendChild(extraHost);
+        paintOther();
+      }
       rail.appendChild(namesHost);
 
       /* restore the script this backup was left on; else the first one */
@@ -249,6 +292,10 @@
         entries.forEach(function (e) {
           if (e.p.rel === s.sel.rel && e.i === s.sel.i) init = e;
         });
+      }
+      if (init && extras.indexOf(init) >= 0 && !s.showOther) {
+        s.showOther = true;
+        paintOther();
       }
       select(init || entries[0], !!init);
 

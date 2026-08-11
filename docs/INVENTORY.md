@@ -23,7 +23,7 @@ batch lands, or with `--check` to hear about drift).
 > When per-subsystem docs land, they supersede this file for their own area. This
 > map's remaining job is breadth: what exists, and where.
 
-**Scope.** 262 files / ~75,589 lines. Covers everything in the working tree except: the
+**Scope.** 262 files / ~75,646 lines. Covers everything in the working tree except: the
 `.git` internals, build outputs (`dist/`, `build/`, `__pycache__/`), the private
 `SampleBackup/` fixture tree, the `.rmd` model corpus (61 binary robot-model blobs
 that are input data, not source), and the two local-only real-plant reference files
@@ -43,7 +43,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 |---|---|---|---|---|
 | `.gitignore` | 21 | ignore rules for pycache/build/dist plus the local-only sample backup, real ip list and diag folders | build/config | active |
 | `build_exe.log` | 106 | pyinstaller transcript of one successful onefile build on store python 3.13 with pyinstaller 6.20 *(untracked, local-only)* | build/config | generated |
-| `CHANGELOG.md` | 1204 | prose changelog newest-first: a large unreleased section over v1.4 back to v0.1, feature by feature | docs | active |
+| `CHANGELOG.md` | 1214 | prose changelog newest-first: a large unreleased section over v1.4 back to v0.1, feature by feature | docs | active |
 | `CLAUDE.md` | 273 | the build contract: locked stack, layer map, composition/honesty rules and the plant-identifier firewall | docs | active |
 | `CVX_FTP_LAYOUT.md` | 108 | field notes on the cv-x ftp tree and simulator workspace layout, and what env.dat cannot prove | docs | active |
 | `LICENSE` | 620 | verbatim gnu gpl v3 license text, the license the readme points at | docs | vendored |
@@ -164,7 +164,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/web/js/tabs/frames.js` | 250 | frames tab: pendant-style tool/uframe/jog/payload cards per motion group, with show-empty and vs mode | backup parsing | active |
 | `src/backupviewer/web/js/tabs/home.js` | 2642 | the #home library screen: plant/line/robot tree, per-row actions, batch ftp backup, discover, cam tiles | library | active |
 | `src/backupviewer/web/js/tabs/io.js` | 336 | io tab: pendant-style signal browser by category, in/out panes, rack/slot/port config view, vs mode | backup parsing | active |
-| `src/backupviewer/web/js/tabs/logic.js` | 269 | logic tab: a cv-x program's calculation scripts as code beside the names present in it, with what the format does not prove said on screen | cameras | active |
+| `src/backupviewer/web/js/tabs/logic.js` | 316 | logic tab: a cv-x program's calculation scripts as code beside the names present in it, with what the format does not prove said on screen | cameras | active |
 | `src/backupviewer/web/js/tabs/macros.js` | 113 | macro table (name, program, assignment) rendered inside the programs tab, with side-by-side vs mode | backup parsing | active |
 | `src/backupviewer/web/js/tabs/mhvalves.js` | 227 | mh valves tab: gripper/valve setup cards from MHGRIPDT.VA with resolved io links, magnet section, full tree | backup parsing | active |
 | `src/backupviewer/web/js/tabs/overview.js` | 834 | overview dashboard: hero plus draggable persisted cards (mastering, memory, ethernet, tasks) + date picker | backup parsing | active |
@@ -285,12 +285,12 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 |---|---:|---:|
 | tests | 74 | 21,371 |
 | shared/infra | 27 | 8,344 |
-| docs | 12 | 6,149 |
+| docs | 12 | 6,159 |
 | theming | 34 | 5,934 |
 | backup parsing | 31 | 5,858 |
 | program editor | 5 | 4,929 |
 | library | 4 | 4,736 |
-| cameras | 15 | 4,477 |
+| cameras | 15 | 4,524 |
 | 3D viewer | 16 | 3,836 |
 | flag scanning | 2 | 2,080 |
 | remote/mobile | 10 | 2,032 |
@@ -299,7 +299,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | compare engine | 5 | 1,355 |
 | tools/scripts | 5 | 1,087 |
 | build/config | 7 | 267 |
-| **total** | **262** | **75,589** |
+| **total** | **262** | **75,646** |
 
 > Counts are by *primary* subsystem only — a file appears once, so these add up to the
 > whole repo. The `tests` row is the largest because every probe and unit suite counts as
