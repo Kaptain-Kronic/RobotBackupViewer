@@ -314,7 +314,7 @@
                decides from `vs`, and syncPickBtn() sets the checked state once
                the table exists and its filter has run. */
             if (vs) return null;
-            headCb = BV.el("input", { type: "checkbox", class: "vt-pickall",
+            headCb = BV.el("input", { type: "checkbox", class: "vt-pickall lf-check",
               title: "select every program this filter shows" });
             headCb.addEventListener("click", function (ev) {
               ev.stopPropagation();
@@ -324,7 +324,7 @@
           },
           render: function (r) {
             if (!pickable(r)) return "";
-            return '<input type="checkbox" class="vt-pick" data-k="' +
+            return '<input type="checkbox" class="vt-pick lf-check" data-k="' +
               BV.esc(r.rel) + '"' + (picked[r.rel] ? " checked" : "") + ">";
           } };
 

@@ -158,7 +158,7 @@
         columns: [
           { key: "_pick", label: "", width: 34, sortable: false, resizable: false,
             headRender: function () {
-              headCb = BV.el("input", { type: "checkbox", class: "vt-pickall",
+              headCb = BV.el("input", { type: "checkbox", class: "vt-pickall lf-check",
                 title: "select every file this filter shows" });
               headCb.addEventListener("click", function (ev) {
                 ev.stopPropagation();
@@ -167,7 +167,7 @@
               return headCb;
             },
             render: function (r) {
-              return '<input type="checkbox" class="vt-pick" data-k="' +
+              return '<input type="checkbox" class="vt-pick lf-check" data-k="' +
                 BV.esc(r.rel) + '"' + (picked[r.rel] ? " checked" : "") + ">";
             } },
           { key: "rel", label: "file", width: 320, accent: true, render: function (r) {

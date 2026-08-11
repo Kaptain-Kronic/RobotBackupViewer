@@ -1694,29 +1694,34 @@ button.lib-remote-pill {
 button.lib-remote-pill:hover { color: var(--accent); border-color: var(--accent); }
 .lib-cell-status { display: flex; align-items: center; gap: 0.3rem; overflow: hidden; }
 
-/* hand-drawn selection boxes: appearance:none + an SVG mask painted with the
-   theme's own colors (a data-URI can't read CSS variables; a mask can be
-   FILLED by them), sized with the favorite star beside them. The tri-state
-   stays honest: empty box · box+X (checked) · box+dash (partial select-all). */
-.home-library .lf-check {
+/* hand-drawn selection boxes — THE checkbox, app-wide: appearance:none + an
+   SVG mask painted with the theme's own colors (a data-URI can't read CSS
+   variables; a mask can be FILLED by them). Born in the library, promoted so
+   every surface (scan picker, programs pick column, editor find/replace,
+   network scan, forms, 3D zone list) wears the same icon — restyle it here,
+   every screen heals. The tri-state stays honest: empty box · box+X
+   (checked) · box+dash (partial select-all). flex:none keeps flex rows from
+   squeezing it; justify-self:start keeps .lf-row grids from stretching it. */
+.lf-check {
   appearance: none; -webkit-appearance: none;
   width: 0.95rem; height: 0.95rem; margin: 0; cursor: pointer;
+  flex: none; justify-self: start;
   background-color: var(--sub); opacity: 0.55; transition: opacity var(--trans);
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2.5 3.2C5.3 2.5 10.9 2.6 13.5 2.9C13.9 5.6 13.8 10.2 13.6 12.9C10.6 13.5 5.5 13.4 2.8 13.1C2.4 10.3 2.3 6 2.5 3.2Z' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center / contain;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2.5 3.2C5.3 2.5 10.9 2.6 13.5 2.9C13.9 5.6 13.8 10.2 13.6 12.9C10.6 13.5 5.5 13.4 2.8 13.1C2.4 10.3 2.3 6 2.5 3.2Z' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center / contain;
 }
-.home-library .lf-check:hover { opacity: 1; }
-.home-library .lf-check:checked {
+.lf-check:hover { opacity: 1; }
+.lf-check:checked {
   background-color: var(--accent); opacity: 1;
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2.5 3.2C5.3 2.5 10.9 2.6 13.5 2.9C13.9 5.6 13.8 10.2 13.6 12.9C10.6 13.5 5.5 13.4 2.8 13.1C2.4 10.3 2.3 6 2.5 3.2Z' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M4.9 5.2C6.9 7.2 9.1 9.5 10.9 11.2M10.8 5C9 7.1 6.9 9.3 5.1 11.1' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round'/%3E%3C/svg%3E");
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2.5 3.2C5.3 2.5 10.9 2.6 13.5 2.9C13.9 5.6 13.8 10.2 13.6 12.9C10.6 13.5 5.5 13.4 2.8 13.1C2.4 10.3 2.3 6 2.5 3.2Z' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M4.9 5.2C6.9 7.2 9.1 9.5 10.9 11.2M10.8 5C9 7.1 6.9 9.3 5.1 11.1' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round'/%3E%3C/svg%3E");
 }
-.home-library .lf-check:indeterminate {
+.lf-check:indeterminate {
   background-color: var(--accent); opacity: 0.85;
   -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2.5 3.2C5.3 2.5 10.9 2.6 13.5 2.9C13.9 5.6 13.8 10.2 13.6 12.9C10.6 13.5 5.5 13.4 2.8 13.1C2.4 10.3 2.3 6 2.5 3.2Z' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M4.8 8.2C7 7.9 9.4 8.3 11.3 8.1' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round'/%3E%3C/svg%3E");
   mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2.5 3.2C5.3 2.5 10.9 2.6 13.5 2.9C13.9 5.6 13.8 10.2 13.6 12.9C10.6 13.5 5.5 13.4 2.8 13.1C2.4 10.3 2.3 6 2.5 3.2Z' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M4.8 8.2C7 7.9 9.4 8.3 11.3 8.1' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round'/%3E%3C/svg%3E");
 }
-.home-library .lf-check:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; opacity: 1; }
+.lf-check:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; opacity: 1; }
 .lib-robot-name { color: var(--text); font-weight: 600; }
 .lib-robot-model { color: var(--accent); font-size: 0.82rem; margin-left: 0.6em; }
 .lib-robot-meta { color: var(--sub); font-size: 0.78rem; margin-top: 0.1rem; }
@@ -1862,8 +1867,11 @@ button.btn.danger:disabled { opacity: 0.5; cursor: default; }
   width: min(78rem, 96vw); max-width: min(78rem, 96vw); height: 80vh; max-height: 80vh;
 }
 /* its body does NOT scroll: the host owns a [head][scroller][foot] column so
-   the actions and the report toolbar stay put (the daily stapling lesson) */
-.modal.hs-modal > .modal-body { overflow: hidden; display: flex; min-height: 0; }
+   the actions and the report toolbar stay put (the daily stapling lesson).
+   flex:1 makes the body FILL the fixed-height modal — without it the column
+   ends at its content and the window trails off into a void below the
+   buttons (the picker floated in the top half of an 80vh frame). */
+.modal.hs-modal > .modal-body { overflow: hidden; display: flex; min-height: 0; flex: 1 1 auto; }
 .hs-host { display: flex; flex-direction: column; flex: 1; min-height: 0; gap: 0.4rem; }
 .hs-scroll { flex: 1; overflow-y: auto; min-height: 0; padding-right: 0.2rem; }
 .hs-foot {
@@ -1964,24 +1972,35 @@ button.btn.danger:disabled { opacity: 0.5; cursor: default; }
 }
 .pf-foot { display: flex; align-items: center; gap: 0.5rem; padding-top: 0.5rem; flex: none; }
 
-/* picker categories: plain always-visible headers (no accordions), two
-   columns when the modal is wide enough, each with its own select-all */
-/* ONE LIST, in columns. Not cards: a bordered box per category turned a
-   17-item list into a wall of rectangles. Categories FLOW (columns, not grid
-   cells), so a two-check category no longer reserves the tallest one's
-   height - which is where the dead space came from. */
-.hs-cats { columns: 3; column-gap: 1.6rem; margin-top: 0.1rem; }
-@media (max-width: 70rem) { .hs-cats { columns: 2; } }
-@media (max-width: 46rem) { .hs-cats { columns: 1; } }
-.hs-cat {
-  break-inside: avoid; -webkit-column-break-inside: avoid;
-  display: inline-block; width: 100%;      /* Chromium: keeps a block intact */
-  margin-bottom: 0.85rem;
+/* the picker: ONE flat list — no categories — in two TIGHT side-by-side
+   columns under a single head row (what the scan touches on the left, THE
+   select-all on the right). max-content columns hug the labels, packed rows
+   hug each other, and the .hs-pick frame below hugs the whole grid — the
+   window IS the list, no spread and no void in either direction. Column
+   two's start row comes from the JS-set grid-template-rows (ceil(n/2) —
+   the stylesheet can't count the registry). */
+.hs-pickhead {
+  display: flex; align-items: center; gap: 0.6rem; flex: none;
+  border-bottom: 1px solid var(--edge); padding: 0.15rem 0.2rem 0.35rem;
 }
+.hs-pickhead .hs-info { margin-right: auto; }
+.hs-checks {
+  display: grid; grid-template-columns: max-content max-content;
+  column-gap: 3rem; grid-auto-flow: column;
+}
+@media (max-width: 46rem) { .hs-checks { display: block; } }
+/* the compact pick/run frame: width from the list, height from the content,
+   both capped by the report frame's numbers. Toggled by scan_ui.js — only a
+   painted report wears the full 80vh window. */
+.modal.hs-modal.hs-pick {
+  width: auto; min-width: min(46rem, 92vw); max-width: min(78rem, 96vw);
+  height: auto; max-height: 80vh;
+}
+/* the plain uppercase section heads survive in the manage-backups modal
+   (manage_ui.js) — the scan picker itself no longer has categories */
 .hs-cat-head { display: flex; align-items: center; gap: 0.6rem; padding: 0.15rem 0.2rem 0.25rem; border-bottom: 1px solid var(--edge); margin-bottom: 0.15rem; }
 .hs-cat-title { color: var(--sub); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em; }
 .hs-cat-head .scan-selall { margin-left: auto; }
-.hs-cat-head .hs-desc { font-size: 0.74rem; color: var(--sub); margin-left: auto; }
 
 /* find chips: one removable chip per query, above the input */
 .hs-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.4rem 0 0.1rem; }
@@ -2101,7 +2120,6 @@ button.btn.danger:disabled { opacity: 0.5; cursor: default; }
 }
 .lf-input:focus { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
 .lf-input[readonly] { color: var(--sub); }
-.lf-check { width: 16px; height: 16px; accent-color: var(--accent); justify-self: start; }
 .lf-actions { display: flex; justify-content: flex-end; gap: 0.4rem; margin-top: 0.6rem; }
 
 /* ---- backup progress (per-row, in the library) ---- */
@@ -2245,7 +2263,6 @@ text.v3-ax-z { fill: var(--accent); }
 .v3-row-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.82rem; }
 .v3-row-tags { display: flex; gap: 0.25rem; flex: none; align-items: center; }
 .v3-row-body { padding: 0.15rem 0.6rem 0.5rem; border-top: 1px solid var(--edge-soft); }
-.v3-check { width: 15px; height: 15px; accent-color: var(--accent); flex: none; }
 .v3-swatch { width: 11px; height: 11px; border-radius: 3px; flex: none; }
 
 /* ---- the ⚙ settings dialog (settings_ui.js) ---- */

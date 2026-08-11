@@ -586,7 +586,7 @@
   }
 
   function zoneCheck(z, s, redraw) {
-    var c = BV.el("input", { type: "checkbox", class: "v3-check", title: "show in viewport" });
+    var c = BV.el("input", { type: "checkbox", class: "lf-check", title: "show in viewport" });
     c.checked = !s.hidden[z.n];
     c.addEventListener("click", function (e) { e.stopPropagation(); });
     c.addEventListener("change", function () {

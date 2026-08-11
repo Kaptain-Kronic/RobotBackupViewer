@@ -676,7 +676,7 @@
           var keys = g.programs.map(function (p) { return keyFor(g, p); });
           var h = BV.el("div", { class: "pf-rb" });
           if (keys.length > 1) {
-            h.appendChild(picks.group(BV.el("input", { type: "checkbox" }),
+            h.appendChild(picks.group(BV.el("input", { type: "checkbox", class: "lf-check" }),
               function () { return keys; }, "rb:" + g.root));
           }
           h.appendChild(BV.el("span", { class: "nm" }, BV.esc(g.label || g.robot)));
@@ -685,7 +685,7 @@
           out.appendChild(h);
           g.programs.forEach(function (p) {
             var r2 = BV.el("label", { class: "pf-ln" });
-            r2.appendChild(picks.bind(BV.el("input", { type: "checkbox" }), keyFor(g, p)));
+            r2.appendChild(picks.bind(BV.el("input", { type: "checkbox", class: "lf-check" }), keyFor(g, p)));
             r2.appendChild(BV.el("span", { class: "nm" }, BV.esc(p.name)));
             if (p.comment) r2.appendChild(BV.el("span", { class: "cm" }, BV.esc(p.comment)));
             out.appendChild(r2);
@@ -1977,7 +1977,7 @@
     var opts = BV.el("div", { class: "fp-opts" });
     function opt(label, flag, title) {
       var l = BV.el("label", { class: "fp-opt", title: title || "" });
-      var cb = BV.el("input", { type: "checkbox" });
+      var cb = BV.el("input", { type: "checkbox", class: "lf-check" });
       cb.checked = fr[flag];
       cb.addEventListener("change", function () { fr[flag] = cb.checked; paint(true); });
       l.appendChild(cb);
@@ -2069,7 +2069,7 @@
         /* ONE box per level, and only where it does something: a group with a
            single hit would otherwise stack three checkboxes for one result */
         if (rbKeys.length > 1) {
-          rh.appendChild(picks.group(BV.el("input", { type: "checkbox" }),
+          rh.appendChild(picks.group(BV.el("input", { type: "checkbox", class: "lf-check" }),
             function () { return rbKeys; }, "rb:" + g.root));
         }
         var caret = BV.el("span", { class: "caret" }, folded ? "▸" : "▾");
@@ -2093,12 +2093,12 @@
           var pgFolded = !!st.frFolds[pgKey];
           var ph = BV.el("div", { class: "fp-pg" });
           if (pgKeys.length > 1) {
-            ph.appendChild(picks.group(BV.el("input", { type: "checkbox" }),
+            ph.appendChild(picks.group(BV.el("input", { type: "checkbox", class: "lf-check" }),
               function () { return pgKeys; }, "pg:" + pgKey));
           } else if (rec.named && !rec.hits.length) {
             /* a name-only match is the single actionable thing here, so it gets
                the one checkbox - ticking it renames the program on export */
-            var ncb = picks.bind(BV.el("input", { type: "checkbox" }), pgKey + "|name");
+            var ncb = picks.bind(BV.el("input", { type: "checkbox", class: "lf-check" }), pgKey + "|name");
             ncb.addEventListener("click", function (ev) { ev.stopPropagation(); });
             ph.appendChild(ncb);
           }
@@ -2123,7 +2123,7 @@
           rec.hits.forEach(function (h) {
             var k = hitKey(rec.e, h);
             var row = BV.el("div", { class: "fp-ln" });
-            var cb = picks.bind(BV.el("input", { type: "checkbox" }), k);
+            var cb = picks.bind(BV.el("input", { type: "checkbox", class: "lf-check" }), k);
             cb.addEventListener("click", function (ev) { ev.stopPropagation(); });
             row.appendChild(cb);
             row.appendChild(BV.el("span", { class: "n" },
