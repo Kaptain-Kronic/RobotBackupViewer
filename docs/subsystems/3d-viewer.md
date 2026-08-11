@@ -54,6 +54,12 @@ placement. It gets a provenance paragraph in §2 and nothing more.
 
 ---
 
+> **2026-08-10:** `view3d.js` `render()` now opens with a four-line branch:
+> a backup whose `backup_type` contains `camera` hands the whole tab to
+> `BV.cvx3d.render` (web/js/cvx3d.js — the Keyence model viewer, its own
+> surface with its own doc trail). Everything below describes the robot
+> path, which is unchanged.
+
 ## 1. What it is
 
 The "3d view" tab — pinned to the `0` key (`keys.js:99-102`) — draws a

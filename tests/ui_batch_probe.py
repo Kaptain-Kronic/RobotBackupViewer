@@ -189,8 +189,17 @@ def probe(window):
     try:
         time.sleep(4)  # boot
 
-        check("boot.tabs_registered", js(window, "BV.tabs.length") == 16,
-              f"(got {js(window, 'BV.tabs.length')})")
+        # every <script src="js/tabs/*.js"> must actually register a tab - the
+        # invariant, not a frozen count that turns into a lie the day a tab is
+        # added (alarms.js and macros.js deliberately register none, so they are
+        # excluded by name rather than by fudging the number)
+        tab_files = js(window, """(function(){
+            return [...document.querySelectorAll('script[src*="js/tabs/"]')]
+                .map(function(s){ return s.src.split('/').pop().replace('.js',''); })
+                .filter(function(n){ return n !== 'alarms' && n !== 'macros'; }).length;
+        })()""")
+        check("boot.tabs_registered", js(window, "BV.tabs.length") == tab_files,
+              f"(registered {js(window, 'BV.tabs.length')}, tab scripts {tab_files})")
 
         # ---- home library renders the synthetic tree ----
         nrows = poll(window, "document.querySelectorAll('.lib-robot').length")
@@ -323,12 +332,21 @@ def probe(window):
         check("notes.caret_expands_in_place",
               expand.get("open") is True and expand.get("body") is True and
               expand.get("stillHome") is True, f"({expand})")
+        # v1.5 metadata saves land in-place with the disk write behind them, so
+        # a single lib_list can race the save and freeze '' forever - re-issue
+        # the call on every poll tick until the note (or a timeout) shows up
         js(window, """window.__notes=null;
-            BV.api.call('lib_list').then(function(d){
-              var r=d.robots.find(function(x){return x.robot==='RB020R01B01';});
-              window.__notes = r ? r.notes : 'missing';
-            });""")
-        saved = poll(window, "window.__notes")
+            window.__notesTick=function(){
+              BV.api.call('lib_list').then(function(d){
+                var r=d.robots.find(function(x){return x.robot==='RB020R01B01';});
+                window.__notes = (r && r.notes) ? r.notes : null;
+              });
+            };
+            window.__notesTick();""")
+        saved = poll(window, """(function(){
+            if(!window.__notes) window.__notesTick();
+            return window.__notes;
+        })()""")
         check("notes.saved_with_newlines_and_tab",
               saved == "first line\n\tsecond indented\nthird", f"(got {saved!r})")
         redit = js(window, """(function(){
@@ -1526,16 +1544,25 @@ def probe(window):
                 return r.textContent.indexOf('CELL-01CAM01')>=0;});
             row.click();
         })()""")
-        # a camera-only backup has no overview, so route() falls back - and the
-        # fallback must land on a tab you could have CLICKED, never on one of
-        # the hidden always-on ones (edit/search/compare/pdiff)
-        check("photos.route_replaced_to_photos",
-              poll(window, "location.hash==='#photos' ? 'y' : ''") == "y",
+        # cameras grew their own overview (the "*camera" tab special), so a
+        # camera backup now LANDS there instead of falling back to photos
+        check("photos.camera_lands_on_overview",
+              poll(window, "location.hash==='#overview' ? 'y' : ''") == "y",
+              f"(hash={js(window, 'location.hash')!r})")
+        # the fallback invariant still holds: a robot-only hash must replace
+        # to a tab you could have CLICKED, never one of the hidden always-on
+        # ones (edit/search/compare/pdiff)
+        js(window, "location.replace('#registers')")
+        check("photos.disabled_hash_falls_back",
+              poll(window, "location.hash==='#overview' ? 'y' : ''") == "y",
               f"(hash={js(window, 'location.hash')!r})")
         check("photos.fallback_skips_hidden_tabs",
               not js(window, """BV.tabs.filter(function(t){return t.hidden;})
                   .some(function(t){return location.hash === '#' + t.id;})"""),
               "(a hidden always-on tab must never be a route fallback)")
+        # replace, not a hash push: the back.* section below counts on the
+        # camera open having left exactly one history entry
+        js(window, "location.replace('#photos')")
         check("photos.hero", bool(poll(window, "!!document.querySelector('#photo-hero img')")))
 
         layout = js(window, """(function(){

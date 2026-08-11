@@ -1,5 +1,124 @@
 # Changelog
 
+## unreleased — the camera gets its 3d view, and the files tab extracts
+- **The files tab extracts to USB.** Every row grew a checkbox — tick one,
+  shift-click a range, or take the header box, which selects exactly what the
+  filter shows (the `tp` chip plus one click is every TP file in the backup).
+  "⇪ extract" copies the ticked files byte-for-byte to a folder you choose,
+  under one folder named for the robot with each file's path kept beneath it,
+  so extracts from two robots in a row can never interleave. Same trust
+  contract as the editor's export (and the same folder pick + reveal, so both
+  remember the same last destination): never into a backup, `.part` → rename
+  landing so a yanked stick never leaves a half-written file pretending to be
+  whole, and each copy keeps the source's modified time — extracted evidence
+  still dates itself.
+- **A Keyence camera backup now has an overview and a 3d view.** The tab strip
+  used to offer a CV-X backup nothing but photos and files; the robot-only
+  screens are gone for cameras (they always were on v1.5 source — the greyed
+  strip lived only in pre-63f7196 builds) and two camera surfaces light up in
+  their place, both data-driven through `TAB_REQUIREMENTS` specials
+  (`"*camera"`, `"*cvx3d"`), so badges, digit keys and the screens menu all
+  agree for free.
+- **The camera overview** keeps the dated-backup picker/compare/remote
+  toolbar, and pairs the CV-X crossfade hero (greyscale⇆height, the same
+  slider the photos tab grew in v1.3 — now extracted into a shared
+  `BV.photoFigure` so one renderer serves both tabs) with summary cards:
+  camera identity, the controller's own program names, and a 3d card
+  (model counts · the cell's robot · calibration pairs) linking to the viewer.
+- **The camera 3d view** decodes the backup's own model blobs — the
+  registered part CAD and workspace scans hide inside `TDC_L`/`WSM_L`
+  containers as zlib-wrapped binary-STL facets (`parsers/cvx_models.py`,
+  format read off a real 3D-pick backup and self-validating: a stream is
+  geometry only when its records prove unit normals) — and renders them in a
+  hand-rolled canvas-2d mesh viewer on the existing `proj3d` math (orbit /
+  pan / zoom-about-cursor / mm ruler / enlarge lightbox; WebGL stays parked).
+  Matching templates, the FANUC robot identity and the hand-eye calibration
+  run (38 recorded pose pairs on the real camera) are listed as honest info
+  cards — recognized, sized, labeled, and explicitly *not* rendered, because
+  their encodings are not decoded.
+- **The gripper and the robot arm render too.** The `HND_L` hand/EOAT blob had been
+  written off as an unreversed encoding — wrongly, and the reason was
+  alignment: the mesh is the same binary-STL facet geometry, but stored
+  uncompressed, in 48-byte records (twelve float32, no attribute word), at a
+  file offset that is *2 mod 4*, so the earlier pass reading 4-aligned floats
+  saw nothing but noise. It decodes now, and a hand draws and extracts to
+  `.stl` exactly like the part CAD. Nothing is hardcoded: blocks are located
+  by a run of records whose normals prove themselves unit (or exactly zero,
+  which STL allows) and grown outward while the bytes still read as facets, so
+  a file with no mesh honestly yields nothing. Real hands decode at 46,952 and
+  481,039 facets — and pointing the same decoder at `RBT_G_RMD`, whose ~1.8 MB
+  of "proprietary mesh" had been written off for the same reason, produced a
+  whole FANUC M-20iD/35 (32,250 facets) with no robot-specific code. The arm
+  is one fused mesh at its saved pose, so it draws but cannot be posed.
+- **Meshes stop being decimated for no reason.** The display cap was 30k
+  triangles, which halved a 32k robot arm into visible holes — sampling a
+  triangle soup punches gaps, so the cap is worth real milliseconds. Measured
+  redraw in the real window (5,144-tri part 23 ms · 48,066-tri scan 34 ms ·
+  32,250-tri arm 81 ms · 481,039-tri gripper 413 ms) put the cap at 60k: every
+  real mesh but the giant gripper now draws whole. The model list proves a
+  gripper's mesh exists from a bounded prefix rather than decoding it (a probe
+  costs ~0.3 s against 1.2-1.9 s) and leaves its triangle count honestly blank
+  until you open it; the arm is the exception, because its block sits ~290 KB
+  in, so a probe would cost 93% of a real decode and answer nothing - it is
+  decoded properly and counted.
+- **Extract STL** writes any viewable model as a real binary `.stl` (byte-exact
+  facet records, full detail even when the viewer decimates) to a user-picked
+  folder through the house export contract — never into a backup, `.part` →
+  rename, reveal-in-explorer — one model or all of them at once.
+- **The logic tab shows each script once, and whole.** First cut listed every
+  script twice and cut each one short: a program is stored twice (a working copy
+  and a recovery copy) and the pair is not byte-identical, so an equality test
+  missed it — the blocks are now paired by length and only the working copy is
+  read. And a script is stored in PIECES with binary records between them, so
+  the old "any gap ends the script" rule stopped at the first one and hid the
+  ending; the gap distribution is cleanly bimodal (tens of bytes inside a
+  script, tens of thousands between scripts), so the split now happens on
+  distance. A real camera went from 26 half-scripts to 6 whole ones, and the
+  longest grew from 74 lines to 99 — the 25 lines it had been missing included
+  its closing `ENDIF`. Runs of decoded rubbish that are technically comments
+  (`'5` repeated) no longer count as scripts, while a technician's notes-only
+  tool still does.
+- **The logic tab leads with the Calculation units.** A program's block holds
+  more script-shaped text than the controller lists as a Calculation — helper
+  expressions belonging to other tools share the region — and a technician
+  comparing the tab against the camera sees only their calculations. The rail
+  now leads with the units whose own first comment names them one (the shop's
+  convention: `'Dual Bin 1 Calculation Redundancy`, `'Path priority
+  Calculation`), and the rest folds behind a "show other script text" toggle.
+  It is a convention rather than a guarantee of the format, so nothing is
+  dropped, and a program whose scripts name none of themselves shows all of
+  them rather than going blank.
+- **The 3D view leads with the part models.** The registered part CAD is what
+  that screen is for; the workspace scans, gripper, arm, calibration and
+  templates the backup also carries now fold behind one "other models & data"
+  toggle — present and openable, just not in the way.
+- **A camera backup now shows the calculation logic the camera actually runs.**
+  A CV-X inspection program is more than tools and pictures: it carries the
+  expression scripts a technician wrote — `@local` variables, `IF`/`ELSEIF …
+  THEN`/`ENDIF`, `ANSn` outputs, and `Tnnn.RSLT.<MNEMONIC>[i]:MS` references
+  pulling another tool's result — and those lived only behind the controller's
+  own screen. The **logic** tab reads them straight out of `inspect.dat` and
+  shows them as plain text, so the judgement a camera makes can be read at a
+  desk, and read against another dated pull of the same camera instead of being
+  reconstructed from memory. Real cameras carry 4–26 scripts and 135–512 script
+  lines per program. The tab appears only when a backup holds a program whose
+  own bytes vouch for it (`TAB_REQUIREMENTS` special `"*cvxlogic"`), so it is
+  simply absent on a Matrox pull. The tool names in the same file are listed
+  beside the scripts — with what could *not* be proved said out loud rather than
+  papered over: nothing in the file ties a name to a tool **number**, so no name
+  is labeled "tool 5"; and the vendor's own tool-type vocabulary ("Color
+  Detection", "Edge Pitch") is stored right beside the names a tech typed with
+  no discriminator found, so both are listed rather than one being filtered away
+  on a guess. The numeric settings behind each tool (float64 slots at an offset
+  6 mod 8, with a ~1e12 "unset" sentinel) stay unmapped and unshown — this reads
+  a camera's *logic*, not its *settings*. Format read off real cameras plus a
+  controlled experiment in the vendor's own simulator (a known value typed into
+  a named place, then found verbatim in the saved file): `parsers/cvx_program.py`,
+  written up in `docs/subsystems/parsing.md`.
+- Probe: `ui_cvx3d_probe.py` (tabs light/vanish, canvas paints pixels, extract
+  modal, enlarge overlay). Inventory: dropped the three long-deleted
+  `*_sandbox.html` rows that were blocking `update_inventory.py`.
+
 ## v1.5 — the library overhaul
 - **Renaming a robot no longer rescans the library.** Every app-initiated
   metadata change — rename/relocate, camera link, note or IP edit, add,

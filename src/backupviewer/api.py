@@ -9,10 +9,12 @@ from __future__ import annotations
 import base64
 import fnmatch
 import functools
+import hashlib
 import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -39,11 +41,11 @@ from . import qr
 from . import screengrab
 from . import search as search_mod
 from . import settings
-from .parsers import (alarms, callgraph, curpos, cvx_image, dcs, dcszones,
-                      frames, gmwizlog, io_dg, kinematics, ls_edit, ls_program,
-                      macros, magnet, mastering, mhvalves, mtx_portal,
-                      mtx_saved_image, payloads, registers, styles, summary_dg,
-                      sysvars)
+from .parsers import (alarms, callgraph, curpos, cvx_image, cvx_inspect,
+                      cvx_models, cvx_program, dcs, dcszones, frames, gmwizlog, io_dg,
+                      kinematics, ls_edit, ls_program, macros, magnet,
+                      mastering, mhvalves, mtx_portal, mtx_saved_image,
+                      payloads, registers, styles, summary_dg, sysvars)
 from .parsers.common import is_binary, read_text
 from .session import BackupSession, looks_like_backup
 
@@ -59,6 +61,35 @@ MAX_WS_SCAN_FILES = 20_000   # same bound the session walk uses
 DISPLAY_MAX_DIM = 1200
 _IMAGE_MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg",
                ".png": "image/png", ".bmp": "image/bmp"}
+# CV-X 3D models: cap on triangles crossing the JS bridge per mesh (the viewer
+# says "decimated" when it bites). Set from measured redraw cost in the real
+# window 2026-08-10, because sampling a triangle SOUP punches visible holes -
+# it is worth paying real milliseconds to avoid decimating at all. Cost tracks
+# filled pixels more than triangle count: 5,144-tri part 23 ms, 48,066-tri scan
+# 34 ms, 32,250-tri robot arm 81 ms, 481,039-tri gripper 413 ms. 60k therefore
+# draws every real mesh measured except the giant gripper whole, and the old
+# 30k cap was halving a 32k arm into swiss cheese for nothing.
+# And the part-vs-scan split for a WSM stream -
+# a registered part CAD is part-local mm (origin-centered, every real one fits
+# well inside a half-metre reach) while a workspace scan sits in robot-world
+# coordinates ~1.3-1.5 m from the base - its SPAN can be small, so the split
+# keys on how far the geometry sits from the origin, not on its size
+# (measured 2026-08-10: a real fixture scan spanned only 109x227x191 mm but sat
+# 1.26-1.5 m out; the real part CADs all reach < 110 mm).
+CVX_MODEL_MAX_TRIS = 60_000
+_CVX_PART_REACH_MM = 700.0
+# An uncompressed mesh (HND gripper, RMD robot arm) has to be FOUND by
+# scanning, so a full decode costs real time: 1.2-3.6 s on the six real hand
+# files measured 2026-08-10 (3.3-12.9 MB, 32k-180k facets) and ~2 s on a robot,
+# and the scan - not the mesh - is most of it. The models LIST must not pay
+# that per file, so it only proves a mesh EXISTS from a bounded prefix and
+# leaves the counting to the mesh endpoint. The window has to clear the header
+# region each family puts ahead of its block: ~48 KB on every real hand
+# (48454 B on one plant's cameras, 48742 B on another's) but 291,674 B on the
+# robot model, so 512 KB covers the largest measured case with room and still
+# costs well under a second. A mesh whose block sits past the window stays
+# honestly "recognized, not drawn" rather than promising a view.
+CVX_MESH_PROBE_BYTES = 524_288
 
 
 def _is_ls_program(p: Path) -> bool:
@@ -72,6 +103,67 @@ def _is_ls_program(p: Path) -> bool:
             return f.read(120).decode("cp1252", errors="replace").startswith("/PROG")
     except OSError:
         return False
+
+
+def _cvx_setting_parts(rel: str) -> tuple[str, str]:
+    """(program, tool) folder names out of a `cv-x/setting/` relpath: the
+    folder directly under setting/ is the program number ("001"), the folder
+    under that is the vision-tool dir ("T101"). Either is "" when the path is
+    too shallow (LYT_G layouts sit directly under the program folder)."""
+    parts = rel.replace("\\", "/").split("/")
+    low = [x.lower() for x in parts]
+    try:
+        i = low.index("setting")
+    except ValueError:
+        return "", ""
+    program = parts[i + 1] if i + 1 < len(parts) - 1 else ""
+    tool = parts[i + 2] if i + 2 < len(parts) - 1 else ""
+    return program, tool
+
+
+# the families whose geometry is stored uncompressed (see cvx_models.raw_facets)
+_CVX_RAW_MESH_KINDS = ("hand", "robot")
+
+
+def _cvx_script_title(lines: list) -> str:
+    """A script's own leading comment, which technicians use as a heading
+    ("'3D Pick Bin 1 Calculation 6/1/26"). Empty when the script does not open
+    with one - never invented."""
+    for ln in lines[:3]:
+        s = ln.strip()
+        if s.startswith("'"):
+            s = s.lstrip("'").strip()
+            if s and not s.startswith("*"):
+                return s[:80]
+    return ""
+
+
+def _cvx_stream_kind(file_kind: str, bounds: dict) -> str:
+    """A model stream's display kind. TDC files ("part") hold the registered
+    part CAD and HND files ("hand") the gripper/EOAT assembly - both are named
+    by the family their container proves, never by where the geometry sits.
+    WSM files ("model") hold a workspace scan in pick tools but a COPY of the
+    part CAD in check tools, so there the content decides: part-local geometry
+    stays inside _CVX_PART_REACH_MM of the origin, robot-world scans sit beyond
+    it (see the constant's comment for the measured basis)."""
+    if file_kind in ("part", "hand", "robot"):
+        return file_kind
+    reach = max(abs(x) for x in bounds["min"] + bounds["max"])
+    return "part" if reach < _CVX_PART_REACH_MM else "scan"
+
+
+def _cvx_streams(rel: str, data: bytes) -> list[dict]:
+    """Every drawable geometry stream a vouched model container yields, all in
+    the one shape the rest of this file speaks (`{offset, facets, tri_count,
+    bounds}`, facets in 50-byte binary-STL records): the zlib->STL streams of a
+    TDC/WSM, and the uncompressed 48-byte-record block of an HND gripper or an
+    RMD robot arm - each a single fused mesh, so stream 0 is the only index
+    those have. Empty when the bytes prove no geometry; absence is a finding,
+    not an error."""
+    if cvx_models.classify(rel) in _CVX_RAW_MESH_KINDS:
+        mesh = cvx_models.raw_facets(data)
+        return [mesh] if mesh else []
+    return cvx_models.stl_streams(data)
 
 
 class ApiError(Exception):
@@ -1919,6 +2011,90 @@ class Api:
         return {"kind": "text", "name": p.name, "rel": s.rel(p), "size": size,
                 "text": text, "truncated": truncated}
 
+    @_endpoint
+    def files_extract(self, rels, dest, label: str = "", sid: str | None = None):
+        """Copy the ticked files of the open backup, byte-for-byte, to a folder
+        the user chose (typically a USB stick) - the files tab's sibling of the
+        editor's ws_export, sharing its trust contract: the backup is never
+        written, the destination must not be (or sit inside, or look like) a
+        backup, and every file lands .part -> os.replace so a yanked stick
+        never leaves a half-written file pretending to be whole.
+
+        Files go under ONE subfolder named after the robot (backup.json's word
+        for it, else the caller's hint, else the folder name - `_ws_label`),
+        keeping each file's path relative to the backup root, so extracting
+        from two robots in a row cannot interleave and two files that share a
+        basename in different subfolders cannot collide. Each copy keeps the
+        source's modified time: extracted evidence still dates itself.
+
+        `rels` resolve against the session's file INDEX by exact relative path
+        (never by basename search), so what is written is exactly the rows
+        that were ticked. Everything is validated before anything is written;
+        a failure mid-copy reports how far it got."""
+        if not rels:
+            raise ApiError("NO_FILES", "nothing is selected to extract")
+        if not dest:
+            raise ApiError("BAD_DEST", "an extract folder is required")
+        s = self._need_session(sid)
+        try:
+            d = Path(dest).resolve()
+        except OSError:
+            raise ApiError("BAD_DEST", "could not resolve the extract folder")
+        if looks_like_backup(d):
+            raise ApiError(
+                "BAD_DEST",
+                "that folder looks like a backup - the viewer never writes into "
+                "a backup")
+        try:
+            r = Path(s.root).resolve()
+        except OSError:
+            r = Path(s.root)
+        if d == r or library._within(d, r):
+            raise ApiError(
+                "BAD_DEST",
+                "choose a folder outside this backup - the viewer never writes "
+                "into a backup")
+        lab = self._ws_label(Path(s.root), label)
+        pairs: list[tuple[Path, str, Path]] = []   # (source, rel, target)
+        seen: set[str] = set()
+        for rel in rels:
+            key = str(rel or "").replace("\\", "/").strip("/").upper()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            p = s.files.get(key)
+            if p is None or not p.is_file():
+                raise ApiError("NOT_FOUND", f"file not found in the backup: {rel}")
+            canon = s.rel(p)                       # index casing, posix
+            pairs.append((p, canon, d.joinpath(lab, *canon.split("/"))))
+        if not pairs:
+            raise ApiError("NO_FILES", "nothing is selected to extract")
+        written: list[str] = []
+        total = 0
+        for p, canon, target in pairs:
+            part = ftpbackup.long_path(str(target) + ".part")
+            try:
+                st = p.stat()
+                os.makedirs(ftpbackup.long_path(str(target.parent)), exist_ok=True)
+                shutil.copyfile(str(p), part)
+                os.utime(part, ns=(st.st_atime_ns, st.st_mtime_ns))
+                os.replace(part, ftpbackup.long_path(str(target)))
+            except OSError as ex:
+                try:
+                    os.remove(part)
+                except OSError:
+                    pass
+                raise ApiError(
+                    "WRITE_FAILED",
+                    f"{target.name}: {ex.strerror or ex} - {len(written)} of "
+                    f"{len(pairs)} files were extracted before the failure")
+            written.append(lab + "/" + canon)
+            total += st.st_size
+        self._last_export_dest = str(d)
+        settings.set_value("last_export_folder", str(d))
+        return {"dest": str(d), "root": lab, "files": written,
+                "count": len(written), "bytes": total}
+
     # -- matrox camera photos --------------------------------------------------------
     # A Matrox DA camera saves each inspection as a jpg (preview) + png (full) +
     # txt (metadata) triple under Documents/.../SavedImages/<date>/. get_photos
@@ -2125,6 +2301,350 @@ class Api:
     @_endpoint
     def get_image(self, rel: str, sid: str | None = None):
         return self._image_data(self._need_session(sid), rel)
+
+    # -- keyence cv-x 3d models (part CAD / workspace scans / calibration) ---------
+
+    def _cvx_models_data(self, s: BackupSession) -> dict:
+        """The parsed model inventory for a CV-X backup - every container the
+        session's model index vouches for, STL-bearing files expanded to one
+        entry per geometry stream. Each file is read exactly once per session;
+        the whole inventory is cached."""
+        def build():
+            models: list[dict] = []
+            robot = None            # first RMD identity, upgraded to non-blank
+            calibration = None      # the fullest single record set seen
+            first_hash: dict[str, dict] = {}
+            for rel, p in s.cvx_model_files():
+                kind = cvx_models.classify(rel)
+                try:
+                    data = p.read_bytes()
+                except OSError:
+                    continue        # vanished/unreadable since the index walk
+                program, tool = _cvx_setting_parts(rel)
+                try:
+                    info = cvx_models.container_info(data)
+                    label = info["label_en"] or info["label"]
+                except cvx_models.BadModel:
+                    label = ""
+                base = {"rel": rel, "program": program, "tool": tool,
+                        "label": label, "size": len(data)}
+                streams = (cvx_models.stl_streams(data)
+                           if kind in ("part", "model") else [])
+                if streams:
+                    for i, st in enumerate(streams):
+                        skind = _cvx_stream_kind(kind, st["bounds"])
+                        # pick/verify tool pairs carry byte-identical copies of
+                        # one model - flag the copies so the UI can fold them
+                        h = hashlib.sha256(st["facets"]).hexdigest()
+                        dup_of = first_hash.get(h)
+                        if dup_of is None:
+                            first_hash[h] = {"rel": rel, "stream": i}
+                        name = (" ".join(x for x in (program, tool, skind) if x)
+                                or Path(rel).stem)
+                        if i:
+                            name += " %d" % (i + 1)
+                        models.append({**base, "stream": i, "name": name,
+                                       "kind": skind, "tris": st["tri_count"],
+                                       "viewable": True,
+                                       "dup_of": dict(dup_of) if dup_of else None})
+                    continue
+                # no proven geometry: one honest data entry. A streamless
+                # TDC/WSM is still the part-CAD family its name claims.
+                ekind = "part" if kind in ("part", "model") else kind
+                entry = {**base, "stream": 0,
+                         "name": (" ".join(x for x in (program, tool, ekind) if x)
+                                  or Path(rel).stem),
+                         "kind": ekind, "tris": None, "viewable": False,
+                         "dup_of": None}
+                if kind == "hand":
+                    # Deliberately a PROBE, not a decode: the bounded prefix
+                    # proves a real self-validating facet block is in there
+                    # (see CVX_MESH_PROBE_BYTES for why the list may not pay
+                    # for the whole scan), so `viewable` is earned - but the
+                    # triangle count is not, and stays null rather than
+                    # becoming a number nobody counted. cvx_model does the
+                    # full decode when the user actually picks it. No
+                    # block in the window -> the entry is left exactly as it
+                    # was: recognized, honestly not drawn.
+                    if cvx_models.raw_facets(data[:CVX_MESH_PROBE_BYTES]):
+                        entry["viewable"] = True
+                elif kind == "robot":
+                    # The arm is the one family where probing does not pay:
+                    # its block sits ~290 KB in (vs ~48 KB on every real
+                    # hand), so a bounded probe measured 1658 ms against a
+                    # 1790 ms full decode - 93% of the price for none of the
+                    # answer. Decode it properly and report a real count.
+                    # There is at most one robot model per backup, so this
+                    # costs the list one decode, once, behind its cache.
+                    mesh = cvx_models.raw_facets(data)
+                    if mesh:
+                        entry["viewable"] = True
+                        entry["tris"] = mesh["tri_count"]
+                if kind == "robot":
+                    # the arm draws AND names itself; the identity is read
+                    # from its own slots either way
+                    ident = cvx_models.rmd_identity(data)
+                    entry.update(ident)
+                    if robot is None or not (robot["maker"] or robot["model"]):
+                        robot = dict(ident)
+                elif kind == "calibration":
+                    pts = len(cvx_models.calibration_records(data))
+                    entry["points"] = pts
+                    if calibration is None or pts > calibration["points"]:
+                        calibration = {"points": pts}
+                models.append(entry)
+            return {"models": models, "count": len(models),
+                    "robot": robot, "calibration": calibration}
+
+        return s.cached("cvx_models_list", build)
+
+    @_endpoint
+    def cvx_models(self, sid: str | None = None):
+        """Every 3D-model blob in the open backup, one entry per geometry
+        stream (plus one data entry per non-geometry file), with the robot
+        identity and calibration summary mirrored top-level for the overview.
+        Empty for a backup that carries none - absence is a finding."""
+        return self._cvx_models_data(self._need_session(sid))
+
+    @_endpoint
+    def cvx_model(self, rel: str, stream=0, sid: str | None = None):
+        """One model stream as the flat mesh arrays the 3D viewer draws,
+        decimated to CVX_MODEL_MAX_TRIS (the payload says when it was). Only
+        files the session's model index vouches for are served - anything
+        else is NOT_FOUND, never parsed on faith. A hand or robot carries
+        exactly one mesh, so any stream but 0 is NOT_FOUND like any other
+        missing stream; its full decode (seconds on a big gripper) is paid
+        once per session by the same cache the compressed streams use."""
+        s = self._need_session(sid)
+        stream = int(stream or 0)
+        p = s.find(rel)
+        vouched = {r for r, _p in s.cvx_model_files()}
+        if p is None or s.rel(p) not in vouched:
+            raise ApiError("NOT_FOUND", f"model not found: {rel}")
+        crel = s.rel(p)
+
+        def build():
+            try:
+                data = p.read_bytes()
+            except OSError as e:
+                raise ApiError("UNREADABLE", f"cannot read {p.name}: {e}") from e
+            streams = _cvx_streams(crel, data)
+            if not 0 <= stream < len(streams):
+                raise ApiError("NOT_FOUND", f"no geometry stream {stream} in {crel}")
+            st = streams[stream]
+            mesh = cvx_models.mesh_arrays(st["facets"], max_tris=CVX_MODEL_MAX_TRIS)
+            kind = _cvx_stream_kind(cvx_models.classify(crel), st["bounds"])
+            entry = next((e for e in self._cvx_models_data(s)["models"]
+                          if e["rel"] == crel and e["stream"] == stream), None)
+            name = entry["name"] if entry else Path(crel).stem
+            return {"rel": crel, "stream": stream, "name": name, "kind": kind,
+                    **mesh}
+
+        return s.cached(f"cvx_model:{crel.upper()}:{stream}", build)
+
+    @_endpoint
+    def cvx_model_export(self, items, dest, label, sid: str | None = None):
+        """Write chosen model streams as complete binary STLs into ONE
+        sanitized <label>/ subfolder of a user-picked folder, on the same
+        write contract as ws_export: the viewer never writes into a backup,
+        everything is validated and assembled in memory first, and each file
+        lands .part -> os.replace so a half-written STL never appears done.
+        `items` = [{"rel", "stream"}]."""
+        s = self._need_session(sid)
+        if not items:
+            raise ApiError("NO_MODELS", "nothing to export")
+        if not dest:
+            raise ApiError("BAD_DEST", "an export folder is required")
+        try:
+            d = Path(dest).resolve()
+        except OSError:
+            raise ApiError("BAD_DEST", "could not resolve the export folder")
+        if not d.is_dir():
+            raise ApiError("BAD_DEST", "the export folder does not exist")
+        if looks_like_backup(d):
+            raise ApiError(
+                "BAD_DEST",
+                "that folder looks like a backup - the viewer never writes into "
+                "a backup")
+        try:
+            r = Path(s.root).resolve()
+        except OSError:
+            r = Path(s.root)
+        if d == r or library._within(d, r):
+            raise ApiError(
+                "BAD_DEST",
+                "choose a folder outside the backup - the viewer never writes "
+                "into a backup")
+        folder = ftpbackup._safe_name(str(label or ""))
+        vouched = {rel.upper(): (rel, p) for rel, p in s.cvx_model_files()}
+        outputs: list[tuple[Path, bytes]] = []
+        parsed: dict[str, list] = {}        # each file read + parsed at most once
+        done: set[tuple[str, int]] = set()  # an item picked twice exports once
+        for it in items:
+            it = it or {}
+            rel = str(it.get("rel") or "").replace("\\", "/")
+            stream = int(it.get("stream") or 0)
+            hit = vouched.get(rel.upper())
+            if hit is None:
+                raise ApiError("NOT_FOUND", f"model not found: {rel}")
+            crel, p = hit
+            if (crel.upper(), stream) in done:
+                continue
+            done.add((crel.upper(), stream))
+            if crel not in parsed:
+                try:
+                    parsed[crel] = _cvx_streams(crel, p.read_bytes())
+                except OSError as e:
+                    raise ApiError("UNREADABLE", f"cannot read {p.name}: {e}") from e
+            streams = parsed[crel]
+            if not 0 <= stream < len(streams):
+                raise ApiError("NOT_FOUND", f"no geometry stream {stream} in {crel}")
+            st = streams[stream]
+            program, tool = _cvx_setting_parts(crel)
+            kind = _cvx_stream_kind(cvx_models.classify(crel), st["bounds"])
+            stem = "_".join(x for x in (program, tool, kind) if x) or Path(crel).stem
+            if stream:
+                stem += "_%d" % stream
+            # a tool can carry the same kind twice (a TDC part next to a WSM
+            # part-copy) - disambiguate with the source file's own stem, then
+            # a counter, rather than making the user deselect real files
+            taken = {t for t, _b in outputs}
+            target = d / folder / (ftpbackup._safe_name(stem) + ".stl")
+            if target in taken:
+                src = Path(crel).stem.lower()
+                target = d / folder / (
+                    ftpbackup._safe_name(f"{stem}_{src}") + ".stl")
+            n = 2
+            while target in taken:
+                target = d / folder / (
+                    ftpbackup._safe_name(f"{stem}_{n}") + ".stl")
+                n += 1
+            outputs.append((target, cvx_models.stl_bytes(st["facets"])))
+        written: list[str] = []
+        total = 0
+        for target, blob in outputs:
+            part = ftpbackup.long_path(str(target) + ".part")
+            try:
+                os.makedirs(ftpbackup.long_path(str(target.parent)), exist_ok=True)
+                with open(part, "wb") as f:
+                    f.write(blob)
+                os.replace(part, ftpbackup.long_path(str(target)))
+            except OSError as e:
+                try:
+                    os.remove(part)
+                except OSError:
+                    pass
+                raise ApiError(
+                    "WRITE_FAILED",
+                    f"stopped at {target.name} - {len(written)} of "
+                    f"{len(outputs)} files were written: {e}") from e
+            written.append(target.parent.name + "/" + target.name)
+            total += len(blob)
+        self._last_export_dest = str(d)
+        settings.set_value("last_export_folder", str(d))
+        return {"dest": str(d), "root": folder, "files": written,
+                "count": len(written), "bytes": total}
+
+    @_endpoint
+    def cvx_logic(self, sid: str | None = None):
+        """A Keyence camera's inspection programs as a technician reads them:
+        the calculation scripts they wrote, and the names present in each
+        program.
+
+        Honesty, because this feeds troubleshooting: a script is reported only
+        when a run of lines matches the language's own grammar, and the names
+        are given as a deduplicated list WITHOUT claiming which tool each
+        belongs to (nothing in the file has been shown to tie a name record to
+        a tool number) and WITHOUT separating the technician's own names from
+        the built-in tool-type vocabulary the program also carries - both
+        appear, the count says how often, and the reader decides."""
+        s = self._need_session(sid)
+        if not s.backup_type.startswith("keyence"):
+            raise ApiError("NOT_CVX", "this backup is not a keyence camera")
+
+        def build():
+            progs = []
+            for rel, p in s.cvx_program_files():
+                try:
+                    data = p.read_bytes()
+                except OSError as e:
+                    raise ApiError("UNREADABLE", f"cannot read {p.name}: {e}") from e
+                try:
+                    r = cvx_program.read_program(data)
+                except cvx_program.BadProgram:
+                    continue
+                # the program number is the folder the file lives in
+                parts = rel.replace("\\", "/").split("/")
+                num = parts[-2] if len(parts) >= 2 else ""
+                counts: dict[str, int] = {}
+                for tl in r["tools"]:
+                    nm = (tl.get("name") or "").strip()
+                    if nm:
+                        counts[nm] = counts.get(nm, 0) + 1
+                scripts = [{"lines": len(x["lines"]), "text": x["text"],
+                            "title": _cvx_script_title(x["lines"])}
+                           for x in r["scripts"]]
+                scripts.sort(key=lambda x: -x["lines"])
+                progs.append({
+                    "program": num,
+                    "rel": rel,
+                    "name": cvx_inspect.program_name(data) or "",
+                    "scripts": scripts,
+                    "script_lines": sum(x["lines"] for x in scripts),
+                    "names": [{"name": k, "count": v}
+                              for k, v in sorted(counts.items(),
+                                                 key=lambda kv: kv[0].lower())],
+                })
+            return {"programs": progs, "count": len(progs)}
+
+        return s.cached("cvx_logic", build)
+
+    @_endpoint
+    def cvx_overview(self, sid: str | None = None):
+        """The camera-backup overview: the program list (names read from each
+        setting/<NNN>/inspect.dat, self-validating so an empty name is honest),
+        controller identity off workspace.xml when the pull carries one, and
+        the model/robot/calibration summary. Keyence backups only."""
+        s = self._need_session(sid)
+        if s.backup_type != "keyence camera":
+            raise ApiError("NOT_CVX", "not a keyence camera backup")
+
+        def build():
+            programs = []
+            for key in sorted(s.files):
+                parts = key.split("/")
+                if parts[-1] != "INSPECT.DAT" or len(parts) < 3 or parts[-3] != "SETTING":
+                    continue
+                p = s.files[key]
+                try:
+                    data = p.read_bytes()
+                except OSError:
+                    continue
+                programs.append({"n": s.rel(p).split("/")[-2],
+                                 "name": cvx_inspect.program_name(data)})
+            controller = {"type_text": "", "grade_text": ""}
+            wsp = s.find("WORKSPACE.XML")
+            if wsp is not None:
+                ws = keyence_workspace.read_workspace_xml(wsp)
+                # honest text: the grade decodes to its packed ASCII ("@DR3")
+                # when it can; the type has no verified name map, so it shows
+                # as its raw number rather than a guess
+                controller["type_text"] = str(ws.get("ControllerType") or "")
+                controller["grade_text"] = (ws.get("software_grade_text")
+                                            or str(ws.get("SoftwareGrade") or ""))
+            inv = self._cvx_models_data(s)
+            counts = {"parts": 0, "scans": 0, "hands": 0, "templates": 0}
+            plural = {"part": "parts", "scan": "scans", "hand": "hands",
+                      "template": "templates"}
+            for e in inv["models"]:
+                k = plural.get(e["kind"])
+                if k:
+                    counts[k] += 1
+            return {"programs": programs, "controller": controller,
+                    "robot": inv["robot"], "calibration": inv["calibration"],
+                    "models": counts}
+
+        return s.cached("cvx_overview", build)
 
     # -- a robot's linked cameras (its Cameras tab) --------------------------------
 

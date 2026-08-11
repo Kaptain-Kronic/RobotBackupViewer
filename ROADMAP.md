@@ -89,7 +89,13 @@ Each of these is deliberately scoped to land on its own. Good places to start.
 - 🔨 **Robot meshes in the viewport** — the skeleton wants a body: Roboguide
   `.rcf`/`.hsf` mesh crack, or `.rmd`/STL/OBJ import (the `.rmd` format is
   fully reversed), then the capsule fitter for arm bubbles ("visual approx —
-  not the DCS model" labeling per the locked ruling).
+  not the DCS model" labeling per the locked ruling). **New route as of
+  2026-08-10:** a CV-X 3D-pick backup carries a *ready-made* FANUC arm mesh —
+  `RBT_G_RMD_*.dat` decodes through `cvx_models.raw_facets` with no
+  robot-specific code (32,250 facets, an M-20iD/35). Caveat that decides how
+  usable it is here: it is ONE fused mesh at its saved pose, not per-link
+  parts, so it cannot be posed by joint angles without a split — fine as a
+  static body, not a substitute for per-link geometry.
 - 📋 **Program points in 3D** — plot a program's Cartesian positions among
   the zones (compose their UFRAME); joint-rep points can now use the same
   forward kinematics the posed arm runs on.
@@ -171,12 +177,47 @@ one click backs up the robot + all its cameras together.
   15-bit range value (`H = (G<<7)|(R<<4)|B`, all-zero = no data), read off real
   files and pinned by tests — see `parsers/cvx_image.py`, which also records
   what could NOT be proved (a true height of 0 is indistinguishable from no
-  data) and the dead end (the `.tbd` blobs carry no images: no signature, no
-  raster stride, `HND_L` at 7.32 bits/byte entropy). Rendered to PNG through
+  data) and the dead end (the `.tbd` blobs carry no *images* — though the
+  2026-08-07 decode showed they DO carry zlib-wrapped binary-STL geometry;
+  see the CV-X 3D models bullet below). Rendered to PNG through
   the phone view's stdlib encoder, decimated during the decode so a 12 MB
   master costs ~0.4 s and the stack stays locked. What there is to show is
   mostly taught masters; timestamped triggers only exist when a tech turned
   image logging on. Landing on the `cvx-photos` branch.
+
+- ✅ **CV-X 3D models: viewer + STL extract** (landed on `cvx-camera-tabs`) —
+  a camera backup's `TDC_L`/`WSM_L` blobs decode to the registered part CAD
+  and workspace scans (zlib-wrapped binary-STL facets, `parsers/cvx_models.py`);
+  the camera's 3d view tab renders them in a canvas-2d viewer on `proj3d`
+  math and exports real `.stl` files; overview gains the crossfade hero +
+  program/robot/calibration cards. The `HND_L` gripper/EOAT mesh decoded too
+  (2026-08-10) and renders and extracts like the part CAD — it is the same
+  facet geometry, uncompressed, in 48-byte records at an offset 2 mod 4, which
+  is why an earlier pass read it as noise — and the `RBT_G_RMD` arm mesh came
+  free with it, the same 48-byte records (a whole M-20iD/35, 32,250 facets).
+  `TDM_L` matching templates stay an honest info card; that encoding is still
+  unreversed. WebGL still parked; canvas 2d works under software rendering.
+
+- ✅ **CV-X inspection logic: the scripts and the names decode** (landed on
+  `cvx-camera-tabs`, 2026-08-11) — `inspect.dat` is an `ST` container that is
+  ~98 % zlib blocks, stored as a working + recovery copy; inside, two regions
+  are self-describing text. The **calculation scripts** a technician wrote come
+  out as plain ASCII in the CV-X's own expression grammar (`@local`, `ANSn`,
+  `IF/ELSEIF…THEN/ENDIF`, `Tnnn.RSLT.<MNEMONIC>[i]:MS`), and the **tool names**
+  come out of a length-prefixed language table (`(u32 lang, u32 len, bytes)`,
+  ascending indices, slot 1 = English). Read off real cameras plus a controlled
+  experiment in the vendor's simulator; parser `parsers/cvx_program.py`, surface
+  the camera **logic** tab.
+  **What this does NOT solve, so nobody assumes it:** (1) **per-tool mapping** —
+  no tool number or type code has been found beside a name record, and no owner
+  field beside a script, so names are a list and never "tool 5"; (2) a
+  technician's names and the vendor's built-in tool-type vocabulary are
+  indistinguishable in-file, so both are shown together; (3) the **parameter
+  slots** (float64 at an offset 6 mod 8 with a ~1e12 "unset" sentinel) are
+  unmapped — exactly one was located by experiment, so a camera's *settings*
+  remain unread and nothing numeric is surfaced. The route for (3) is the same
+  experiment repeated one setting at a time; see `docs/subsystems/parsing.md`
+  §8 items 10–11.
 
 - 🔨 **Discovery** — agreed direction: probe the DesignAssistant web portal
   (:80/:443) and EtherNet/IP ListIdentity (UDP 44818, Matrox vendor ID) for

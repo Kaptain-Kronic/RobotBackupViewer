@@ -312,7 +312,183 @@
     return btn;
   }
 
+  /* ---- camera overview ----
+     A camera backup's dashboard: identity hero, the newest saved photo as the
+     shared figure (a CV-X pair drives its own crossfade - photofigure.js) and
+     a stack of summary cards. Kind gating is by backup_type ("keyence camera"
+     vs "matrox camera"); cvx_overview is a Keyence-only endpoint. The robot
+     dashboard below stays untouched. */
+
+  function renderCameraOverview(view, toolbar) {
+    view.innerHTML = "";
+    toolbar.innerHTML = "";
+    var man = BV.state.manifest || {};
+    var isCvx = man.backup_type === "keyence camera";
+
+    /* the library-opened toolbar trio works for cameras as-is */
+    var datePick = buildDatePicker();
+    if (datePick) toolbar.appendChild(datePick);
+    var openLoc = buildOpenLocation();
+    if (openLoc) toolbar.appendChild(openLoc);
+    var cmpBtn = BV.el("button", { class: "btn", title: "compare with another backup" },
+      "compare");
+    cmpBtn.addEventListener("click", function () {
+      if (BV.state.compare) location.hash = "#compare";
+      else BV.compareFlow(cmpBtn);
+    });
+    toolbar.appendChild(cmpBtn);
+    /* live remote, the files.js pattern: CV-X mirrors the controller's screen
+       + mouse, Matrox embeds the camera's own web UI */
+    if ((man.device_type || "").indexOf("camera") === 0 && man.camera_ip) {
+      var isCvxDev = man.device_type === "camera-keyence";
+      var rb = BV.el("button", { class: "btn", style: "margin-left:auto",
+        title: (isCvxDev ? "mirror this camera's live screen ("
+                         : "open this camera's web UI (") + BV.esc(man.camera_ip) + ")" },
+        BV.icon("remote") + " remote");
+      rb.addEventListener("click", function () {
+        if (isCvxDev) BV.openCvxRemote(man.camera_ip, man.camera_name);
+        else BV.openMtxRemote(man.camera_ip, man.camera_name);
+      });
+      toolbar.appendChild(rb);
+    }
+
+    Promise.all([
+      /* photos missing must not kill the dashboard - the figure just vanishes */
+      BV.api.call("get_photos").catch(function () { return { photos: [] }; }),
+      isCvx ? BV.api.call("cvx_overview").catch(function (e) {
+        BV.toast(e.message || String(e));
+        return null;
+      }) : Promise.resolve(null),
+    ]).then(function (res) {
+      var photos = (res[0] && res[0].photos) || [];
+      var ov = res[1];
+      var p0 = photos[0] || null;   /* get_photos lists newest first */
+
+      var chips = [];
+      if (man.camera_ip) chips.push(["ip", man.camera_ip]);
+      if (man.file_count) chips.push(["files", man.file_count]);
+      var curB = null;
+      (man.backups || []).forEach(function (b) {
+        if (b.path === man.current_path) curB = b;
+      });
+      if (curB && curB.taken) chips.push(["date", fmtBackupDate(curB.taken)]);
+      var hero = BV.hero({
+        name: man.camera_name || man.robot_name || man.name,
+        model: man.backup_type,
+        stick: true,
+        chips: '<span class="ov-chips">' + chips.map(function (ch) {
+          return '<span class="ov-chip"><span class="k">' + BV.esc(ch[0]) + "</span>" +
+            '<span class="v">' + BV.esc(ch[1]) + "</span></span>";
+        }).join("") + "</span>",
+      });
+      view.appendChild(hero);
+
+      var grid = BV.el("div", { style:
+        "display:grid;grid-template-columns:repeat(auto-fit,minmax(min(21rem,100%),1fr));" +
+        "gap:1rem;align-items:start" });
+      view.appendChild(grid);
+
+      /* left: the newest photo as the shared crossfade figure; a camera with
+         zero photos shows no figure at all (vanish, never grey) */
+      if (p0) {
+        /* per-render image loader with a tiny LRU (the photos.js pattern -
+           the overview shows at most one pair) */
+        var CACHE_MAX = 8;
+        var imgCache = new Map();
+        var loadImage = function (rel) {
+          if (imgCache.has(rel)) {
+            var uri = imgCache.get(rel);
+            imgCache.delete(rel); imgCache.set(rel, uri);
+            return Promise.resolve(uri);
+          }
+          return BV.api.call("get_image", rel).then(function (im) {
+            imgCache.set(rel, im.data_uri);
+            if (imgCache.size > CACHE_MAX) imgCache.delete(imgCache.keys().next().value);
+            return im.data_uri;
+          });
+        };
+        var pst = BV.tabState("overview");
+        var left = BV.el("div", { style: "min-width:0" });
+        var fig = BV.photoFigure({
+          photo: p0, load: loadImage, state: pst,
+          onOpen: function () { location.hash = "#photos"; },
+        });
+        if (!p0.overlay) fig.show(p0.thumb || p0.full);
+        /* the figure's own title says fullscreen; here the click goes to the tab */
+        if (fig.firstChild && fig.firstChild.title) fig.firstChild.title = "open the photos tab";
+        left.appendChild(fig);
+        left.appendChild(BV.el("div", { class: "dim",
+          style: "font-size:.82rem;margin-top:.45rem" },
+          photos.length + " photo" + (photos.length === 1 ? "" : "s") +
+          ' · <a href="#photos">open photos</a>'));
+        grid.appendChild(left);
+      }
+
+      /* right: the summary card stack */
+      var right = BV.el("div", { style:
+        "display:flex;flex-direction:column;gap:1rem;min-width:0" });
+      grid.appendChild(right);
+
+      var pairs = [
+        ["name", man.camera_name || man.robot_name || man.name],
+        ["ip", man.camera_ip],
+        ["type", man.backup_type],
+      ];
+      if (man.backup_type === "matrox camera" && p0 && p0.camera) {
+        /* the camera's own self-report, read from its newest photo */
+        pairs.push(["camera", p0.camera.name]);
+        pairs.push(["model", p0.camera.type]);
+        pairs.push(["software", p0.camera.software]);
+        pairs.push(["project", p0.camera.project]);
+      }
+      if (isCvx && ov && ov.controller) {
+        pairs.push(["controller", ov.controller.type_text]);
+        pairs.push(["software grade", ov.controller.grade_text]);
+      }
+      var camCard = BV.card({ title: "camera" });
+      camCard.el.appendChild(BV.kv(pairs));
+      right.appendChild(camCard.el);
+
+      if (ov && ov.programs && ov.programs.length) {
+        var pc = BV.card({ title: "programs", count: ov.programs.length });
+        pc.el.appendChild(BV.kv(ov.programs.map(function (p) {
+          return [p.n, p.name || "—"];
+        })));
+        right.appendChild(pc.el);
+      }
+
+      /* 3d summary - only when the backup actually carries model containers */
+      var mc = ov && ov.models;
+      if (mc && (mc.parts || mc.scans || mc.hands || mc.templates)) {
+        var tp = [];
+        if (mc.parts) tp.push(["parts", mc.parts]);
+        if (mc.scans) tp.push(["workspace scans", mc.scans]);
+        if (mc.hands) tp.push(["hand", mc.hands]);
+        if (mc.templates) tp.push(["templates", mc.templates]);
+        if (ov.robot && (ov.robot.maker || ov.robot.model)) {
+          /* NBSP-joined so the label wraps, never the value */
+          tp.push(["robot", [ov.robot.maker, ov.robot.model]
+            .filter(Boolean).join("\u00A0")]);
+        }
+        if (ov.calibration) tp.push(["calibration points", ov.calibration.points]);
+        var tc = BV.card({ title: "3d" });
+        tc.el.appendChild(BV.kv(tp));
+        tc.el.insertAdjacentHTML("beforeend",
+          '<div style="margin-top:.4rem"><a href="#view3d">open 3d view</a></div>');
+        right.appendChild(tc.el);
+      }
+
+      BV.persistScroll("overview", document.getElementById("view"));
+    }).catch(function (e) {
+      view.innerHTML = '<div class="empty-state"><div class="big">overview unavailable</div>' +
+        '<div class="hint">' + BV.esc(e.message) + "</div></div>";
+    });
+  }
+
   function render(view, toolbar) {
+    if ((BV.state.manifest.backup_type || "").indexOf("camera") >= 0) {
+      return renderCameraOverview(view, toolbar);
+    }
     view.innerHTML = "";
     toolbar.innerHTML = "";
     collapsed = (BV.state.settings && BV.state.settings.ov_collapsed) || collapsed || {};
