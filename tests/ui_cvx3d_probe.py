@@ -87,23 +87,24 @@ def probe(window):
         check("view3d.has_hand", "hand" in joined.lower())
         check("view3d.has_robot", "FANUC" in joined or "robot" in joined.lower())
 
-        # undecoded families sit behind the toggle: rows exist (evidence) but
-        # are hidden until "show undecoded files (N)" is clicked
+        # the rail leads with the part models; everything else the backup
+        # carries (scans, gripper, arm, calibration, templates) sits behind the
+        # toggle - present as evidence, just not in the way
         folded = js(window, """(function(){
             var r = [...document.querySelectorAll('.cvx3d-row')].find(function(x){
                 return x.textContent.toLowerCase().indexOf('hand') >= 0; });
             var b = [...document.querySelectorAll('.cvx3d-rail button')].find(function(x){
-                return x.textContent.indexOf('undecoded') >= 0; });
+                return x.textContent.indexOf('other models') >= 0; });
             return JSON.stringify({hidden: !!r && r.offsetParent === null,
                                    toggle: b ? b.textContent : ''});
         })()""")
         folded = json.loads(folded or "{}")
-        check("view3d.undecoded_hidden_by_default", folded.get("hidden") is True,
+        check("view3d.nonpart_hidden_by_default", folded.get("hidden") is True,
               f"({folded})")
-        check("view3d.undecoded_toggle_counts", "(" in (folded.get("toggle") or ""),
+        check("view3d.other_toggle_counts", "(" in (folded.get("toggle") or ""),
               f"({folded.get('toggle')!r})")
         js(window, """[...document.querySelectorAll('.cvx3d-rail button')]
-            .find(function(x){ return x.textContent.indexOf('undecoded') >= 0; }).click()""")
+            .find(function(x){ return x.textContent.indexOf('other models') >= 0; }).click()""")
         check("view3d.toggle_reveals", bool(poll(window, """(function(){
             var r = [...document.querySelectorAll('.cvx3d-row')].find(function(x){
                 return x.textContent.toLowerCase().indexOf('hand') >= 0; });

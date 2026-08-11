@@ -2,8 +2,8 @@
 a technician actually wrote, read out of `inspect.dat`.
 
 Evidence basis, 2026-08-11. `inspect.dat` is an "ST" container whose payload is
-a handful of zlib blocks (98.7% of the file), stored twice - a working copy and
-a recovery copy, which inflate byte-identically. The blocks are the program's
+a handful of zlib blocks (98.7% of the file), stored twice - a working copy
+and a recovery copy (see `blocks`, which keeps one of each pair). The blocks are the program's
 parameter memory: sparse, mostly zero, with two regions that are plain,
 self-describing text.
 
@@ -73,6 +73,22 @@ _SCRIPT_LINE = re.compile(
 )
 # a run shorter than this is noise that happens to look like a line
 MIN_SCRIPT_LINES = 3
+# One script is stored in PIECES with small binary records interleaved between
+# them, so a naive "any gap ends the script" rule chops a technician's script up
+# and - worse - hides its ending. Measured on a real 3D-pick camera, the gap
+# distribution is cleanly bimodal: 41, 99, 131, 149, 150 bytes BETWEEN pieces of
+# one script, against 23,278 / 37,667 / 37,668 / 1,359,322 between different
+# scripts. Any threshold in that valley works; 1 KB sits well inside it. The
+# gap bytes themselves are not padding (they are nonzero records), so "merge
+# only across NULs" would not have worked.
+MERGE_GAP = 1024
+# A run of lines that all match the grammar can still be noise: stretches of
+# `'5` and `'K` decode out of the binary and are, technically, comments. A real
+# script either does something (an assignment, an output, a control keyword) or
+# says something a person wrote - a technician's notes-only tool is real and
+# must survive, so the test is substance, not statements. 12 characters keeps
+# "'Use this tool to leave notes" and drops "'5".
+MIN_COMMENT_CHARS = 12
 
 
 class BadProgram(ValueError):
@@ -88,11 +104,17 @@ def is_program(head: bytes) -> bool:
 def blocks(data: bytes) -> list[bytes]:
     """Every complete zlib block in the container, inflated, in file order.
 
-    The working and recovery copies inflate identically, so exact duplicates
-    are folded out - a program has one set of contents, and showing it twice
-    would be a lie about how much is in there."""
+    A program is stored TWICE - a working copy and a recovery copy - so the
+    blocks arrive in pairs and everything inside would otherwise be listed
+    twice. Measured on a real camera: 8 blocks, 4 lengths, each appearing
+    exactly twice; three of the four pairs are byte-identical and the fourth
+    (the program itself) differs in a handful of bytes, which is why an
+    equality test does not catch it and the LENGTH does. The four logical
+    blocks have four distinct lengths, so length is a safe key here. The first
+    of each pair is kept: it is the working copy, and the recovery copy is by
+    definition the older spare."""
     out: list[bytes] = []
-    seen: set[bytes] = set()
+    seen: set[int] = set()
     off = 0
     n = len(data)
     while off < n:
@@ -106,9 +128,8 @@ def blocks(data: bytes) -> list[bytes]:
             raw = obj.decompress(data[pos:])
             if obj.eof and len(raw) > 64:
                 consumed = n - pos - len(obj.unused_data)
-                key = raw[:4096] + raw[-4096:] + bytes(str(len(raw)), "ascii")
-                if key not in seen:
-                    seen.add(key)
+                if len(raw) not in seen:
+                    seen.add(len(raw))
                     out.append(raw)
                 off = pos + max(consumed, 2)
                 continue
@@ -180,6 +201,20 @@ def tool_names(buf: bytes) -> list[dict]:
     return out
 
 
+def _has_substance(lines: list) -> bool:
+    """True when a run is a script somebody wrote rather than bytes that happen
+    to read as comments: it either performs an action, or carries a comment long
+    enough to be prose (see MIN_COMMENT_CHARS). A notes-only tool is real and
+    must survive this test - technicians use one as a logbook."""
+    for ln in lines:
+        s = ln.strip()
+        if not s.startswith("'"):
+            return True                       # an assignment/output/control line
+        if len(s.lstrip("'").strip()) >= MIN_COMMENT_CHARS:
+            return True                       # a sentence a person wrote
+    return False
+
+
 def scripts(buf: bytes) -> list[dict]:
     """Contiguous runs of calculation-script lines in one inflated block.
 
@@ -193,21 +228,23 @@ def scripts(buf: bytes) -> list[dict]:
     for m in re.finditer(rb"[\x09\x20-\x7e]{2,400}", buf):
         s = m.group().decode("ascii", "replace").rstrip("\r\n")
         if not _SCRIPT_LINE.match(s):
-            if len(cur) >= MIN_SCRIPT_LINES:
-                runs.append({"offset": start, "lines": cur, "text": "\n".join(cur)})
-            cur = []
+            # Text that is not a script line does NOT end the script: the
+            # pieces of one script have binary records between them, and some
+            # of those decode to printable junk. Only DISTANCE ends a script
+            # (below) - flushing here is what used to cut a technician's
+            # script off before its ENDIF.
             continue
-        # a gap of more than a few bytes means a different region, not the
-        # next line of the same script
-        if cur and m.start() - last_end > 64:
-            if len(cur) >= MIN_SCRIPT_LINES:
+        # a big gap means a different script; a small one is the same script
+        # continuing past an interleaved binary record (see MERGE_GAP)
+        if cur and m.start() - last_end > MERGE_GAP:
+            if len(cur) >= MIN_SCRIPT_LINES and _has_substance(cur):
                 runs.append({"offset": start, "lines": cur, "text": "\n".join(cur)})
             cur = []
         if not cur:
             start = m.start()
         cur.append(s.strip())
         last_end = m.end()
-    if len(cur) >= MIN_SCRIPT_LINES:
+    if len(cur) >= MIN_SCRIPT_LINES and _has_substance(cur):
         runs.append({"offset": start, "lines": cur, "text": "\n".join(cur)})
     return runs
 
@@ -225,6 +262,10 @@ def read_program(data: bytes) -> dict:
     tools: list[dict] = []
     runs: list[dict] = []
     for b in bl:
+        # No de-duplication here on purpose: blocks() already folded out the
+        # recovery copy, so anything still repeated is a genuine repeat - four
+        # tools really can share the type name "Color Detection", and the count
+        # is information, not noise.
         tools.extend(tool_names(b))
         runs.extend(scripts(b))
     return {"tools": tools, "scripts": runs, "blocks": len(bl)}

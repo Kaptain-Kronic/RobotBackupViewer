@@ -315,10 +315,16 @@
           "letter-spacing:.04em" },
           BV.esc(gl[0]) + ' <span style="opacity:.7">' + gl[1].length + "</span>");
       }
+      /* The rail leads with the PART models - the registered part CAD is what
+         this screen is for, and a technician opening it is looking for a part.
+         Everything else the backup carries (workspace scans, the gripper, the
+         arm, calibration, templates, layouts) folds behind one toggle: still
+         here, still openable, just not in the way. */
       var drawable = [], undecoded = [];
       lists.forEach(function (gl) {
         if (!gl[1].length) return;   /* empty groups vanish */
-        (gl[1].some(function (e) { return e.viewable; }) ? drawable : undecoded).push(gl);
+        (gl[1].some(function (e) { return e.kind === "part"; })
+          ? drawable : undecoded).push(gl);
       });
       drawable.forEach(function (gl) {
         rail.appendChild(groupHead(gl));
@@ -333,7 +339,7 @@
           "margin:.9rem .5rem .2rem;font-size:.78rem" });
         function paintRaw() {
           toggle.textContent = (s.showRaw ? "hide" : "show") +
-            " undecoded files (" + rawCount + ")";
+            " other models & data (" + rawCount + ")";
           rawHost.style.display = s.showRaw ? "" : "none";
         }
         toggle.addEventListener("click", function () {

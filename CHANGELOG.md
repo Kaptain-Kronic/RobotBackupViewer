@@ -54,6 +54,23 @@
   facet records, full detail even when the viewer decimates) to a user-picked
   folder through the house export contract — never into a backup, `.part` →
   rename, reveal-in-explorer — one model or all of them at once.
+- **The logic tab shows each script once, and whole.** First cut listed every
+  script twice and cut each one short: a program is stored twice (a working copy
+  and a recovery copy) and the pair is not byte-identical, so an equality test
+  missed it — the blocks are now paired by length and only the working copy is
+  read. And a script is stored in PIECES with binary records between them, so
+  the old "any gap ends the script" rule stopped at the first one and hid the
+  ending; the gap distribution is cleanly bimodal (tens of bytes inside a
+  script, tens of thousands between scripts), so the split now happens on
+  distance. A real camera went from 26 half-scripts to 6 whole ones, and the
+  longest grew from 74 lines to 99 — the 25 lines it had been missing included
+  its closing `ENDIF`. Runs of decoded rubbish that are technically comments
+  (`'5` repeated) no longer count as scripts, while a technician's notes-only
+  tool still does.
+- **The 3D view leads with the part models.** The registered part CAD is what
+  that screen is for; the workspace scans, gripper, arm, calibration and
+  templates the backup also carries now fold behind one "other models & data"
+  toggle — present and openable, just not in the way.
 - **A camera backup now shows the calculation logic the camera actually runs.**
   A CV-X inspection program is more than tools and pictures: it carries the
   expression scripts a technician wrote — `@local` variables, `IF`/`ELSEIF …

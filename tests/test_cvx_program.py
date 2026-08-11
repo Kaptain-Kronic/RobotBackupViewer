@@ -22,7 +22,7 @@ from backupviewer.session import BackupSession
 JP = "テスト".encode("cp932")            # a real record's japanese slot is cp932
 # NUL run planted between regions: longer than the 64-byte gap that ends a
 # script run, so two planted scripts are two scripts
-PAD = 128
+PAD = 4096   # a real between-scripts gap measures 23k-1.3M; MERGE_GAP is 1k
 # the header must reach past the program name's echo for cvx_inspect to read it
 HEAD = cvx_inspect.NAME_ECHO_OFFSET + cvx_inspect.NAME_MAX
 PROGRAM_NAME = "RB130R01B01CAM1"
@@ -258,7 +258,7 @@ def test_two_scripts_across_a_gap_are_never_fused_into_one():
     """The gap between the runs is unrelated bytes, not the next line of the
     same script - joining them would invent logic that is not in the file."""
     raw, offs = block([script_bytes(SCRIPT_A), script_bytes(SCRIPT_B)], pad=PAD)
-    assert PAD > 64                          # the gap the parser splits on
+    assert PAD > cvx_program.MERGE_GAP       # the gap the parser splits on
     got = cvx_program.scripts(raw)
     assert [r["offset"] for r in got] == offs
     assert [r["lines"] for r in got] == [SCRIPT_A, SCRIPT_B]
@@ -267,17 +267,56 @@ def test_two_scripts_across_a_gap_are_never_fused_into_one():
 def test_a_gap_too_small_to_split_leaves_one_script():
     """The companion to the test above: the split is the GAP rule, not a rule
     that separated runs never join. Eight bytes between the halves and it stays
-    one script - which is what makes the 128-byte gap above mean something."""
+    one script - which is what makes the 4 KB gap above mean something."""
     raw, _offs = block([script_bytes(SCRIPT_A) + bytes(8) + script_bytes(SCRIPT_B)])
     got = cvx_program.scripts(raw)
     assert [r["lines"] for r in got] == [SCRIPT_A + SCRIPT_B]
 
 
-def test_a_line_that_is_not_the_language_ends_the_run():
+def test_text_that_is_not_the_language_does_not_end_the_run():
+    """A real script is stored in pieces with binary records between them, and
+    some of those records decode to printable junk. Junk must be SKIPPED, not
+    treated as the end of the script - cutting there is what hid a technician's
+    closing ENDIF. Only distance ends a script (the gap tests above)."""
     mixed = SCRIPT_A[:4] + ["Camera Setting Table"] + SCRIPT_B
     raw, _offs = block([script_bytes(mixed)])
     got = cvx_program.scripts(raw)
-    assert [r["lines"] for r in got] == [SCRIPT_A[:4], SCRIPT_B]
+    assert len(got) == 1
+    assert got[0]["lines"] == SCRIPT_A[:4] + SCRIPT_B
+    assert "Camera Setting Table" not in got[0]["text"]
+
+
+def test_a_run_of_trivial_comments_is_not_a_script():
+    """`'5` repeated decodes out of the binary and is, technically, a run of
+    comments. A script has to DO something or SAY something - otherwise the
+    tab fills with rubbish that looks like a technician wrote it."""
+    raw, _offs = block([script_bytes(["'5", "'5", "'5", "'5", "'5"])])
+    assert cvx_program.scripts(raw) == []
+
+
+def test_a_notes_only_tool_survives_the_substance_test():
+    """The other side of the rule above: technicians use a calculation tool as
+    a logbook, and those notes are real content that must not be filtered."""
+    notes = ["'Dual Bin + Redundancy 04/07/25",
+             "'Use this tool to leave notes",
+             "'Templates Loaded 8/26/25"]
+    raw, _offs = block([script_bytes(notes)])
+    got = cvx_program.scripts(raw)
+    assert len(got) == 1 and got[0]["lines"] == notes
+
+
+def test_the_recovery_copy_is_folded_out():
+    """A program is stored twice and the pair is not byte-identical, so blocks()
+    keys on LENGTH. Without this every script and every name would be listed
+    twice - which is exactly what a reader would read as "the camera has two of
+    these"."""
+    body = block([script_bytes(SCRIPT_A)])[0]
+    twin = bytearray(body)
+    twin[len(twin) - 1] ^= 0xFF          # same length, different bytes
+    data = container(body, bytes(twin))
+    got = cvx_program.blocks(data)
+    assert len(got) == 1
+    assert len(cvx_program.read_program(data)["scripts"]) == 1
 
 
 @pytest.mark.parametrize("lines", [
