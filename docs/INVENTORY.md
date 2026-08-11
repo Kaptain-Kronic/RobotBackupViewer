@@ -23,7 +23,7 @@ batch lands, or with `--check` to hear about drift).
 > When per-subsystem docs land, they supersede this file for their own area. This
 > map's remaining job is breadth: what exists, and where.
 
-**Scope.** 256 files / ~73,024 lines. Covers everything in the working tree except: the
+**Scope.** 256 files / ~73,078 lines. Covers everything in the working tree except: the
 `.git` internals, build outputs (`dist/`, `build/`, `__pycache__/`), the private
 `SampleBackup/` fixture tree, the `.rmd` model corpus (61 binary robot-model blobs
 that are input data, not source), and the two local-only real-plant reference files
@@ -220,7 +220,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/test_label_xref.py` | 44 | pytest for LBL definitions and JMP xref in .ls programs, including broken jumps and comment lookalikes | tests | active |
 | `tests/test_library.py` | 183 | pytest for the library registry overlay: add/update/bulk-add dedupe, register_backup matching, partial-never-latest, resolve_open_path fallbacks | tests | active |
 | `tests/test_library_relocate.py` | 987 | pytest for relocate_robot/merge_robots: transactional folder moves, alias recording, duplicate-vs-conflict rules, evidence-based merge suggestions with F-number veto | tests | active |
-| `tests/test_library_scan.py` | 950 | pytest for scan_library_root's files-are-law rules: disk wins over overlay, schema-3 sidecars, stale/absorbed reporting, lib_list signature caching | tests | active |
+| `tests/test_library_scan.py` | 1004 | pytest for scan_library_root's files-are-law rules: disk wins over overlay, schema-3 sidecars, stale/absorbed reporting, lib_list signature caching | tests | active |
 | `tests/test_libraryimporter_app.py` | 135 | pytest for the LibraryImporter second app: its WebView2 failure-watch/relaunch ladder and the Api bridge envelope, seed and drag-drop handlers | tests | active |
 | `tests/test_libraryimporter_core.py` | 209 | pytest for the importer's parse -> plan -> seed pipeline, full-name expansion, schema-2 sidecar shape and destination sanity warnings | tests | active |
 | `tests/test_libraryimporter_integration.py` | 63 | pytest proving a tree seeded by libraryimporter.core is adopted by BackupViewer's scanner with path identity, IPs and stable ids | tests | active |
@@ -277,7 +277,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 
 | subsystem | files | ~lines |
 |---|---:|---:|
-| tests | 71 | 19,875 |
+| tests | 71 | 19,929 |
 | shared/infra | 27 | 7,899 |
 | program editor | 8 | 6,820 |
 | theming | 34 | 5,927 |
@@ -293,7 +293,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | compare engine | 5 | 1,355 |
 | tools/scripts | 5 | 1,087 |
 | build/config | 7 | 267 |
-| **total** | **256** | **73,024** |
+| **total** | **256** | **73,078** |
 
 > Counts are by *primary* subsystem only — a file appears once, so these add up to the
 > whole repo. The `tests` row is the largest because every probe and unit suite counts as

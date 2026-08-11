@@ -4,6 +4,10 @@ so nothing here needs SampleBackup or a network."""
 import json
 import os
 import shutil
+import threading
+import time
+
+import pytest
 
 from backupviewer import library, settings
 
@@ -12,6 +16,22 @@ def _iso(monkeypatch, tmp_path):
     appdir = tmp_path / "appdata"
     appdir.mkdir()
     monkeypatch.setattr(settings, "app_dir", lambda: appdir)
+
+
+@pytest.fixture(autouse=True)
+def _reap_scan_thread(monkeypatch):
+    """Every background library scan dies with its own test. A runner that
+    outlived teardown would still be scanning while the NEXT test owns the
+    settings monkeypatch — writing this test's robots into that test's
+    library.json, cross-test contamination with a moving symptom. Depending
+    on `monkeypatch` orders this teardown BEFORE the un-patching, so a
+    straggler is joined while the test's isolated APPDATA is still in force
+    (never the real one)."""
+    yield
+    for t in threading.enumerate():
+        if t.name == "libscan":
+            t.join(timeout=30)
+            assert not t.is_alive(), "a libscan thread outlived its test"
 
 
 def _make_robot(root, plant, line, robot, snaps, *, rid="", notes="", ips=None, mirror=False,
@@ -329,7 +349,10 @@ def test_same_names_in_two_plants_stay_separate(monkeypatch, tmp_path):
 def _settled_signature(root):
     """NTFS flushes directory-mtime updates lazily; the first walk after writes
     can observe pre-flush values. The production settle loop (promoted for the
-    signature-claim path) is the one implementation of that wait."""
+    signature-claim path) is the one implementation of that wait. Best-effort
+    only: under load a flush can land long after any finite wait — the flake
+    that survives it is absorbed by _settle_listing, never by asserting the
+    scan count the quiesce design deliberately leaves open."""
     return library.settled_signature(root)
 
 
@@ -498,6 +521,25 @@ def _join_scan(api, timeout=30):
     assert not api._scan_alive()
 
 
+def _settle_listing(api, timeout=10.0):
+    """Serve listings until one comes straight from the cache. NTFS flushes a
+    directory's index-entry mtime (what scan_signature's scandir reads) lazily
+    — under load, well AFTER the writes and any finite fixture-side wait — and
+    each late flush reads as one more tree change: the runner re-walks to
+    quiesce, or the next listing kicks one more background scan. Fail-safe by
+    design in production; noise to a test asserting cache behavior. A
+    fixture's writes leave only FINITELY many flushes pending, so polling to
+    the fixpoint terminates — and the fixpoint, not the scan count spent
+    getting there, is what the pure-cache asserts may rely on."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        out = api.lib_list()["data"]
+        if not out.get("scanning"):
+            return out
+        _join_scan(api)
+    raise AssertionError("library listing never settled to the cache")
+
+
 def test_lib_list_rescans_when_tree_changes(monkeypatch, tmp_path):
     """The Explorer-add field bug: a folder copied into the library shows up on
     the next listing - no manual rescan, no app restart. Since slice B the
@@ -512,12 +554,14 @@ def test_lib_list_rescans_when_tree_changes(monkeypatch, tmp_path):
     assert [e["robot"] for e in api.lib_list()["data"]["robots"]] == ["R1"]
 
     _make_robot(root, "P", "L", "R2", [("2026_02_02", "09_00_00", 1_700_000_000)], rid="rid-2")
+    _settled_signature(root)                                       # the copy's mtimes settle
     out = api.lib_list()["data"]
     assert out.get("scanning") is True                             # cache now, scan behind it
     assert [e["robot"] for e in out["robots"]] == ["R1"]
     _join_scan(api)
     names = sorted(e["robot"] for e in api.lib_list()["data"]["robots"])
     assert names == ["R1", "R2"]                                   # picked up automatically
+    _settle_listing(api)                               # exhaust any late index flushes
 
     calls = []
     real = library.scan_library_root
@@ -547,6 +591,7 @@ def test_lib_list_persisted_sig_skips_boot_scan(monkeypatch, tmp_path):
     assert calls == []                                 # unchanged tree -> no scan at all
 
     _make_robot(root, "P", "L", "R2", [("2026_02_02", "09_00_00", 1_700_000_000)], rid="rid-2")
+    _settled_signature(root)                           # the copy's mtimes settle
     api3 = Api()                                       # another boot, tree changed meanwhile
     out = api3.lib_list()["data"]
     assert out.get("scanning") is True                 # last-known cache served instantly
@@ -554,7 +599,11 @@ def test_lib_list_persisted_sig_skips_boot_scan(monkeypatch, tmp_path):
     _join_scan(api3)
     names = sorted(e["robot"] for e in api3.lib_list()["data"]["robots"])
     assert names == ["R1", "R2"]
-    assert len(calls) == 1                             # -> scanned exactly once, off-thread
+    # ≥1, not ==1: the change took the scan path, off-thread — that's the
+    # invariant. The exact walk count is the quiesce loop's business (a late
+    # NTFS index-mtime flush landing mid-scan legitimately re-walks; see
+    # test_scan_runner_retries_until_tree_quiesces)
+    assert len(calls) >= 1
 
 
 def test_lib_list_persisted_sig_rejected_when_root_or_cache_differ(monkeypatch, tmp_path):
@@ -610,6 +659,7 @@ def test_lib_list_background_scan_settles_and_pushes(monkeypatch, tmp_path):
 
     _join_scan(api)
     assert any("library-updated" in js for js in pushed)     # the settle push fired
+    _settle_listing(api)                               # exhaust any late index flushes
 
     calls = []
     real = library.scan_library_root
@@ -728,9 +778,13 @@ def test_metadata_ops_serve_cache_without_rescan(monkeypatch, tmp_path):
     _settled_signature(root)                           # the copy's mtimes settle
     assert api.lib_list()["data"].get("scanning") is True
     _join_scan(api)
-    assert len(calls) == 1
+    assert len(calls) >= 1                             # the copy took the scan path (the
+    #                                                    count is the quiesce loop's business)
     assert any(e["robot"] == "R9" for e in api.lib_list()["data"]["robots"])
-    assert len(calls) == 1                             # the follow-up was pure cache
+    _settle_listing(api)                               # exhaust any late index flushes
+    n = len(calls)
+    assert api.lib_list()["data"].get("scanning") is None
+    assert len(calls) == n                             # the settled follow-up was pure cache
 
 
 def test_metadata_op_on_dirty_tree_keeps_pending_rescan(monkeypatch, tmp_path):
@@ -759,7 +813,7 @@ def test_metadata_op_on_dirty_tree_keeps_pending_rescan(monkeypatch, tmp_path):
     assert calls == []
     assert api.lib_list()["data"].get("scanning") is True
     _join_scan(api)
-    assert len(calls) == 1                             # the pending rescan survived the op
+    assert len(calls) >= 1                             # the pending rescan survived the op
     assert any(e["robot"] == "R7"                      # and honored the copy
                for e in api.lib_list()["data"]["robots"])
 
