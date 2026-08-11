@@ -801,10 +801,10 @@
     });
 
     /* DCS user models (EOAT etc. collision shapes, from $DCSS_MODEL with the
-       verify report merged in). Still data-only in the viewport: every real
-       element is link/faceplate-attached, so placing one needs kinematics
-       we don't have. Element rows carry the geometry (shape · radius ·
-       link) so the panel tells the whole story. */
+       verify report merged in). Drawn in the viewport while the arm is posed
+       (posedElements puts link/faceplate shapes on the FK frames); with no
+       matched kinematics they stay data-only here. Element rows carry the
+       geometry (shape · radius · link) so the panel tells the whole story. */
     var ms = data.models.filter(function (m) { return s.showDisabled || m.active; });
     if (ms.length) {
       var mn = data.models.filter(function (m) { return m.active; }).length;

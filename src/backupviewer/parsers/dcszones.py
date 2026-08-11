@@ -26,8 +26,8 @@ real controller's verify report - same robot, same values):
              $DATA[1..3]/[4..6] <-> Pos1/Pos2), $LINK_NO 99 <-> FacePlate,
              $LINK_TYPE 1 <-> "NORMAL". $SIZE[2] is nonzero on a few real
              elements but no pendant report ever prints it - passed through
-             raw, meaning unverified. Elements ride along data-only: they
-             are link-attached, so placing them needs kinematics.
+             raw, meaning unverified. Elements carry link/faceplate frames;
+             the 3D view poses them once kinematics match (else data-only).
 $NUM_VTX stays at its factory 8 on Diagonal zones, so it is only
 trusted in Lines mode. $DCSS_TUIRO/$DCSS_TUIZN are not handled
 (unknown semantics; none seen configured with geometry).

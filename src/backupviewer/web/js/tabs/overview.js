@@ -275,7 +275,7 @@
     backups.forEach(function (b) { if (b.path === current) cur = b; });
     var label = fmtBackupDate((cur || backups[0]).taken);
     var btn = BV.el("button", { class: "btn ov-datepick", title: "switch to another dated backup" },
-      "🕓 " + BV.esc(label));
+      BV.esc(label));
     btn.addEventListener("click", function () {
       /* "latest" tags the newest COMPLETE snapshot - a partial (a pull that
          died mid-download) can sit newest in the list but is never "latest" */
@@ -304,7 +304,7 @@
     var path = man.current_path || "";
     if (!path) return null;
     var btn = BV.el("button", { class: "btn ov-openloc", title: "open this backup's folder in Explorer" },
-      "📂 open location");
+      "open location");
     btn.addEventListener("click", function () {
       if (BV.openLocation) BV.openLocation(path);
       else BV.api.call("open_path", path).catch(function (e) { BV.toast(e.message); });
@@ -328,6 +328,15 @@
     if (datePick) toolbar.appendChild(datePick);
     var openLoc = buildOpenLocation();
     if (openLoc) toolbar.appendChild(openLoc);
+    /* compare lives here now, not in the topbar - backup-scoped chrome
+       belongs with the backup's own toolbar */
+    var cmpBtn = BV.el("button", { class: "btn", title: "compare with another backup" },
+      "compare");
+    cmpBtn.addEventListener("click", function () {
+      if (BV.state.compare) location.hash = "#compare";
+      else BV.compareFlow(cmpBtn);
+    });
+    toolbar.appendChild(cmpBtn);
 
     BV.api.call("get_overview").then(function (ov) {
       var id = ov.identity || {};
@@ -401,7 +410,7 @@
       card._layout = layout;
 
       /* identity + software boxes are gone: the stapled hero already carries
-         that info (Wilson: serial no / controller id are noise) */
+         that info (field feedback: serial no / controller id are noise) */
 
       /* master counts */
       if (ov.mastering && ov.mastering.length) {

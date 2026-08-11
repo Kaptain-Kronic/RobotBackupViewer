@@ -116,6 +116,43 @@ body { overflow: hidden; }
   height: 100vh;
 }
 
+/* ---- chrome ----
+   Both bars sit IN FLOW: #view lives between them, so content and its
+   scrollbar can never hide under chrome, and no measurement plumbing
+   exists to go stale (content-scroll-under was tried and retired - the
+   look was always the bgfx showing through the frost, which needs
+   nothing). One backdrop-filter per bar, gated by html.frosted like every
+   other frost surface. */
+#chrome-top {
+  flex: none; position: relative;     /* the hairline anchors to the bar */
+  background: var(--glass);           /* frost-aware; solid --bg at frost 0 */
+}
+#chrome-bottom {
+  flex: none; position: relative;
+  background: var(--glass);
+}
+/* the hairline lives on the bar's content edge and only exists while
+   content is actually clipped there (body.under-* from router.js) - at
+   rest the chrome stays lineless */
+#chrome-top::after, #chrome-bottom::before {
+  content: ""; position: absolute; left: 0; right: 0; height: 1px;
+  background: var(--edge-soft, var(--edge));
+  opacity: 0; transition: opacity var(--trans);
+  pointer-events: none;
+}
+#chrome-top::after { bottom: 0; }
+#chrome-bottom::before { top: 0; }
+/* the "frosted chrome" toggle (⚙ display): opaque bars for anyone who wants
+   the frost elsewhere but a calm solid header/footer */
+html.chrome-solid #chrome-top, html.chrome-solid #chrome-bottom { background: var(--bg); }
+html.chrome-solid.frosted #chrome-top,
+html.chrome-solid.frosted #chrome-bottom { backdrop-filter: none; }
+body.under-top #chrome-top::after { opacity: 1; }
+body.under-bottom #chrome-bottom::before { opacity: 1; }
+/* a sticky header pinned against the slab supplies the panel's bottom line
+   itself - the slab's own hairline yields (must follow the rules above) */
+body.chrome-fused #chrome-top::after { opacity: 0; }
+
 /* ---- topbar ----
    Chrome is pinned to --chrome-fs (the "chrome scale" setting), NOT the root
    font-size: cranking the text size grows the DATA, and the header no longer
@@ -124,7 +161,9 @@ body { overflow: hidden; }
 #topbar {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;        /* skinny windows: right-side buttons drop to a row, never clip */
+  /* NEVER wraps: search/settings are locked top right, period. The chips
+     strip shrinks (overflow hidden) long before anything could clip. */
+  flex-wrap: nowrap;
   font-size: var(--chrome-fs, 15px);
   gap: 0.35em 1.25em;
   padding: 0.65em 1.25em;
@@ -147,17 +186,26 @@ body { overflow: hidden; }
 .logo-text { font-size: 1.05em; font-weight: 600; color: var(--text); letter-spacing: -0.02em; }
 .logo-accent { color: var(--accent); }
 
-/* the content tabs (overview/frames/io/…): a slim second row under the
-   topbar since the backup tabs took the topbar slot. Hidden by route on
-   shell screens (setTopbarChrome), like before. */
-#tabbar {
-  display: flex;
-  flex-wrap: wrap;  /* tabs stack into another row instead of scrolling away */
-  gap: 0.1em 0.15em;
-  font-size: var(--chrome-fs, 15px);
-  padding: 0 1.1em 0.25em;
+/* the standalone screens button: SOLO POP-OUTS ONLY (no tab strip there) -
+   the main window's screens menu rides the active session tab instead.
+   Hidden by route everywhere else (setTopbarChrome). */
+#screens-btn {
+  appearance: none;
+  background: var(--bg2);
+  border: none;
+  font: inherit;
+  font-size: 0.85em;
+  color: var(--text);
+  padding: 0.35em 0.75em;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: color var(--trans), background var(--trans);
+  white-space: nowrap;
+  user-select: none;
   flex: none;
 }
+#screens-btn:hover { color: var(--accent); }
+#screens-btn .scr-caret { opacity: 0.5; font-size: 0.75em; margin-left: 0.5em; }
 
 /* ---- the backup tab strip (backuptabs.js) ---- */
 #sessionbar {
@@ -187,6 +235,10 @@ body { overflow: hidden; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: 0.78em;
 }
+/* the breadcrumb segment on the ACTIVE tab ("· io ▾"): where you are inside
+   the backup, and the handle for the screens menu (backuptabs.js) */
+.stab-screen { color: var(--sub); font-size: 0.72em; white-space: nowrap; flex: none; }
+.stab.active:hover .stab-screen { color: var(--text); }
 .stab-x {
   appearance: none; background: none; border: none;
   color: var(--sub); cursor: pointer;
@@ -203,33 +255,17 @@ body { overflow: hidden; }
    could never reach their screens. It shows the WORDMARK in their place: the
    swap is the deliberate "this is not the main window" tell, and ctrl+e still
    raises the main window's workspace from here. */
-.solo #topbar-cubes, .solo #sessionbar, .solo #btn-compare, .solo #jobstrip { display: none !important; }
+.solo #topbar-cubes, .solo #sessionbar, .solo #jobstrip { display: none !important; }
 .solo #logo { display: flex; }
 
 /* a popped-out CV-X window IS the remote overlay - the app shell behind it
    never shows (and must not flash during boot) */
 .cvxwin #app { display: none !important; }
 
-.tab-btn {
-  appearance: none;
-  background: none;
-  border: none;
-  font: inherit;
-  font-size: 0.85em;
-  color: var(--sub);
-  padding: 0.35em 0.7em;
-  border-radius: var(--radius);
-  cursor: pointer;
-  transition: color var(--trans), background var(--trans);
-  white-space: nowrap;
-  user-select: none;
-}
-.tab-btn:hover:not(:disabled) { color: var(--text); }
-.tab-btn.active { color: var(--accent); }
-.tab-btn:disabled { color: var(--sub-alt); cursor: default; opacity: 0.55; }
-.tab-btn .tab-num { opacity: 0.5; font-size: 0.75em; margin-right: 0.3em; }
-
-#topbar-right { display: flex; gap: 0.3em; flex: none; }
+/* margin-left:auto, not a grown sibling, pins this to the right corner: the
+   sessionbar spacer is display:none until a backup is open */
+#topbar-right { display: flex; gap: 0.3em; flex: none; margin-left: auto; }
+#topbar-search { display: flex; align-items: center; }
 
 .icon-btn {
   appearance: none;
@@ -246,6 +282,14 @@ body { overflow: hidden; }
 }
 .icon-btn:hover { color: var(--text); background: var(--bg2); }
 .icon-btn.accent:hover { color: var(--accent); }
+/* the svg utility buttons (phone / gear / help): drawn strokes in the cubes'
+   language, sized between the old 0.8em text glyphs and the 2.1em cubes */
+.icon-btn.ico {
+  font-size: 1em;
+  width: 1.8em; height: 1.8em; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.icon-btn.ico .bv-ico { width: 1.15em; height: 1.15em; display: block; }
 
 /* ---- the three cubes: library · multi-cam · workspace ----
    The app's navigation, in the slot the wordmark used to hold. Chrome, so
@@ -263,7 +307,7 @@ body { overflow: hidden; }
 }
 .cube svg { width: 1.35em; height: 1.35em; display: block; }
 .cube:hover { color: var(--text); background: var(--bg2); }
-/* "you are here" speaks the same vocabulary as .tab-btn.active and .seg
+/* "you are here" speaks the same vocabulary as .ctx-item.active and .seg
    button.active: the accent glyph, on a tinted tile */
 .cube.active { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .cube-badge {
@@ -277,13 +321,15 @@ body { overflow: hidden; }
    from every screen rather than only once you arrive */
 .cube-badge.dirty { background: var(--warn); }
 
-/* ---- toolbar ---- */
+/* ---- toolbar: row 2, the current screen's own controls ----
+   left-aligned directly above the content they modify (navigation lives in
+   row 1, context here - never interleaved). display:none when a screen has
+   none, so those screens run a single row of chrome. */
 #toolbar {
   display: flex;
   align-items: center;
-  padding: 0.4rem 1.25rem 0.55rem;
+  padding: 0.15rem 1.25rem 0.55rem;
   flex: none;
-  min-height: 2.4rem;
 }
 #toolbar.hidden { display: none; }
 .toolbar-slot {
@@ -306,7 +352,9 @@ body { overflow: hidden; }
 }
 /* tabs are handed the .view-slot, not #view, so they tag the SLOT - match on
    that. The old `#view.no-pad` could never fire once the slot was introduced,
-   which quietly killed edge-to-edge on every full-width table tab. */
+   which quietly killed edge-to-edge on every full-width table tab.
+   no-pad zeroes the BREATHING room, never the chrome offsets: an inner-scroll
+   screen (VTable etc.) must start below the top slab, not under it. */
 #view.no-pad,
 #view:has(> .no-pad) { padding: 0; }
 
@@ -330,8 +378,8 @@ body { overflow: hidden; }
   position: relative;   /* the details panel anchors to the strip, no coordinate math */
   display: flex; align-items: center; gap: 0.9em;
   flex: none; padding: 0.5em 1.6em;
-  border-top: 1px solid var(--edge-soft, transparent);
-  background: var(--panel); font-size: calc(var(--chrome-fs, 15px) * 0.78);
+  /* background + frost come from the #chrome-bottom slab it lives in */
+  font-size: calc(var(--chrome-fs, 15px) * 0.78);
   color: var(--sub);
 }
 #jobstrip .jobstrip-run {

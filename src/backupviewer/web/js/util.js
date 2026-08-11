@@ -130,12 +130,20 @@ window.BV = {};
   /* simple modal helper; returns {close}. opts.beforeClose() -> false blocks a
      dismissal (backdrop / Esc / cancel) — the unsaved-work guard. close(true)
      bypasses it for a committed save or an explicit discard; the check is
-     strictly === true so event objects passed by listeners can't bypass. */
+     strictly === true so event objects passed by listeners can't bypass.
+     opts.sticky: a click outside does NOT dismiss (for dialogs whose content
+     was expensive to produce - a scan report re-runs minutes of work); the
+     dialog gains a ✕ in its corner instead, and Esc still works. */
   BV.modal = function (title, bodyEl, opts) {
     var root = document.getElementById("modal-root");
     root.innerHTML = "";
     var m = BV.el("div", { class: "modal" });
     if (title) m.appendChild(BV.el("h2", null, BV.esc(title)));
+    if (opts && opts.sticky) {
+      var xBtn = BV.el("button", { class: "modal-x", title: "close" }, "✕");
+      xBtn.addEventListener("click", function () { close(); });
+      m.appendChild(xBtn);
+    }
     var body = BV.el("div", { class: "modal-body" });
     body.appendChild(bodyEl);
     m.appendChild(body);
@@ -157,7 +165,11 @@ window.BV = {};
       if (e.key === "Escape") { e.stopPropagation(); e.preventDefault(); close(); }
       else if (opts && opts.onKey && opts.onKey(e, close)) { e.stopPropagation(); e.preventDefault(); }
     }
-    function onBackdrop(e) { if (e.target === root) close(); }
+    function onBackdrop(e) {
+      if (e.target !== root) return;
+      if (opts && opts.sticky) return;   /* outside clicks can't eat this one */
+      close();
+    }
     document.addEventListener("keydown", onKey, true);
     root.addEventListener("mousedown", onBackdrop);
     return { close: close, el: m };
@@ -286,10 +298,13 @@ window.BV = {};
     items.forEach(function (it) {
       /* it.action = {label,title,onClick}: a small trailing pill on the row with
          its own click (e.g. the date-picker's "vs" -> compare with that date) */
-      var b = BV.el("button", { class: "ctx-item" + (it.danger ? " danger" : "") },
+      var b = BV.el("button", { class: "ctx-item" + (it.danger ? " danger" : "") +
+        (it.active ? " active" : "") },
         BV.esc(it.label) +
         (it.action ? '<span class="ctx-act" title="' + BV.esc(it.action.title || "") + '">' +
           BV.esc(it.action.label) + "</span>" : ""));
+      if (it.disabled) b.disabled = true;   /* e.g. selection-gated rows */
+      if (it.title) b.title = it.title;
       b.addEventListener("click", function (e) {
         e.stopPropagation();
         if (handle) handle.close();

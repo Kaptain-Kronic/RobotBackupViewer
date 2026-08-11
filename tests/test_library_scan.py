@@ -328,15 +328,9 @@ def test_same_names_in_two_plants_stay_separate(monkeypatch, tmp_path):
 
 def _settled_signature(root):
     """NTFS flushes directory-mtime updates lazily; the first walk after writes
-    can observe pre-flush values. Walk until two consecutive reads agree — the
-    production watcher absorbs this settle via its debounce."""
-    s = library.scan_signature(root)
-    for _ in range(5):
-        s2 = library.scan_signature(root)
-        if s2 == s:
-            return s
-        s = s2
-    return s
+    can observe pre-flush values. The production settle loop (promoted for the
+    signature-claim path) is the one implementation of that wait."""
+    return library.settled_signature(root)
 
 
 def test_scan_signature_tracks_tree_changes(monkeypatch, tmp_path):
@@ -495,9 +489,20 @@ def test_lib_bulk_add_materializes_folders(monkeypatch, tmp_path):
     assert (fresh / "P2" / "L9" / "D3" / "robot.json").is_file()   # whole tree created
 
 
+def _join_scan(api, timeout=30):
+    """Wait out the background library scan, if one is running (slice B: a
+    changed tree serves the cache instantly and scans behind it)."""
+    t = api._scan_thread
+    if t is not None:
+        t.join(timeout=timeout)
+    assert not api._scan_alive()
+
+
 def test_lib_list_rescans_when_tree_changes(monkeypatch, tmp_path):
     """The Explorer-add field bug: a folder copied into the library shows up on
-    the next listing - no manual rescan, no app restart."""
+    the next listing - no manual rescan, no app restart. Since slice B the
+    changed-tree listing answers cache-first (scanning:true) and the fresh
+    truth follows from the background scan."""
     from backupviewer.api import Api
     _iso(monkeypatch, tmp_path)
     root = tmp_path / "lib"
@@ -507,6 +512,10 @@ def test_lib_list_rescans_when_tree_changes(monkeypatch, tmp_path):
     assert [e["robot"] for e in api.lib_list()["data"]["robots"]] == ["R1"]
 
     _make_robot(root, "P", "L", "R2", [("2026_02_02", "09_00_00", 1_700_000_000)], rid="rid-2")
+    out = api.lib_list()["data"]
+    assert out.get("scanning") is True                             # cache now, scan behind it
+    assert [e["robot"] for e in out["robots"]] == ["R1"]
+    _join_scan(api)
     names = sorted(e["robot"] for e in api.lib_list()["data"]["robots"])
     assert names == ["R1", "R2"]                                   # picked up automatically
 
@@ -531,16 +540,21 @@ def test_lib_list_persisted_sig_skips_boot_scan(monkeypatch, tmp_path):
     calls = []
     real = library.scan_library_root
     monkeypatch.setattr(library, "scan_library_root",
-                        lambda r, progress=None: calls.append(r) or real(r, progress=progress))
+                        lambda r, progress=None, on_entry=None:
+                        calls.append(r) or real(r, progress=progress, on_entry=on_entry))
     api2 = Api()                                       # "next boot"
     assert [e["robot"] for e in api2.lib_list()["data"]["robots"]] == ["R1"]
     assert calls == []                                 # unchanged tree -> no scan at all
 
     _make_robot(root, "P", "L", "R2", [("2026_02_02", "09_00_00", 1_700_000_000)], rid="rid-2")
     api3 = Api()                                       # another boot, tree changed meanwhile
+    out = api3.lib_list()["data"]
+    assert out.get("scanning") is True                 # last-known cache served instantly
+    assert [e["robot"] for e in out["robots"]] == ["R1"]
+    _join_scan(api3)
     names = sorted(e["robot"] for e in api3.lib_list()["data"]["robots"])
     assert names == ["R1", "R2"]
-    assert len(calls) == 1                             # -> scanned exactly once
+    assert len(calls) == 1                             # -> scanned exactly once, off-thread
 
 
 def test_lib_list_persisted_sig_rejected_when_root_or_cache_differ(monkeypatch, tmp_path):
@@ -566,6 +580,190 @@ def test_lib_list_persisted_sig_rejected_when_root_or_cache_differ(monkeypatch, 
     assert [e["robot"] for e in Api().lib_list()["data"]["robots"]] == ["RX"]
 
 
+def test_lib_list_background_scan_settles_and_pushes(monkeypatch, tmp_path):
+    """Slice B end-to-end: changed tree -> the cached library IMMEDIATELY with
+    scanning:true, the rescan on a background thread, a 'library-updated' push
+    when it lands, and the follow-up listing served from the fresh cache with
+    no scan at all."""
+    from backupviewer.api import Api
+    _iso(monkeypatch, tmp_path)
+    root = tmp_path / "lib"
+    _make_robot(root, "P", "L", "R1", [("2026_01_01", "12_00_00", 1_600_000_000)], rid="rid-1")
+    settings.set_value("library_root", str(root))
+    api = Api()
+    api.lib_list()                                     # cold path: nothing cached -> blocks
+    api._set_lib_sig(root, _settled_signature(root))
+
+    _make_robot(root, "P", "L", "R2", [("2026_02_02", "09_00_00", 1_700_000_000)], rid="rid-2")
+    _settled_signature(root)
+
+    pushed = []
+
+    class _Win:
+        def evaluate_js(self, js):
+            pushed.append(js)
+
+    api._window = _Win()
+    out = api.lib_list()["data"]
+    assert out.get("scanning") is True
+    assert [e["robot"] for e in out["robots"]] == ["R1"]     # last-known, instantly
+
+    _join_scan(api)
+    assert any("library-updated" in js for js in pushed)     # the settle push fired
+
+    calls = []
+    real = library.scan_library_root
+    monkeypatch.setattr(library, "scan_library_root",
+                        lambda r, progress=None, on_entry=None:
+                        calls.append(r) or real(r, progress=progress, on_entry=on_entry))
+    out2 = api.lib_list()["data"]
+    assert sorted(e["robot"] for e in out2["robots"]) == ["R1", "R2"]
+    assert out2.get("scanning") is None                      # settled: plain cache
+    assert calls == []                                       # ...and no scan
+
+
+def test_lib_list_stays_quiet_while_backups_run(monkeypatch, tmp_path):
+    """A running backup writes thousands of files into the watched tree — a
+    listing during the run serves the cache without kicking a scan under it
+    (the watcher pauses for the same reason; the run's end refreshes)."""
+    from backupviewer.api import Api
+    _iso(monkeypatch, tmp_path)
+    root = tmp_path / "lib"
+    _make_robot(root, "P", "L", "R1", [("2026_01_01", "12_00_00", 1_600_000_000)], rid="rid-1")
+    settings.set_value("library_root", str(root))
+    api = Api()
+    api.lib_list()
+    api._set_lib_sig(root, _settled_signature(root))
+    _make_robot(root, "P", "L", "R2", [("2026_02_02", "09_00_00", 1_700_000_000)], rid="rid-2")
+
+    class _Job:
+        def snapshot(self):
+            return {"status": "downloading", "run_id": "run-1"}
+
+    api._jobs["j1"] = _Job()
+    out = api.lib_list()["data"]
+    assert [e["robot"] for e in out["robots"]] == ["R1"]     # cache, honestly stale
+    assert out.get("scanning") is None                       # and no scan was kicked
+    assert api._scan_thread is None
+
+
+def test_scan_runner_retries_until_tree_quiesces(monkeypatch, tmp_path):
+    """A tree that MOVED while the walk ran (rename mid-scan, copy landing)
+    must not have its possibly-stale merge stamped as the current baseline:
+    the runner walks again until start and end signatures agree."""
+    from backupviewer.api import Api
+    _iso(monkeypatch, tmp_path)
+    settings.set_value("library_root", str(tmp_path / "lib"))
+    api = Api()
+
+    scans = []
+    monkeypatch.setattr(api, "_scan_with_progress", lambda root: scans.append(root))
+    sigs = iter(["s1", "s2"])                 # start of attempt 1, start of attempt 2
+    monkeypatch.setattr(library, "scan_signature", lambda root: next(sigs))
+    monkeypatch.setattr(library, "settled_signature", lambda root, tries=5: "s2")
+
+    api._scan_runner(str(tmp_path / "lib"))
+    assert len(scans) == 2                    # attempt 1 unstamped, attempt 2 quiesced
+    assert api._lib_sig == "s2"               # only the settled result became the baseline
+
+
+def test_metadata_ops_serve_cache_without_rescan(monkeypatch, tmp_path):
+    """Slice A of the library overhaul: an app-initiated metadata change
+    (rename/relocate, note or IP edit, camera link) already updates
+    library.json in place — the sidecar/folder writes it makes must not cost
+    the next lib_list a full rescan (the rename-blanks-the-library bug).
+    External Explorer changes still take the scan path: files are law."""
+    from backupviewer.api import Api
+    _iso(monkeypatch, tmp_path)
+    root = tmp_path / "lib"
+    _make_robot(root, "P", "L", "R1", [("2026_01_01", "12_00_00", 1_600_000_000)], rid="rid-1")
+    # NOT "CAM<n>": that exact shape is the camera-snapshot wrapper marker
+    # (session.looks_like_backup) — a robot folder named CAM1 makes its whole
+    # LINE folder read as one backup root and swallows its siblings
+    cam = _make_robot(root, "P", "L", "MXCAM1", [("2026_01_02", "10_00_00", 1_600_100_000)],
+                      rid="rid-c")
+    sc = json.loads((cam / "robot.json").read_text(encoding="utf-8"))
+    sc["device_type"] = "camera-mtx"
+    (cam / "robot.json").write_text(json.dumps(sc), encoding="utf-8")
+    settings.set_value("library_root", str(root))
+    api = Api()
+    api.lib_list()                                     # baseline scan
+    api._set_lib_sig(root, _settled_signature(root))   # de-flake: settled baseline
+
+    calls = []
+    real = library.scan_library_root
+    monkeypatch.setattr(library, "scan_library_root",
+                        lambda r, progress=None, on_entry=None:
+                        calls.append(r) or real(r, progress=progress, on_entry=on_entry))
+
+    # Each op is claim-tested from a PROVEN-clean baseline (settled, stored):
+    # in production a claim that misses because NTFS flushed an earlier op's
+    # mtimes late just costs one background rescan (fail-safe by design), but
+    # here that timing would read as a test flake, not a finding.
+    def baseline():
+        api._set_lib_sig(root, _settled_signature(root))
+
+    api.lib_update("rid-1", {"notes": "gripper rebuilt", "ips": ["192.0.2.10"]})
+    assert calls == []                                 # the op itself never scans
+    e1 = next(e for e in api.lib_list()["data"]["robots"] if e["id"] == "rid-1")
+    assert e1["notes"] == "gripper rebuilt"            # served from the updated cache
+    assert calls == []                                 # ...without a rescan
+
+    baseline()
+    api.lib_link_camera("rid-c", "rid-1")
+    linked = next(e for e in api.lib_list()["data"]["robots"] if e["id"] == "rid-c")
+    assert linked["linked_robot_id"] == "rid-1"
+    assert calls == []
+
+    baseline()
+    api.lib_relocate("rid-1", "P", "L", "R1RENAMED")   # moves the folder tree
+    names = [e["robot"] for e in api.lib_list()["data"]["robots"]]
+    assert "R1RENAMED" in names and "R1" not in names
+    assert calls == []                                 # the move claimed its own delta
+
+    # an EXTERNAL change (Explorer copy) still rescans — never absorbed unseen
+    # (cache-first since slice B: the scan answers from the background thread)
+    baseline()
+    _make_robot(root, "P", "L", "R9", [("2026_03_03", "08_00_00", 1_700_000_000)], rid="rid-9")
+    _settled_signature(root)                           # the copy's mtimes settle
+    assert api.lib_list()["data"].get("scanning") is True
+    _join_scan(api)
+    assert len(calls) == 1
+    assert any(e["robot"] == "R9" for e in api.lib_list()["data"]["robots"])
+    assert len(calls) == 1                             # the follow-up was pure cache
+
+
+def test_metadata_op_on_dirty_tree_keeps_pending_rescan(monkeypatch, tmp_path):
+    """A metadata op racing an Explorer change must not absorb that change
+    unseen: the claim only re-baselines when the tree was clean BEFORE the op.
+    Dirty before -> still dirty after -> the next listing rescans and finds
+    what the external edit added."""
+    from backupviewer.api import Api
+    _iso(monkeypatch, tmp_path)
+    root = tmp_path / "lib"
+    _make_robot(root, "P", "L", "R1", [("2026_01_01", "12_00_00", 1_600_000_000)], rid="rid-1")
+    settings.set_value("library_root", str(root))
+    api = Api()
+    api.lib_list()
+    api._set_lib_sig(root, _settled_signature(root))
+
+    (root / "P" / "L" / "R7").mkdir()                  # external change lands first
+    _settled_signature(root)                           # let its mtimes settle
+
+    calls = []
+    real = library.scan_library_root
+    monkeypatch.setattr(library, "scan_library_root",
+                        lambda r, progress=None, on_entry=None:
+                        calls.append(r) or real(r, progress=progress, on_entry=on_entry))
+    api.lib_update("rid-1", {"notes": "raced"})        # op on the now-dirty tree
+    assert calls == []
+    assert api.lib_list()["data"].get("scanning") is True
+    _join_scan(api)
+    assert len(calls) == 1                             # the pending rescan survived the op
+    assert any(e["robot"] == "R7"                      # and honored the copy
+               for e in api.lib_list()["data"]["robots"])
+
+
 def test_scan_progress_ticks(monkeypatch, tmp_path):
     """progress(done, total, current) ticks once per snapshot; total is the
     previous scan's snapshot count (0 = first ever, unknown) and never less
@@ -588,6 +786,74 @@ def test_scan_progress_ticks(monkeypatch, tmp_path):
     assert [x[0] for x in snaps2] == [1, 2, 3]
     assert all(t == 3 for _d, t, _c in snaps2)         # estimate = last scan's 3 snapshots
     assert {c for _d, _t, c in snaps2} == {"R1", "R2"}
+
+
+def test_scan_streams_entries_per_robot(monkeypatch, tmp_path):
+    """Slice C: on_entry streams a finalized copy of each robot as the walk
+    leaves its folder — backups newest-first, latest derived, walk bookkeeping
+    stripped — plus every skeleton robot. The stream only adds/grows entries;
+    drops belong to the final merge alone."""
+    _iso(monkeypatch, tmp_path)
+    root = tmp_path / "lib"
+    _make_robot(root, "P", "L", "R1", [("2026_01_01", "12_00_00", 1_600_000_000),
+                                       ("2026_02_02", "09_30_00", 1_700_000_000)], rid="rid-1")
+    _make_robot(root, "P", "L", "R2", [("2026_03_03", "10_00_00", 1_710_000_000)], rid="rid-2")
+    (root / "P" / "L" / "R3").mkdir()                  # skeleton robot, no backups yet
+
+    seen = []
+    library.scan_library_root(root, on_entry=seen.append)
+    by_robot = {}
+    for g in seen:
+        by_robot[g["robot"]] = g                       # same robot again = newer copy
+    assert set(by_robot) == {"R1", "R2", "R3"}
+    r1 = by_robot["R1"]
+    assert [b["taken"][:4] for b in r1["backups"]] == ["2026", "2026"]
+    assert r1["backups"][0]["taken"] > r1["backups"][1]["taken"]   # newest first
+    assert r1["latest_path"] == r1["backups"][0]["path"]
+    assert "_snaps" not in r1 and "_absorbed" not in r1
+    assert by_robot["R3"]["backups"] == []             # skeleton streamed honestly empty
+
+
+def test_scan_streams_favorites_first_with_overlay_flags(monkeypatch, tmp_path):
+    """The favorites pre-pass: starred robots (from the last-known overlay)
+    are published before the walk reaches anything, with backups re-read
+    fresh from their folder; walked entries carry the overlay's hidden/
+    favorite bits so a streaming UI can filter like the real listing."""
+    _iso(monkeypatch, tmp_path)
+    root = tmp_path / "lib"
+    _make_robot(root, "P", "L", "R1", [("2026_01_01", "12_00_00", 1_600_000_000)], rid="rid-1")
+    _make_robot(root, "P", "L", "R2", [("2026_02_02", "09_00_00", 1_700_000_000)], rid="rid-2")
+    library.scan_library_root(root)                    # build the overlay
+    assert library.set_favorite("rid-2", True) is not None
+    assert library.set_hidden("rid-1", True) is not None
+
+    seen = []
+    library.scan_library_root(root, on_entry=seen.append)
+    assert seen[0]["id"] == "rid-2"                    # the favorite lands first
+    assert seen[0]["favorite"] is True
+    assert seen[0]["backups"], "preview re-reads its backups from disk"
+    walked_r1 = [g for g in seen if g.get("id") == "rid-1"][-1]
+    assert walked_r1["hidden"] is True                 # overlay bit folded for display
+
+
+def test_lib_scan_progress_offset_cursor(monkeypatch, tmp_path):
+    """The poll's offset cursor: each reply carries only the tail beyond what
+    the caller already holds, plus the new total."""
+    from backupviewer.api import Api
+    _iso(monkeypatch, tmp_path)
+    settings.set_value("library_root", str(tmp_path / "lib"))
+    api = Api()
+    with api._lib_progress_lock:
+        api._lib_progress.update(active=True, entries=[{"robot": "A"}, {"robot": "B"},
+                                                       {"robot": "C"}])
+    p0 = api.lib_scan_progress()["data"]
+    assert p0["count"] == 3 and [e["robot"] for e in p0["entries"]] == ["A", "B", "C"]
+    p2 = api.lib_scan_progress(2)["data"]
+    assert p2["count"] == 3 and [e["robot"] for e in p2["entries"]] == ["C"]
+    p3 = api.lib_scan_progress(3)["data"]
+    assert p3["count"] == 3 and p3["entries"] == []
+    pbad = api.lib_scan_progress(-5)["data"]           # a hostile/garbled offset clamps
+    assert [e["robot"] for e in pbad["entries"]] == ["A", "B", "C"]
 
 
 def test_scan_reads_sidecar_once_per_robot(monkeypatch, tmp_path):

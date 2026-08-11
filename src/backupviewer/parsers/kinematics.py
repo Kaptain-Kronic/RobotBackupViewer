@@ -23,8 +23,8 @@ orientation error - anything else means the kinematics do not match the
 robot and the pose must not be drawn.
 
 Matrices are row-major 4x4 nested lists; angles degrees; mm throughout.
-The JS twin of chain_frames lives in web/js/components/fk.js - the probe
-holds them equal.
+The JS twin of chain_frames lives in web/js/components/fk.js - the fk probe
+(tests/ui_fk_probe.py) holds them equal to 1e-6 across builtin chains.
 """
 from __future__ import annotations
 

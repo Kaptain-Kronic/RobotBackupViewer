@@ -16,20 +16,11 @@ folder, APPDATA redirected there BEFORE importing the app.
 Run: python tests/ui_cvxremote_probe.py
 """
 import json
-import os
 import sys
-import tempfile
 import time
-from pathlib import Path
+from probeutil import FAILURES, check, exit_code, isolate, js, poll, report
 
-ROOT = Path(__file__).parents[1]
-sys.path.insert(0, str(ROOT / "src"))
-
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-
-_TMP = Path(tempfile.mkdtemp(prefix="bv_cvxbar_probe_"))
-os.environ["APPDATA"] = str(_TMP / "appdata")
-os.environ["BV_NO_WATCHER"] = "1"
+_TMP = isolate("bv_cvxbar_probe_")
 
 import webview  # noqa: E402
 
@@ -39,7 +30,6 @@ from backupviewer.api import Api  # noqa: E402
 from backupviewer.app import resource_path  # noqa: E402
 
 CAM_IP = "192.0.2.31"          # TEST-NET
-FAILURES = []
 
 
 class FakeSession:
@@ -64,32 +54,12 @@ class FakeSession:
         self.alive = False
 
 
-def check(name, cond, detail=""):
-    print(f"[{'ok' if cond else 'FAIL'}] {name} {detail}")
-    if not cond:
-        FAILURES.append(name)
-
-
-def js(window, expr):
-    return window.evaluate_js(expr)
-
-
-def poll(window, expr, tries=24, delay=0.25):
-    val = None
-    for _ in range(tries):
-        val = js(window, expr)
-        if val:
-            return val
-        time.sleep(delay)
-    return val
-
-
 def bar_buttons(window):
     return json.loads(poll(window, """(function(){
         var b = document.querySelector('.cvx-remote .cvx-bar');
         if (!b) return '';
         return JSON.stringify([].map.call(b.querySelectorAll('button'),
-            function(x){ return x.textContent; }));
+            function(x){ return x.textContent.trim(); }));
     })()""") or "[]")
 
 
@@ -102,8 +72,12 @@ def probe(window, api):
         order = json.loads(js(window, """JSON.stringify(
             [].map.call(document.querySelectorAll('#topbar-right .icon-btn'),
                         function(b){ return b.id; }))""") or "[]")
-        check("topbar.phone_sits_after_compare",
-              order == ["btn-compare", "btn-phone", "btn-cog", "btn-help"], f"({order})")
+        check("topbar.trio_order",
+              order == ["btn-phone", "btn-cog", "btn-help"], f"({order})")
+        # the trio is drawn svg now (icons.js data-icon injection), not emoji
+        check("topbar.trio_is_svg", js(window, """
+            ['btn-phone','btn-cog','btn-help'].every(function(id){
+              return !!document.querySelector('#' + id + ' svg.bv-ico'); })"""))
         check("topbar.window_key_is_main", js(window, "BV.windowKey()") is None)
         js(window, "BV._vfCalls = 0; BV.openViewfinder = function(){ BV._vfCalls++; };")
         js(window, "document.getElementById('btn-phone').click()")
@@ -113,8 +87,10 @@ def probe(window, api):
         js(window, f"BV.openCvxRemote('{CAM_IP}', 'probe cam')")
         btns = bar_buttons(window)
         check("cvx.bar_matches_matrox",
-              btns == ["⟳ reload", "open in window", "📱 phone", "fullscreen", "✕ close"],
+              btns == ["⟳ reload", "open in window", "phone", "fullscreen", "✕ close"],
               f"({btns})")
+        check("cvx.phone_btn_has_icon", js(window,
+            "!!document.querySelectorAll('.cvx-bar .btn')[2].querySelector('svg.bv-ico')"))
         sid = poll(window, """(function(){
             var i = document.querySelector('.cvx-remote img');
             var m = i && /\\/cvx\\/([^?]+)/.exec(i.src);
@@ -178,7 +154,7 @@ def probe(window, api):
               and js(win2, "getComputedStyle(document.getElementById('app')).display") == "none")
         btns2 = bar_buttons(win2)
         check("popout.bar_drops_open_in_window",
-              btns2 == ["⟳ reload", "📱 phone", "fullscreen", "✕ close"], f"({btns2})")
+              btns2 == ["⟳ reload", "phone", "fullscreen", "✕ close"], f"({btns2})")
         check("popout.adopted_not_redialled",
               api._cvx.get(sid) is live and FakeSession.dials == dials_before,
               f"({FakeSession.dials})")
@@ -192,8 +168,7 @@ def probe(window, api):
         check("popout.close_stops_the_session",
               sid not in api._cvx and sid not in api._cvx_windows and live.alive is False)
 
-        print()
-        print("FAILURES:", FAILURES if FAILURES else "none")
+        report()
     except Exception as e:  # noqa: BLE001
         print("[FAIL] probe crashed:", type(e).__name__, e)
         FAILURES.append("crash")
@@ -218,7 +193,7 @@ def main():
     )
     api.bind(window)
     webview.start(lambda: probe(window, api), gui="edgechromium")
-    sys.exit(1 if FAILURES else 0)
+    sys.exit(exit_code())
 
 
 if __name__ == "__main__":

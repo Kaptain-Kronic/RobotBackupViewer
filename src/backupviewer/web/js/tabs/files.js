@@ -64,7 +64,7 @@
         rb = BV.el("button", { class: "btn", style: "margin-left:auto",
           title: (isCvx ? "mirror this camera's live screen ("
                         : "open this camera's web UI (") + BV.esc(m.camera_ip) + ")" },
-          "🖥 remote");
+          BV.icon("remote") + " remote");
         rb.addEventListener("click", function () {
           if (isCvx) BV.openCvxRemote(m.camera_ip, m.camera_name);
           else BV.openMtxRemote(m.camera_ip, m.camera_name);

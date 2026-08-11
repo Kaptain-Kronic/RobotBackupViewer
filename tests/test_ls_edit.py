@@ -321,10 +321,11 @@ def test_pos_edit_rejects():
 def test_roundtrip_fuzz_over_sample_tree():
     """For EVERY program .ls in SampleBackup: split -> all-ref tokens -> emit
     must be byte-identical. This is what makes the editor safe to trust on
-    files we didn't anticipate. Skips when no sample tree is present."""
-    root = Path(__file__).parents[1] / "SampleBackup"
-    if not root.is_dir():
-        pytest.skip("no SampleBackup tree")
+    files we didn't anticipate. Through the fixtureutil gate: skips on a clean
+    clone, ERRORS on a machine that should hold the tree - this anchor must
+    never silently stop running."""
+    import fixtureutil
+    root = fixtureutil.require_backup(fixtureutil.SAMPLE_ROOT, "editor round-trip tree")
     checked = 0
     for p in root.rglob("*.[lL][sS]"):
         try:

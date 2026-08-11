@@ -65,6 +65,8 @@
   BV.hero = function (opts) {
     opts = opts || {};
     var el = BV.el("div", { class: "hero" + (opts.stick ? " stick" : "") + (opts.class ? " " + opts.class : "") });
+    /* sticky heroes fuse with the chrome slab's hairline (router.js) */
+    if (opts.stick && BV.chrome) BV.chrome.fusedHead = el;
     var html = '<span class="robot-name">' + BV.esc(opts.name) + "</span>";
     if (opts.model) html += '<span class="robot-model">' + BV.esc(opts.model) + "</span>";
     var sub = (opts.sub || []).filter(Boolean);

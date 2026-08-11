@@ -6,6 +6,7 @@ so a session never touches a real socket here.
 The critical regression these pin: the video-service ctx is keyed by service
 TYPE 6, not the port number 8504 - get that wrong and live video never routes
 and every frame-ack is stamped with the wrong context."""
+import re
 import struct
 
 from backupviewer import cvx_remote as cx
@@ -104,6 +105,35 @@ def test_patch_addr_rewrites_advertised_ip_same_length():
         raise AssertionError("expected ValueError for a too-small addr field")
     except ValueError:
         pass
+
+
+# RFC 5737 documentation ranges. Anything a capture legitimately carries has to
+# come from one of these; a real plant address does not look like this.
+_DOC_NETS = ("192.0.2.", "198.51.100.", "203.0.113.")
+_DOTTED_QUAD = re.compile(rb"(?<![0-9.])(?:\d{1,3}\.){3}\d{1,3}(?![0-9.])")
+
+
+def test_bundled_handshakes_carry_no_real_address():
+    """FIREWALL: the handshake blobs are opaque bytes captured from a live
+    camera, so nothing in review reads them. _patch_addr rewrites the TCP:
+    field at connect time, which means a capture-time plant address would be
+    functionally invisible AND still shipped in a public repo. Assert that
+    every address in every bundled blob is a documentation-range placeholder -
+    if a re-capture ever fails this, scrub the blob, do not relax the test."""
+    hs = cx._handshake_dir()
+    for p in cx.PORTS:
+        raw = (hs / f"chan{p}_tx.bin").read_bytes()
+        m = cx._ADDR_RE.search(raw)
+        assert m, f"chan{p}_tx.bin lost its addr field"
+        advertised = m.group(0)[len(b"TCP:"):].rstrip(b"\x00").decode("ascii")
+        assert advertised.startswith(_DOC_NETS), \
+            f"chan{p}_tx.bin advertises {advertised!r} - not a documentation range"
+        # and nowhere else in the blob either (a hostname string, a second
+        # service record - the TCP: field is not the only place bytes can hide)
+        for other in _DOTTED_QUAD.findall(raw):
+            got = other.decode("ascii")
+            assert got.startswith(_DOC_NETS), \
+                f"chan{p}_tx.bin contains the address {got!r}"
 
 
 # -- JPEG harvest ------------------------------------------------------------

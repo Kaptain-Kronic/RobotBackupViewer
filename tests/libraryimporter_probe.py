@@ -17,15 +17,16 @@ import tempfile
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).parents[1]
-sys.path.insert(0, str(ROOT / "src"))
+from probeutil import FAILURES, check, exit_code, isolate, js, poll, report
+
+# no APPDATA redirect: this drives libraryimporter, which has no settings
+# of its own to protect - but src/ still has to be on the path
+_TMP = isolate("bv_li_probe_", appdata=False)
 
 import webview  # noqa: E402
 
 from libraryimporter import app as li_app  # noqa: E402
 from libraryimporter.api import Api  # noqa: E402
-
-FAILURES = []
 
 LIST = {
     "RCB02": {"005R01": "192.0.2.20", "010R01": "192.0.2.21", "020R01": "192.0.2.22"},
@@ -33,27 +34,6 @@ LIST = {
               "030R01": "192.0.2.12", "040R01": "192.0.2.13"},
     "RBB02": {"010R01": "192.0.2.30", "020R01": "192.0.2.31"},
 }
-
-
-def check(name, cond, detail=""):
-    status = "ok" if cond else "FAIL"
-    print(f"[{status}] {name} {detail}")
-    if not cond:
-        FAILURES.append(name)
-
-
-def js(window, expr):
-    return window.evaluate_js(expr)
-
-
-def poll(window, expr, tries=24, delay=0.25):
-    val = None
-    for _ in range(tries):
-        val = js(window, expr)
-        if val:
-            return val
-        time.sleep(delay)
-    return val
 
 
 def probe(window, api, work: Path):
@@ -252,8 +232,8 @@ def main():
         webview.start(probe, (window, api, work), gui="edgechromium")
     finally:
         shutil.rmtree(work, ignore_errors=True)
-    print("FAILURES:", FAILURES or "none")
-    sys.exit(1 if FAILURES else 0)
+    report()
+    sys.exit(exit_code())
 
 
 if __name__ == "__main__":

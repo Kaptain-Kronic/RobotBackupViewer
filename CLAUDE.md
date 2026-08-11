@@ -130,8 +130,14 @@ human-in-the-loop tier, and it lands last.
   `--edge`, `--sub`, `--ok/--warn/--error`, …). Never hardcode a color —
   derive from the variables (zone colors hue-rotate `--accent`, so all 28
   themes keep their character).
-- Labels lowercase; status shown as pills (`ok-soft` / `warn` / `err`);
-  disabled things render dim, not hidden.
+- Labels lowercase; status shown as pills (`ok-soft` / `warn` / `err`).
+- **Feature surfaces vanish when unusable; evidence never does.** A screen
+  this backup can't have, a lens with zero cameras behind it, an action with
+  nothing to act on — gone entirely, not greyed (no data → no display). But
+  anything that says something ABOUT a backup's contents is evidence and
+  stays honestly visible: empty/disabled entries listed behind the
+  show-empty toggle, and compare always shows a side's absence
+  (`non-existent`) — there, the absence IS the finding.
 - **Least input, most info.** A view scrolls only when it truly overflows —
   phantom scrollbars are bugs. Two-pane screens give each pane its own
   scroll. Every tab restores exactly how you left it (scroll, sort, folds,
@@ -143,15 +149,47 @@ human-in-the-loop tier, and it lands last.
 
 ## Testing — the definition of done
 
+### Verifying the app — the commands
+
+```powershell
+python -m pytest tests                            # unit only, ~45s — the default
+python -m pytest tests -m probe                   # the ten probes, ~3 min
+python -m pytest tests -m "probe or not probe"    # EVERYTHING, ~4 min
+```
+
+The last one is **the** verify command: it boots the real app ten times in a
+hidden WebView2 and asserts on real DOM. Spelled that way rather than `-m ""`
+because PowerShell drops an empty argument before pytest ever sees it. The
+default stays fast on purpose — a suite slow enough to stop being run is worse
+than one that skips its slowest part.
+
 - Parsers get **pytest** with synthetic fixtures that mirror real file
   shapes (self-contained, committed, identifier-clean).
 - UI gets the **hidden-window probe** pattern: boot pywebview hidden,
   drive it with `evaluate_js`, assert on real DOM. Probes that point at
-  real backups stay out of the repo.
+  real backups stay out of the repo. New probes go in `tests/`, take their
+  preamble from `tests/probeutil.py` (`isolate()` **before** any
+  `backupviewer` import), and get added to the list in `tests/test_probes.py`
+  — a probe nothing runs rots silently, which is how three of them broke.
+- **Never add a tracked `tests/conftest.py`.** The excluded one holds the
+  private `SampleBackup` fixtures; a tracked file of that name collides with
+  it. That is why `pythonpath` lives in `pyproject.toml`.
+- **Private fixtures fail loud, never silent.** Every private-tree fixture
+  goes through `tests/fixtureutil.py`: on a machine that should hold the tree
+  (the excluded conftest exists), a missing pin is an **error**; a clean clone
+  skips and *says so* (`test_fixture_gate` reports "0 backup roots present").
+  `BV_REQUIRE_SAMPLE=1/0` overrides either way. When the sample tree moves,
+  re-pin the conftest and re-baseline — 74 tests once skipped green for ten
+  days because absence looked like success.
 - A feature is not done until it has run against a **real backup** and the
   numbers were checked against what the pendant/file actually says.
 - Probe environment quirks your code must survive: no `requestAnimationFrame`,
   no native scroll events, pointer capture can fail (wrap in try/catch).
+- **Assert the invariant, not the incidental number.** A check frozen to a
+  count drifts into a lie the day the code grows — `fx_menu_items` compares
+  against `BV.bgfx.EFFECTS.length` because "the menu lists every effect" is
+  the actual rule. Keep a literal only where the literal *is* the point (a
+  did-we-lose-one anchor), and say so in a comment.
 
 ## Windows / WebView2 gotchas (paid for already)
 
@@ -189,6 +227,18 @@ human-in-the-loop tier, and it lands last.
   what's decided, what's in progress, and which questions are still open.
   Claim a lane before building in it; two half-built versions of the same
   thing is the expensive kind of fun.
+- **Docs track code.** A change that alters what a file *does* — its
+  behavior, contract, invariants, or any fact a subsystem doc asserts —
+  updates the doc that `Covers:` it in the **same slice**
+  (`python tools/doc_coverage.py` maps a file to its owning doc), and
+  re-anchors that doc's header commit when the pass is substantive. Pure
+  renames/refactors/typos owe no doc edit, and line-number cites are
+  *expected* to drift — the anchor commit, not the line, is the reference.
+  `doc_coverage.py --check` catches only structural drift (a doc naming a
+  file that no longer exists); a fact gone quietly stale is caught only by
+  this habit and each doc's closing "what this pass could not verify". A file
+  no doc covers yet still owes its `INVENTORY.md` row
+  (`tools/update_inventory.py` keeps the counts honest).
 - **Small slices.** One coherent change per commit; the message says what
   and why, lowercase, like the existing history.
 - Don't rename, move, or reformat files you aren't functionally changing —
@@ -198,8 +248,11 @@ human-in-the-loop tier, and it lands last.
 - If the right implementation seems to require reworking something that
   already exists, stop and align first — agreeing on the seam beforehand is
   cheaper than reworking twice.
-- Run before calling anything done: `python -m pytest tests -q`, the
-  relevant probe, and the identifier/NUL sweep if you're committing.
+- Run before calling anything done:
+  `python -m pytest tests -m "probe or not probe"` (see **Verifying the app**),
+  and the identifier/NUL sweep if you're committing. Sweep the **commit
+  message** too, and print the term count — a sweep whose term set came out
+  empty passes everything.
 
 ## Quick reference — before you build X
 

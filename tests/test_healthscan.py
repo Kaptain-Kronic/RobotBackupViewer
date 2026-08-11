@@ -7,11 +7,11 @@ from datetime import datetime
 from backupviewer import healthscan
 from backupviewer.healthscan import (
     HealthScanJob, _RobotData, _check_adv_dcs, _check_battery,
-    _check_broken_calls, _check_cip, _check_clock, _check_mastering,
-    _check_override, _check_payload, _check_remarked_logic,
-    _check_remarked_positions, _check_sigs, _check_style_broken,
-    _check_style_orphans, _check_sw_version, _check_uninit_points,
-    _check_uninit_prs, _parse_tolerance, norm_queries,
+    _check_broken_calls, _check_cip, _check_clock, _check_cnt_logic,
+    _check_mastering, _check_override, _check_pause, _check_payload,
+    _check_remarked_logic, _check_remarked_positions, _check_sigs,
+    _check_style_broken, _check_style_orphans, _check_sw_version,
+    _check_uninit_points, _check_uninit_prs, _parse_tolerance, norm_queries,
 )
 
 # -- fixture texts (formats validated against the real parsers) -------------------
@@ -170,6 +170,8 @@ COMMENT\t\t= "POINTS";
    5:L P[R[4]] 200mm/sec FINE ;
    6:C P[1]
     :  P[4] 300mm/sec FINE ;
+   7:J P[...] 100% CNT100 ;
+   8:  //J P[...] 100% FINE ;
 /POS
 P[1]{
    GP1:
@@ -305,6 +307,7 @@ def test_registry_and_valid_ids():
                    "mastering", "cloned_mastering", "battery_alarm",
                    "style_broken", "style_orphans", "broken_calls",
                    "remarked_positions", "remarked_logic",
+                   "pause_used", "cnt_logic",
                    "uninit_points", "uninit_prs",
                    "software_version", "payload_unset", "override_low", "clock_drift"]
     assert all(c["label"] and c["desc"] and c["category"] for c in healthscan.check_list())
@@ -614,6 +617,9 @@ def test_broken_calls(tmp_path):
     assert "BINPROG" not in row["detail"]         # present as a binary .TP
     assert "KARELP" not in row["detail"]          # present as a KAREL program
     assert "S04SUB1" not in row["detail"]         # present as source
+    # findings are keyed by the CALLER: that is the program a fix edits, and
+    # what "exclude program X" must be able to cut out of a whole report
+    assert row["items"] == [{"prog": "MAIN1", "text": "CALL GONE1"}]
 
     clean = _check_broken_calls(_RobotData(FakeSession(
         {}, program_files=[_prog(tmp_path, "MAIN2", ["CALL SUB2"]),
@@ -641,6 +647,7 @@ def test_remarked_calls_are_not_edges(tmp_path):
     # GONE9/GONE8 never execute, so they are not "called programs missing"
     row = _check_broken_calls(ctx)
     assert row["status"] == "ok", row.get("detail", "")
+    assert "items" not in row                     # an ok row has nothing to list
 
     orph = _check_style_orphans(ctx)
     assert "S05LONE" in orph["detail"]            # a remarked call does not reach it
@@ -694,8 +701,10 @@ def test_remarked_positions_and_logic(tmp_path):
 
     pos = _check_remarked_positions(ctx)
     assert pos["status"] == "flag"
-    assert "1 remarked motion line" in pos["summary"]
+    # both remarked motions: the numbered one and the P[...] one
+    assert "2 remarked motion lines" in pos["summary"]
     assert "TESTPTS line 3: //J P[3] 50% FINE" in pos["detail"]
+    assert "TESTPTS line 8: //J P[...] 100% FINE" in pos["detail"]
     assert "LOGICP" not in pos["detail"]          # logic remarks are the other check's
 
     logic = _check_remarked_logic(ctx)
@@ -712,6 +721,65 @@ def test_remarked_positions_and_logic(tmp_path):
     assert _check_remarked_positions(_RobotData(FakeSession({})))["status"] == "na"
 
 
+def test_pause_used(tmp_path):
+    progs = [_prog(tmp_path, "PSEPROG", [
+        "J P[1] 100% FINE",
+        "PAUSE",                            # live -> flags
+        "//PAUSE",                          # remarked -> inert
+        "! PAUSE for setup",                # comment -> inert
+        "MESSAGE[PAUSE PRESSED]",           # a message SAYING pause pauses nothing
+        "IF R[1]=1,JMP LBL[1]",
+    ])]
+    row = _check_pause(_RobotData(FakeSession({}, program_files=progs)))
+    assert row["status"] == "flag"
+    assert "1 PAUSE in 1 program" in row["summary"]
+    assert "PSEPROG line 2: PAUSE" in row["detail"]
+    assert row["items"] == [{"prog": "PSEPROG", "line": 2, "text": "PAUSE"}]
+
+    clean = _check_pause(_RobotData(FakeSession({}, program_files=[
+        _prog(tmp_path, "NOPSE", ["J P[1] 100% FINE", "MESSAGE[PAUSE HERE]"])])))
+    assert clean["status"] == "ok"
+    assert _check_pause(_RobotData(FakeSession({})))["status"] == "na"
+
+
+def test_cnt_logic(tmp_path):
+    progs = [_prog(tmp_path, "CNTPROG", [
+        "J P[1] 100% CNT100",           # next real instruction is motion: fine
+        "L P[2] 800mm/sec CNT50",       # comments/remarks/labels are transparent...
+        "! checking clears",
+        "//J P[9] 100% FINE",
+        "LBL[5:RETRY]",
+        "DO[104:Clamp Open]=ON",        # ...so THIS is what follows: flags
+        "L P[3] 500mm/sec FINE",        # FINE settles - logic after it is fine
+        "CALL CHECK_CLEARS",
+        "J P[4] 100% CNT R[28]",        # register CNT ending the program: flags
+    ])]
+    row = _check_cnt_logic(_RobotData(FakeSession({}, program_files=progs)))
+    assert row["status"] == "flag"
+    assert "2 CNT motions followed by logic in 1 program" in row["summary"]
+    assert len(row["items"]) == 2
+    assert row["items"][0]["line"] == 2
+    assert "line 6: DO[104:Clamp Open]=ON" in row["items"][0]["after"]
+    assert row["items"][1]["line"] == 9
+    assert "ends here" in row["items"][1]["after"]
+
+    # logic riding ON the motion line is a deliberate construct - no flag
+    inline = _check_cnt_logic(_RobotData(FakeSession({}, program_files=[
+        _prog(tmp_path, "INLINEOK", [
+            "J P[1] 100% CNT80 TIME AFTER 0.2sec,DO[5]=ON",
+            "L P[2] 500mm/sec FINE",
+        ])])))
+    assert inline["status"] == "ok"
+
+    # trailing remarks cannot hide a program that ends on a CNT
+    tail = _check_cnt_logic(_RobotData(FakeSession({}, program_files=[
+        _prog(tmp_path, "TAILCNT", ["J P[1] 100% CNT100", "//DO[1]=ON"])])))
+    assert tail["status"] == "flag"
+    assert "ends here" in tail["items"][0]["after"]
+
+    assert _check_cnt_logic(_RobotData(FakeSession({})))["status"] == "na"
+
+
 def test_uninit_points(tmp_path):
     ctx = _RobotData(FakeSession({}, program_files=[
         _lsfile(tmp_path, "TESTPTS", LS_POINTS)]))
@@ -723,6 +791,25 @@ def test_uninit_points(tmp_path):
     assert "P[3]" not in row["detail"]             # remarked ref never counts
     assert "P[9]" not in row["detail"]             # comment mention never counts
     assert "1 indirect P[R[..]] ref not checkable" in row["detail"]
+
+    # P[...] — a motion carrying no position id. It used to slip through
+    # BOTH nets: not a numbered ref, not indirect, so it went unreported.
+    assert "1 motion line with no position (P[...])" in row["summary"]
+    # a finding is its LINE, carried verbatim - no prose in the row itself
+    assert {"prog": "TESTPTS", "line": 7,
+            "text": "J P[...] 100% CNT100"} in row["items"]
+    assert not any("P[...]" in i["text"] and i["line"] == 8 for i in row["items"])
+    assert all(" — " not in i["text"] for i in row["items"])
+
+    # a program that records NO positions while printing P[...] is said ONCE
+    # in the summary, never repeated as commentary on every line
+    bare = _check_uninit_points(_RobotData(FakeSession({}, program_files=[
+        _prog(tmp_path, "NOPOS", ["J P[...] 100% FINE", "L P[...] 500mm/sec FINE"])])))
+    assert bare["status"] == "flag"
+    assert "2 motion lines with no position" in bare["summary"]
+    assert "1 program records no positions at all" in bare["summary"]
+    assert [i["text"] for i in bare["items"]] == ["J P[...] 100% FINE",
+                                                  "L P[...] 500mm/sec FINE"]
 
     ok = _check_uninit_points(_RobotData(FakeSession({}, program_files=[
         _lsfile(tmp_path, "CLEANPTS", LS_POINTS_OK)])))
@@ -738,6 +825,10 @@ def test_uninit_prs(tmp_path):
     assert "read 2 uninitialized PRs" in row["summary"]
     assert "PR[2] 'Home2'" in row["detail"] and "PR[7] 'Spare'" in row["detail"]
     assert "PRMOVE" in row["detail"]
+    # one finding per READING program, so the report can filter/add by program
+    assert [i["prog"] for i in row["items"]] == ["PRMOVE", "PRMOVE"]
+    assert row["items"][0]["text"] == "reads PR[2] 'Home2'"
+    assert "after" not in row["items"][0]         # nothing writes it
     assert "1 indirect/group-prefixed PR ref not checkable" in row["detail"]
 
     # a writer somewhere demotes the read to info - it may be set at runtime
@@ -748,6 +839,9 @@ def test_uninit_prs(tmp_path):
     assert demoted["status"] == "info"
     assert "written by some program" in demoted["summary"]
     assert "written by INITPR" in demoted["detail"]
+    # the writer note is EVIDENCE (it may be set at runtime), so it rides the
+    # finding's own field rather than being glued into the text
+    assert demoted["items"][0]["after"] == "written by INITPR"
 
     # writes alone are not reads
     writer_only = _RobotData(FakeSession({"POSREG.VA": POSREG_MIX}, program_files=[

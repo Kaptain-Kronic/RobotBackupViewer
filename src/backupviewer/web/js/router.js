@@ -2,7 +2,6 @@
 (function () {
   "use strict";
 
-  var tabbar = document.getElementById("tabbar");
   var view = document.getElementById("view");
   var toolbar = document.getElementById("toolbar");
   var statusL = document.getElementById("status-left");
@@ -38,15 +37,21 @@
     });
   };
 
-  function buildTabbar() {
-    tabbar.innerHTML = "";
-    /* shell screens (home/backup) own the whole window - no viewer tabs in the
-       bar until a robot is actually open */
-    if (!BV.state.manifest) return;
-    /* display order = the keyboard's number row, exactly: 1..9, then 0 (the
-       pinned 3d view), then - and =. With ten-plus positional tabs the 3d tab
-       moves in FRONT of the tenth so its 0 badge sits between 9 and -; with
-       nine or fewer it stays at the end, right after the last digit. */
+  /* ---- the screens button ----
+     ONE dropdown stands in for the old tab strip: the strip could never
+     share the top row with chips + search (it alone outgrew the window),
+     and it put screen NAVIGATION under the screen CONTROLS. The button
+     names where you are ("5 · programs"), the menu is the map - same
+     number badges, same disabled-dim honesty for tabs this backup lacks -
+     and the number-row keys stay the fast path (keys.js reads the same
+     list, so key and badge can never drift). */
+  var screensBtn = document.getElementById("screens-btn");
+
+  /* display order = the keyboard's number row, exactly: 1..9, then 0 (the
+     pinned 3d view), then - and =. With ten-plus positional tabs the 3d tab
+     moves in FRONT of the tenth so its 0 badge sits between 9 and -; with
+     nine or fewer it stays at the end, right after the last digit. */
+  function screenList() {
     var tabs = BV.tabs.filter(function (t) { return !t.hidden; });
     var v3 = tabs.find(function (t) { return t.id === "view3d"; });
     if (v3) {
@@ -60,26 +65,49 @@
       tabs.splice(at, 0, v3);
     }
     var n = 0;
-    tabs.forEach(function (tab) {
+    return tabs.map(function (tab) {
       var enabled = BV.tabEnabled(tab);
       /* the 3d view is pinned to the 0 key, so its badge shows 0 and it
          never consumes a positional number-row slot */
       var badge = "";
       if (enabled) badge = tab.id === "view3d" ? "0" : BV.tabKeyBadge(n++);
-      var b = BV.el("button", { class: "tab-btn", id: "tab-" + tab.id },
-        (badge ? '<span class="tab-num">' + badge + "</span>" : "") + BV.esc(tab.label));
-      b.disabled = !enabled;
-      if (!enabled) b.title = "not available in this backup";
-      b.addEventListener("click", function () { location.hash = "#" + tab.id; });
-      tabbar.appendChild(b);
+      return { tab: tab, badge: badge, enabled: enabled };
     });
   }
 
-  function setActive(tabId) {
-    tabbar.querySelectorAll(".tab-btn").forEach(function (b) {
-      b.classList.toggle("active", b.id === "tab-" + tabId);
-    });
+  function syncScreens(tabId) {
+    var cur = null;
+    if (BV.state.manifest && tabId) {
+      screenList().forEach(function (e) { if (e.tab.id === tabId) cur = e; });
+    }
+    /* the ACTIVE SESSION TAB is the everyday host: it grows a breadcrumb
+       segment ("DD… · io ▾") and opens the menu (backuptabs.js). The
+       standalone button exists for solo pop-outs only - they have no tab
+       strip. Hotkey digits live in the menu ROWS alone. */
+    if (BV.session.setScreen) BV.session.setScreen(cur ? cur.tab.label : null);
+    screensBtn.innerHTML = cur
+      ? BV.esc(cur.tab.label) + '<span class="scr-caret">▾</span>'
+      : "";
   }
+
+  /* the screens menu, anchored wherever its host lives (active tab / solo
+     button). Screens this backup doesn't have are GONE, not greyed (the
+     feature-vs-evidence rule: an absent screen is a missing FEATURE here;
+     absence-as-EVIDENCE belongs to compare, which always shows it) - the
+     number badges are untouched, they were only ever assigned to enabled
+     screens */
+  BV.screensMenu = function (anchor) {
+    var curId = location.hash.slice(1).split("/")[0];
+    return BV.menu(anchor, screenList().filter(function (e) { return e.enabled; })
+      .map(function (e) {
+        return {
+          label: (e.badge ? e.badge + " · " : "") + e.tab.label,
+          active: e.tab.id === curId,
+          onClick: function () { location.hash = "#" + e.tab.id; },
+        };
+      }));
+  };
+  screensBtn.addEventListener("click", function () { BV.screensMenu(screensBtn); });
 
   /* the credit is a clickable pill: it's the app's only "who made this / how do
      I reach you" affordance, so it has to LOOK clickable without shouting over
@@ -175,18 +203,48 @@
       !toolbar.firstElementChild.childElementCount);
   }).observe(toolbar, { childList: true, subtree: true });
 
+  /* ---- chrome edges ----
+     The chrome sits IN FLOW above #view (content-scroll-under retired: rows
+     ghosting under glass cost three rounds of bugs and ate the scrollbar,
+     while the part that made the look - the background effect through the
+     frost - never needed it). What remains is honest edges: a hairline per
+     edge only while content is actually clipped there, and a sticky header
+     pinned against the chrome supplies the panel's one line itself. */
+  var chromeTop = document.getElementById("chrome-top");
+  function underChrome() {
+    var st = view.scrollTop;
+    document.body.classList.toggle("under-top", st > 1);
+    document.body.classList.toggle("under-bottom",
+      st + view.clientHeight < view.scrollHeight - 1);
+    /* builders REGISTER the fusing head (BV.chrome.fusedHead) - a per-scroll
+       querySelector against a plant-scale tree was real milliseconds */
+    var head = BV.chrome.fusedHead;
+    var fused = false;
+    if (head && head.isConnected) {
+      var r = head.getBoundingClientRect();
+      var topH = chromeTop.offsetHeight;
+      fused = r.top <= topH + 2 && r.bottom > topH;
+    }
+    document.body.classList.toggle("chrome-fused", fused);
+  }
+  BV.chrome = {
+    fusedHead: null,   /* the screen's chrome-fusing sticky header, if any */
+  };
+  view.addEventListener("scroll", underChrome, { passive: true });
+  window.addEventListener("resize", underChrome);
+  underChrome();
+
   function isShell(tab) { return !!(tab && tab.shell); }
 
-  /* the search box + compare + the 1-9 tabbar are backup-viewer chrome - hide
-     them on the shell (home/backup) screens so the main menu's topbar is just
-     logo·⚙·?. buildTabbar() keys off "manifest present", which stays true
-     once a robot is open, so the tabbar must be hidden here by ROUTE instead. */
+  /* the search box + the screens button are backup-viewer chrome - hide them
+     on the shell (home/cam/edit) screens. "manifest present" stays true once
+     a robot is open, so they must be hidden here by ROUTE instead. */
   function setTopbarChrome(shell) {
     var s = document.getElementById("global-search");
-    var c = document.getElementById("btn-compare");
     if (s) s.classList.toggle("hidden", shell);
-    if (c) c.classList.toggle("hidden", shell);
-    if (tabbar) tabbar.classList.toggle("hidden", shell);
+    /* solo pop-outs have no session tabs, so only THEY show the standalone
+       screens button; the main window's host is the active tab itself */
+    if (screensBtn) screensBtn.classList.toggle("hidden", shell || !BV.solo);
     /* the SESSION tab strip stays through shell screens (browser behavior -
        home is just a screen); it only un-highlights there */
     if (BV.session) BV.session.setShell(shell);
@@ -198,14 +256,12 @@
 
     /* running outside the app shell (plain browser, no python bridge): keep the
        old "launch via run.py" hint instead of a home screen that can't load */
-    if (!BV.api.bridged) { buildTabbar(); setActive(null); updateStatus(); setTopbarChrome(true); emptyState(); return; }
+    if (!BV.api.bridged) { syncScreens(null); updateStatus(); setTopbarChrome(true); emptyState(); return; }
 
     var hash = location.hash.slice(1);
     var parts = hash.split("/");
     var tabId = parts[0] || (BV.state.manifest ? "overview" : "home");
     var tab = BV.tabs.find(function (t) { return t.id === tabId; });
-
-    buildTabbar();
 
     /* router-initiated redirects REPLACE the current history entry instead of
        pushing one. A pushed redirect turns history.back() into a trap: on a
@@ -232,13 +288,18 @@
         || BV.tabs[BV.tabs.length - 1];
       if (("#" + tab.id) !== location.hash) { location.replace("#" + tab.id); return; }
     }
-    setActive(tab.id);
+    syncScreens(isShell(tab) ? null : tab.id);
     setTopbarChrome(isShell(tab));
     /* every redirect path above returns, so the hash and tab.id agree by here */
     syncCubes();
     /* remember where this backup's tab is, so switching back lands there */
     if (!isShell(tab) && BV.session) BV.session.noteHash(location.hash);
     view.classList.remove("no-pad");
+    BV.chrome.fusedHead = null;   /* the incoming screen registers its own */
+    /* a shell screen may have mounted its own filter box in the topbar
+       search slot - it dies with the screen */
+    [].forEach.call(document.querySelectorAll("#topbar-search .screen-search"),
+      function (n) { n.remove(); });
     /* drop any persist-scroll ownership before resetting: the scroll-to-0 below
        fires a scroll event, and without this the OUTGOING tab's key would catch
        it and overwrite its own saved position with 0 (BV.persistScroll) */
@@ -254,6 +315,7 @@
     view.appendChild(slot);
     tab.render(slot, tslot, parts.slice(1));
     updateStatus();
+    underChrome();   /* fresh screen, fresh edge state */
   }
 
   BV.openBackupFlow = function () {
@@ -262,7 +324,6 @@
       return BV.api.call("open_backup", path).then(function (manifest) {
         BV.session.open(manifest);
         BV.state.setManifest(manifest);
-        buildTabbar();
         BV.toast(manifest.robot_name ? manifest.robot_name + " · " + manifest.file_count + " files" : "backup opened");
         if (location.hash !== "#overview") location.hash = "#overview";
         else route();
@@ -277,11 +338,7 @@
     else location.hash = "#home";
   };
 
-  document.getElementById("btn-compare").addEventListener("click", function () {
-    if (!BV.state.manifest) { BV.toast("open a backup first"); return; }
-    if (BV.state.compare) location.hash = "#compare";
-    else BV.compareFlow();
-  });
+  /* (compare moved into the overview toolbar - overview.js) */
 
   /* ---- the three cubes: library · multi-cam · workspace ----
      These are the app's navigation, in the slot the wordmark used to hold (it
@@ -384,7 +441,7 @@
 
   /* ---- boot ---- */
   BV.api.ready.then(function (bridged) {
-    if (!bridged) { buildTabbar(); emptyState(); updateStatus(); return; }
+    if (!bridged) { emptyState(); updateStatus(); return; }
     /* a popped-out CV-X window is nothing but the remote: no backup, no tabs,
        no routing - load the theme so the overlay is dressed, then adopt the
        session that already exists and fill the window with it */
@@ -423,7 +480,6 @@
         }
         BV.state.setManifest(manifest);
       }
-      buildTabbar();
       /* with a backup passed at startup, land in its viewer; otherwise the home
          menu. a deep-link hash (other than #home) is honoured when a backup is open. */
       var want = BV.solo

@@ -3,10 +3,15 @@
 Covers what pytest cannot: that a shell screen renders with ZERO backups open,
 the rail's working set (grouped per robot, collapsible), per-pane tab strips
 (open by double-click, close by x, ctrl+tab cycling), the single-layer
-BV.lsEditor mounting per pane, live dirty state reaching the rail and the
-topbar badge, find/replace scoped to the working set (identity-aware matching,
-per-robot scope, collapsible grouped results with select-all, click-to-reveal),
-the pane-vs-pane diff strip (offered only while split, live while typing,
+BV.lsEditor mounting per pane, alt+arrow line moves (collapsed caret, block
+selections, edges, undo), quick copy (highlight-to-copy / highlight-elsewhere-
+to-paste, clip cleared per paste, symmetric, esc drops), live dirty state
+reaching the rail and the topbar badge, find/replace scoped to the working set
+(identity-aware matching, remarks shown by default with an exclude-!-and-//
+toggle, multi-line BLOCK search/replace, stapled inputs/foot with the results
+list as the only scroller, options+replace folded behind a caret, per-robot
+scope, collapsible grouped results with select-all, click-to-reveal), the
+pane-vs-pane diff strip (offered only while split, live while typing,
 ref-comment differences honestly classified display-only), the
 review-your-edits modal (original vs edited; clean programs say so plainly;
 a rename alone counts as an exportable change), and an export that lands ONE
@@ -20,20 +25,11 @@ library, APPDATA redirected before any backupviewer import.
 Run: python tests/ui_edit_probe.py
 """
 import json
-import os
 import sys
-import tempfile
 import time
-from pathlib import Path
+from probeutil import FAILURES, check, exit_code, isolate, js, poller, report
 
-ROOT = Path(__file__).parents[1]
-sys.path.insert(0, str(ROOT / "src"))
-
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-
-_TMP = Path(tempfile.mkdtemp(prefix="bv_ws_probe_"))
-os.environ["APPDATA"] = str(_TMP / "appdata")
-os.environ["BV_NO_WATCHER"] = "1"
+_TMP = isolate("bv_ws_probe_")
 
 import webview  # noqa: E402
 
@@ -41,7 +37,8 @@ from backupviewer import settings as bv_settings  # noqa: E402
 from backupviewer.api import Api  # noqa: E402
 from backupviewer.app import resource_path  # noqa: E402
 
-FAILURES = []
+# this probe waits longer than the shared default
+poll = poller(tries=30, delay=0.25)
 ROBOTS = ["RB010R01B01", "RB020R01B01"]
 PROG = "MAIN.LS"
 DEST = _TMP / "export"
@@ -57,10 +54,11 @@ PROG_BYTES = (
     b"   2:  R[21:SERVO GUN WORK]=1 ;\r\n"
     b"   3:  R[21]=2 ;\r\n"
     b"   4:  !R[21] remarked on purpose ;\r\n"
-    b"   5:J P[1] 100% FINE ;\r\n"
-    b"   6:  CALL HOMEPOS ;\r\n"        # not in this backup -> flagged missing
-    b"   7:  LBL[1:TOP] ;\r\n"
-    b"   8:  IF DI[3]=ON,JMP LBL[1] ;\r\n"
+    b"   5:  // R[21] CALL NOSUCH here ;\r\n"   # the OTHER remark spelling
+    b"   6:J P[1] 100% FINE ;\r\n"
+    b"   7:  CALL HOMEPOS ;\r\n"        # not in this backup -> flagged missing
+    b"   8:  LBL[1:TOP] ;\r\n"
+    b"   9:  IF DI[3]=ON,JMP LBL[1] ;\r\n"
     b"/POS\r\n"
     b"P[1]{\r\n"
     b"   GP1:\r\n"
@@ -73,28 +71,8 @@ PROG_BYTES = (
 SNAPS = {}
 
 
-def check(name, cond, detail=""):
-    print(f"[{'ok' if cond else 'FAIL'}] {name} {detail}")
-    if not cond:
-        FAILURES.append(name)
-
-
-def js(window, expr):
-    return window.evaluate_js(expr)
-
-
 def location_hash(window):
     return js(window, "location.hash.split('/')[0]")
-
-
-def poll(window, expr, tries=30, delay=0.25):
-    val = None
-    for _ in range(tries):
-        val = js(window, expr)
-        if val:
-            return val
-        time.sleep(delay)
-    return val
 
 
 # Splits are opened by DRAGGING onto a pane's edges, so the probe has to drive
@@ -196,7 +174,7 @@ def probe(window):
               all(v >= 8 for v in json.loads(cubes_box or "[0]")),
               f"(drawn bounds {cubes_box} of 24 user units — a collapsed path reads 0)")
         check("shell.chrome_hidden",
-              bool(js(window, "document.getElementById('btn-compare').classList.contains('hidden')")))
+              bool(js(window, "document.getElementById('global-search').classList.contains('hidden')")))
 
         # ---- populate the working set from BOTH robots (same program name) ----
         # robot ids come from a library SCAN, not from folder names - go through
@@ -304,6 +282,49 @@ def probe(window):
         })()""")
         check("rail.click_keeps_the_row_node", bool(js(window, "window._sameNode")),
               "(a rebuilt row eats the dblclick that opens the program)")
+
+        # ---- the program finder: one pattern, every robot, add in bulk ----
+        # real endpoint against the two on-disk fixture robots: substring
+        # matching, results pre-ticked, dedupe against the working set
+        js(window, """[...document.querySelectorAll('.ws-railhead .btn')]
+            .find(function(b){return b.textContent==='find…';}).click()""")
+        check("finder.opens", bool(poll(window, "!!document.querySelector('.pf-modal')")))
+        js(window, """(function(){
+            var i=document.querySelector('.pf-row input');
+            i.value='AIN';
+            [...document.querySelectorAll('.pf-row .btn')].pop().click();
+        })()""")
+        rows_n = poll(window, "document.querySelectorAll('.pf-ln').length")
+        check("finder.substring_matches_both_robots",
+              rows_n == 2 and js(window, "document.querySelectorAll('.pf-rb').length") == 2,
+              f"({rows_n} program rows — 'AIN' must find MAIN.LS on both robots)")
+        check("finder.results_preticked", bool(js(window, """(function(){
+            var b=[...document.querySelectorAll('.pf-foot .btn')].pop();
+            return !b.disabled && b.textContent==='add 2 programs';
+        })()""")), "(you searched for exactly this — untick strays, not the finds)")
+        # both hits are already IN the workspace: adding is a clean no-op
+        js(window, "[...document.querySelectorAll('.pf-foot .btn')].pop().click()")
+        time.sleep(0.4)
+        check("finder.dedupes_against_workspace",
+              js(window, "BV.workspace.count()") == 2
+              and bool(js(window, "document.getElementById('modal-root').classList.contains('hidden')")))
+        # drop one MAIN, find it by name, add it back — the real intake path
+        js(window, "BV.workspace.remove(BV.workspace.entries()[1].id)")
+        time.sleep(0.3)
+        check("finder.setup_removed_one", js(window, "BV.workspace.count()") == 1)
+        js(window, """[...document.querySelectorAll('.ws-railhead .btn')]
+            .find(function(b){return b.textContent==='find…';}).click()""")
+        poll(window, "!!document.querySelector('.pf-modal')")
+        js(window, """(function(){
+            var i=document.querySelector('.pf-row input');
+            i.value='MAIN';
+            [...document.querySelectorAll('.pf-row .btn')].pop().click();
+        })()""")
+        poll(window, "document.querySelectorAll('.pf-ln').length === 2")
+        js(window, "[...document.querySelectorAll('.pf-foot .btn')].pop().click()")
+        check("finder.readds_missing_program",
+              poll(window, "BV.workspace.count() === 2 ? 'y' : ''") == "y",
+              "(one of the two hits was missing — only it gets added)")
 
         # ---- the split is DERIVED: one pane until a program is dropped right ----
         check("panes.single_by_default",
@@ -497,6 +518,8 @@ def probe(window):
         check("nav.flags_missing_call",
               bool(js(window, "!!document.querySelector('.ws-navrow .nm.miss')")),
               "(HOMEPOS is not a program in this backup)")
+        check("nav.remarked_call_not_listed", "NOSUCH" not in calls_txt,
+              "(a CALL on a //-remarked line calls nothing, same as ! lines)")
         labels_txt = js(window, """(function(){
             var lab=[...document.querySelectorAll('.ws-navhead .seg button')]
                 .filter(function(b){return b.textContent.trim()==='labels';})[0];
@@ -629,7 +652,7 @@ def probe(window):
             var s=document.querySelector('.ws-diffstats');
             return s && s.textContent.indexOf('identical')>=0 ? s.textContent : '';
         })()""")
-        check("pdiff.stats_ride_the_toolbar", "8 identical" in (stats_txt or ""),
+        check("pdiff.stats_ride_the_toolbar", "9 identical" in (stats_txt or ""),
               f"({stats_txt!r} — two robots' pristine MAIN.LS are byte-identical)")
         check("pdiff.identical_no_marks",
               js(window, "document.querySelectorAll('.wsd-bar').length") == 0
@@ -848,6 +871,30 @@ def probe(window):
               and js(window, "document.querySelectorAll('.lsed-gap').length") == 0
               and bool(js(window, """[...document.querySelectorAll('.toolbar-slot .btn')]
                   .some(function(x){return x.textContent==='diff…';})""")))
+        # the RAW remove above repainted counts only (the rail is deliberately
+        # left alone while it may be worked in), so a TREETMP4 row still
+        # stands for an entry that is gone. Opening from that stale row must
+        # REFUSE - it would resurrect a ghost tab over a buffer the workspace
+        # no longer owns, and every later edit would vanish into it. (Exactly
+        # that zombie ate this probe's own find/replace flows once.)
+        js(window, """(function(){
+            var r=[...document.querySelectorAll('.ws-prog')].find(function(x){
+                return x.textContent.indexOf('TREETMP4')>=0; });
+            window._staleRow = !!r;
+            if (r) r.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
+        })()""")
+        time.sleep(0.5)
+        check("stale.row_stood_for_the_test", bool(js(window, "window._staleRow")),
+              "(the raw remove must have left the rail unrepainted)")
+        check("stale.open_refused",
+              js(window, "document.querySelectorAll('.ws-tab').length") == 1
+              and not js(window, """[...document.querySelectorAll('.ws-tab')]
+                  .some(function(t){ return t.textContent.indexOf('TREETMP4')>=0; })"""),
+              "(no ghost tab for a removed entry)")
+        check("stale.refusal_heals_the_rail", not js(window, """
+            [...document.querySelectorAll('.ws-prog')].some(function(x){
+                return x.textContent.indexOf('TREETMP4')>=0; })"""),
+              "(the repaint takes the stale row with it)")
         # back to two panes for the find/replace flow below: the closed side
         # reopens from the rail (allowed again - the diff is off), then splits
         js(window, """document.querySelectorAll('.ws-prog')[1]
@@ -889,16 +936,134 @@ def probe(window):
         time.sleep(0.4)
         check("details.closes_again", not js(window, "!!document.querySelector('.ws-details')"))
 
+        # ---- quick copy: highlight-to-copy, highlight-elsewhere-to-paste ----
+        # A DOM-range helper stands in for the mouse drag; the mode's own
+        # handlers listen for the mouseup/dblclick that ends a real gesture.
+        js(window, """window._selIn = function(code, start, end){
+            var sel=window.getSelection();
+            var range=document.createRange();
+            var w=document.createTreeWalker(code, NodeFilter.SHOW_TEXT, null);
+            var pos=0,node,ps=false,pe=false;
+            while((node=w.nextNode())){
+                var len=node.nodeValue.length;
+                if(!ps && start<=pos+len){ range.setStart(node,start-pos); ps=true; }
+                if(ps && end<=pos+len){ range.setEnd(node,end-pos); pe=true; break; }
+                pos+=len;
+            }
+            if(!pe) range.collapse(true);
+            sel.removeAllRanges(); sel.addRange(range);
+        };
+        window._qcMouseup = function(){ document.dispatchEvent(
+            new MouseEvent('mouseup',{bubbles:true})); };""")
+        base_dirty = js(window, "BV.workspace.dirtyCount()")
+        js(window, """[...document.querySelectorAll('.toolbar-slot .btn')]
+            .find(function(b){return b.textContent==='quick copy';}).click()""")
+        time.sleep(0.3)
+        check("qc.toggle_lights_up", bool(js(window, """(function(){
+            var b=[...document.querySelectorAll('.toolbar-slot .btn')]
+                .find(function(x){return x.textContent.indexOf('quick copy')>=0;});
+            return b.classList.contains('on');
+        })()""")))
+        hint = js(window, "[...document.querySelectorAll('.ws-armhint')].map(function(h){return h.textContent;}).join('')") or ""
+        check("qc.idle_hint", "highlight" in hint, f"({hint!r})")
+        # copy 'setup' out of editor 0 (chars 1..6 of its '!setup' first line)
+        js(window, "window._selIn(document.querySelectorAll('.lsed-code')[0],1,6); window._qcMouseup()")
+        time.sleep(0.3)
+        hint = js(window, "[...document.querySelectorAll('.ws-armhint')].map(function(h){return h.textContent;}).join('')") or ""
+        check("qc.highlight_arms_clip", "✂" in hint and "setup" in hint, f"({hint!r})")
+        # a highlight in the OTHER editor pastes over itself and clears the clip
+        js(window, "window._selIn(document.querySelectorAll('.lsed-code')[1],0,6); window._qcMouseup()")
+        time.sleep(0.4)
+        pasted = js(window, "document.querySelectorAll('.lsed-code')[1].textContent") or ""
+        check("qc.paste_replaces_highlight", pasted.startswith("setup\n"),
+              f"(editor B now starts {pasted[:12]!r})")
+        hint = js(window, "[...document.querySelectorAll('.ws-armhint')].map(function(h){return h.textContent;}).join('')") or ""
+        check("qc.clip_clears_on_paste", "✂" not in hint,
+              "(one paste per copy - a stray gesture cannot paste twice)")
+        js(window, """(function(){
+            var code=document.querySelectorAll('.lsed-code')[1];
+            code.dispatchEvent(new KeyboardEvent('keydown',
+                {key:'z',ctrlKey:true,bubbles:true,cancelable:true}));
+        })()""")
+        time.sleep(0.3)
+        check("qc.paste_is_one_undo_step",
+              (js(window, "document.querySelectorAll('.lsed-code')[1].textContent") or "").startswith("!setup"),
+              "(the paste rides the editor history)")
+        # the flow is symmetric: B -> A is the same two gestures
+        js(window, "window._selIn(document.querySelectorAll('.lsed-code')[1],1,6); window._qcMouseup()")
+        time.sleep(0.3)
+        js(window, "window._selIn(document.querySelectorAll('.lsed-code')[0],0,6); window._qcMouseup()")
+        time.sleep(0.4)
+        check("qc.works_both_ways",
+              (js(window, "document.querySelectorAll('.lsed-code')[0].textContent") or "").startswith("setup\n"))
+        js(window, """(function(){
+            var code=document.querySelectorAll('.lsed-code')[0];
+            code.dispatchEvent(new KeyboardEvent('keydown',
+                {key:'z',ctrlKey:true,bubbles:true,cancelable:true}));
+        })()""")
+        time.sleep(0.3)
+        # double-click on an EMPTY spot pastes at the caret
+        js(window, "window._selIn(document.querySelectorAll('.lsed-code')[0],1,6); window._qcMouseup()")
+        time.sleep(0.3)
+        js(window, """(function(){
+            window._selIn(document.querySelectorAll('.lsed-code')[1],0,0);
+            document.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));
+        })()""")
+        time.sleep(0.4)
+        check("qc.dblclick_pastes_at_caret",
+              (js(window, "document.querySelectorAll('.lsed-code')[1].textContent") or "").startswith("setup!setup"),
+              "(collapsed caret: insert, not replace)")
+        js(window, """(function(){
+            var code=document.querySelectorAll('.lsed-code')[1];
+            code.dispatchEvent(new KeyboardEvent('keydown',
+                {key:'z',ctrlKey:true,bubbles:true,cancelable:true}));
+        })()""")
+        time.sleep(0.3)
+        # esc drops an armed clip; the next highlight COPIES instead of pasting
+        js(window, "window._selIn(document.querySelectorAll('.lsed-code')[0],1,6); window._qcMouseup()")
+        time.sleep(0.3)
+        js(window, """document.dispatchEvent(new KeyboardEvent('keydown',
+            {key:'Escape',bubbles:true,cancelable:true}))""")
+        time.sleep(0.3)
+        hint = js(window, "[...document.querySelectorAll('.ws-armhint')].map(function(h){return h.textContent;}).join('')") or ""
+        check("qc.esc_drops_clip", "✂" not in hint and "highlight" in hint, f"({hint!r})")
+        before_b = js(window, "document.querySelectorAll('.lsed-code')[1].textContent") or ""
+        js(window, "window._selIn(document.querySelectorAll('.lsed-code')[1],0,6); window._qcMouseup()")
+        time.sleep(0.3)
+        check("qc.after_esc_highlight_copies_not_pastes",
+              (js(window, "document.querySelectorAll('.lsed-code')[1].textContent") or "") == before_b
+              and "✂" in (js(window, "[...document.querySelectorAll('.ws-armhint')].map(function(h){return h.textContent;}).join('')") or ""))
+        # toggling the mode off clears everything and stops listening
+        js(window, """[...document.querySelectorAll('.toolbar-slot .btn')]
+            .find(function(b){return b.textContent.indexOf('quick copy')>=0;}).click()""")
+        time.sleep(0.3)
+        js(window, "window._selIn(document.querySelectorAll('.lsed-code')[0],1,6); window._qcMouseup()")
+        time.sleep(0.3)
+        hint = js(window, "[...document.querySelectorAll('.ws-armhint')].map(function(h){return h.textContent;}).join('')") or ""
+        check("qc.off_means_off", "✂" not in hint and "highlight" not in hint, f"({hint!r})")
+        check("qc.no_stray_edits_left",
+              js(window, "BV.workspace.dirtyCount()") == base_dirty,
+              "(every paste was undone - the mode itself must not dirty anything)")
+
         # ---- find/replace in the rail: identity-aware, scoped, grouped ----
         js(window, """[...document.querySelectorAll('.ws-railtab')]
             .find(function(t){return t.textContent.indexOf('find')>=0;}).click()""")
-        got = poll(window, "!!document.querySelector('.fp-inputs input')")
+        got = poll(window, "!!document.querySelector('.fp-find')")
         check("find.panel_in_rail", bool(got))
         check("find.code_still_visible",
               js(window, "document.querySelectorAll('.lsed-code').length") >= 1,
               "(the panel takes the rail, not the editors)")
+        # the inputs staple to a flex railbody; options + replace fold behind
+        # the ▸ caret and start CLOSED
+        check("find.railbody_is_flex_host", bool(js(window, """(function(){
+            var b=document.querySelector('.ws-railbody');
+            return b.classList.contains('fp-host') &&
+                   getComputedStyle(b).overflowY === 'hidden';
+        })()""")), "(the results list must be the only scroller)")
+        check("find.options_closed_by_default",
+              js(window, "getComputedStyle(document.querySelector('.fp-xtra')).display") == "none")
         js(window, """(function(){
-            var i=document.querySelector('.fp-inputs input');
+            var i=document.querySelector('.fp-find');
             i.value='R[21]';
             i.dispatchEvent(new Event('input',{bubbles:true}));
         })()""")
@@ -908,8 +1073,12 @@ def probe(window):
         check("find.identity_matches_both_forms",
               any("R[21:SERVO GUN WORK]" in s for s in snips) and any(s.strip().startswith("R[21]=") for s in snips),
               f"({len(snips)} hits)")
-        check("find.remarked_line_excluded",
-              not any("remarked on purpose" in s for s in snips))
+        # remarks are IN by default now - the search shows everything until
+        # the exclude toggle says otherwise
+        check("find.remarks_included_by_default",
+              any("remarked on purpose" in s for s in snips)
+              and any("NOSUCH here" in s for s in snips),
+              f"(both remark spellings must surface; {len(snips)} hits)")
         check("find.grouped_by_robot",
               js(window, "document.querySelectorAll('.fp-rb').length") == 2)
         check("find.no_duplicate_scope_row",
@@ -920,9 +1089,94 @@ def probe(window):
             var t=[...document.querySelectorAll('.fp-opt')].map(function(o){return o.textContent;}).join('|');
             return t.indexOf('match case')>=0 && t.indexOf('whole word')>=0;
         })()""")))
+
+        # ---- the foot and inputs are STAPLED: only the results scroll ----
+        # grow editor B until the hit list overflows the rail, then check the
+        # geometry; one undo takes the growth back out
+        js(window, """(function(){
+            var code=document.querySelectorAll('.lsed-code')[1];
+            var lines=[];
+            for (var i=0;i<300;i++) lines.push('R[77:STAPLE FILLER]=1');
+            code.textContent = code.textContent + '\\n' + lines.join('\\n');
+            code.dispatchEvent(new Event('input',{bubbles:true}));
+        })()""")
+        time.sleep(0.4)
+        js(window, """(function(){
+            var i=document.querySelector('.fp-find');
+            i.value='R[77]';
+            i.dispatchEvent(new Event('input',{bubbles:true}));
+        })()""")
+        time.sleep(0.8)
+        staple = js(window, """JSON.stringify((function(){
+            var rail=document.querySelector('.ws-rail').getBoundingClientRect();
+            var res=document.querySelector('.fp-results');
+            var foot=document.querySelector('.fp-foot').getBoundingClientRect();
+            var inp=document.querySelector('.fp-inputs').getBoundingClientRect();
+            return {overflow: res.scrollHeight - res.clientHeight,
+                    footIn: foot.bottom <= rail.bottom + 1 && foot.height > 0,
+                    inputsIn: inp.top >= rail.top - 1 && inp.height > 0};
+        })())""")
+        st_d = json.loads(staple or "{}")
+        check("find.results_are_the_scroller", (st_d.get("overflow") or 0) > 100,
+              f"({staple} — 300 hits must overflow inside .fp-results)")
+        check("find.foot_stapled_visible", st_d.get("footIn") is True,
+              f"({staple} — the selected/found line must never leave the frame)")
+        check("find.inputs_stapled_visible", st_d.get("inputsIn") is True)
+        # replace with the box folded away AND empty must not silently delete:
+        # the click reveals the box instead, and nothing changes
+        dirty_before = js(window, "BV.workspace.dirtyCount()")
+        js(window, "[...document.querySelectorAll('.fp-foot .btn')].pop().click()")
+        time.sleep(0.4)
+        check("find.empty_replace_reveals_not_deletes",
+              js(window, "getComputedStyle(document.querySelector('.fp-xtra')).display") != "none"
+              and js(window, "BV.workspace.dirtyCount()") == dirty_before,
+              "(deleting 300 matches must take a second, informed click)")
+        # undo the growth; B reads clean again
+        js(window, """(function(){
+            var code=document.querySelectorAll('.lsed-code')[1];
+            code.dispatchEvent(new KeyboardEvent('keydown',
+                {key:'z',ctrlKey:true,bubbles:true,cancelable:true}));
+        })()""")
+        time.sleep(0.4)
+        check("find.growth_undone", js(window, "BV.workspace.dirtyCount()") == dirty_before - 1)
+
+        # ---- the exclude ! // toggle hides BOTH remark spellings ----
+        js(window, """(function(){
+            var i=document.querySelector('.fp-find');
+            i.value='R[21]';
+            i.dispatchEvent(new Event('input',{bubbles:true}));
+        })()""")
+        time.sleep(0.5)
+        js(window, """(function(){
+            var o=[...document.querySelectorAll('.fp-opt')].find(function(x){
+                return x.textContent.indexOf('exclude')>=0; });
+            o.querySelector('input').click();
+        })()""")
+        time.sleep(0.5)
+        snips2 = js(window, """[...document.querySelectorAll('.fp-ln .snip')]
+            .map(function(s){return s.textContent;})""") or []
+        check("find.exclude_hides_both_remark_spellings",
+              snips2 and not any("remarked on purpose" in s for s in snips2)
+              and not any("NOSUCH here" in s for s in snips2),
+              f"({len(snips2)} hits after the toggle)")
+        js(window, """(function(){
+            var o=[...document.querySelectorAll('.fp-opt')].find(function(x){
+                return x.textContent.indexOf('exclude')>=0; });
+            o.querySelector('input').click();
+        })()""")
+        time.sleep(0.5)
+        # the caret closes the fold again (state, not a one-way door)
+        js(window, "document.querySelector('.fp-more').click()")
+        time.sleep(0.3)
+        check("find.caret_refolds",
+              js(window, "getComputedStyle(document.querySelector('.fp-xtra')).display") == "none")
+        js(window, "document.querySelector('.fp-more').click()")
+        time.sleep(0.3)
+        check("find.caret_reopens",
+              js(window, "getComputedStyle(document.querySelector('.fp-xtra')).display") != "none")
         # a program NAME match is found and marked (navigational, not replaceable)
         js(window, """(function(){
-            var i=document.querySelector('.fp-inputs input');
+            var i=document.querySelector('.fp-find');
             i.value='MAIN'; i.dispatchEvent(new Event('input',{bubbles:true}));
         })()""")
         time.sleep(0.5)
@@ -930,7 +1184,7 @@ def probe(window):
               bool(js(window, "!!document.querySelector('.fp-pg .pill')")),
               "(MAIN matches the file name, badged 'name')")
         js(window, """(function(){
-            var i=document.querySelector('.fp-inputs input');
+            var i=document.querySelector('.fp-find');
             i.value='R[21]'; i.dispatchEvent(new Event('input',{bubbles:true}));
         })()""")
         time.sleep(0.5)
@@ -978,7 +1232,7 @@ def probe(window):
 
         # ---- replace across BOTH robots ----
         js(window, """(function(){
-            var i=document.querySelectorAll('.fp-inputs input')[1];
+            var i=document.querySelector('.fp-repl');
             i.value='R[30]'; i.dispatchEvent(new Event('input',{bubbles:true}));
         })()""")
         time.sleep(0.4)
@@ -989,6 +1243,54 @@ def probe(window):
         time.sleep(0.6)
         check("replace.applied",
               js(window, "BV.workspace.dirtyCount()") == 2, "(both robots edited)")
+
+        # ---- multi-line: a BLOCK of lines is found and replaced as one ----
+        # the two-line LBL/IF tail exists in both programs; swap it for a
+        # three-line block and both buffers grow by exactly one line
+        js(window, """(function(){
+            var f=document.querySelector('.fp-find');
+            f.value='LBL[1:TOP]\\nIF DI[3]=ON,JMP LBL[1]';
+            f.dispatchEvent(new Event('input',{bubbles:true}));
+        })()""")
+        time.sleep(0.6)
+        block_ns = js(window, """[...document.querySelectorAll('.fp-ln .n')]
+            .map(function(n){return n.textContent;})""") or []
+        check("block.one_hit_per_program", len(block_ns) == 2, f"({block_ns})")
+        check("block.rows_show_line_ranges",
+              all("–" in n for n in block_ns), f"({block_ns})")
+        check("block.snip_says_span", bool(js(window, """(function(){
+            var s=document.querySelector('.fp-ln .snip');
+            return s && s.textContent.indexOf('2 lines')>=0;
+        })()""")))
+        check("block.single_line_options_hidden", bool(js(window, """(function(){
+            var os=[...document.querySelectorAll('.fp-opt')];
+            var word=os.find(function(x){return x.textContent.indexOf('whole word')>=0;});
+            var rem=os.find(function(x){return x.textContent.indexOf('exclude')>=0;});
+            return word.style.display==='none' && rem.style.display==='none';
+        })()""")), "(whole-word and the remark filter mean nothing for a block)")
+        foot_txt = js(window, "document.querySelector('.fp-foot .dim').textContent") or ""
+        check("block.foot_counts_blocks", "2 selected / 2 found" in foot_txt, f"({foot_txt!r})")
+        lens_before = js(window, """JSON.stringify(BV.workspace.entries().slice(0,2).map(function(e){
+            return BV.workspace.peek(e).text.split('\\n').length; }))""")
+        js(window, """(function(){
+            var r=document.querySelector('.fp-repl');
+            r.value='LBL[1:TOP]\\nWAIT .1\\nIF DI[3]=ON,JMP LBL[1]';
+            r.dispatchEvent(new Event('input',{bubbles:true}));
+            [...document.querySelectorAll('.fp-foot .btn')].pop().click();
+        })()""")
+        time.sleep(0.6)
+        grew = js(window, """JSON.stringify(BV.workspace.entries().slice(0,2).map(function(e){
+            var t=BV.workspace.peek(e).text;
+            return [t.split('\\n').length, t.indexOf('WAIT .1')>=0]; }))""")
+        lb = json.loads(lens_before or "[0,0]")
+        ga = json.loads(grew or "[[0,false],[0,false]]")
+        check("block.replace_spans_lines",
+              ga[0][1] and ga[1][1] and ga[0][0] == lb[0] + 1 and ga[1][0] == lb[1] + 1,
+              f"(lines {lb} -> {grew})")
+        check("block.open_editor_updated", bool(js(window, """(function(){
+            return [...document.querySelectorAll('.lsed-code')].every(function(c){
+                return c.textContent.indexOf('WAIT .1')>=0; });
+        })()""")), "(replace pushes fresh text into mounted editors)")
 
         # ---- export: one folder per robot ----
         js(window, """window._exp='';
@@ -1118,9 +1420,10 @@ def probe(window):
             .find(function(t){return t.textContent.indexOf('find')>=0;}).click()""")
         time.sleep(0.4)
         js(window, """(function(){
-            var ins=document.querySelectorAll('.fp-inputs input');
-            ins[0].value='BRANDNEW'; ins[0].dispatchEvent(new Event('input',{bubbles:true}));
-            ins[1].value='RENAMEDBYFR'; ins[1].dispatchEvent(new Event('input',{bubbles:true}));
+            var f=document.querySelector('.fp-find');
+            var r=document.querySelector('.fp-repl');
+            f.value='BRANDNEW'; f.dispatchEvent(new Event('input',{bubbles:true}));
+            r.value='RENAMEDBYFR'; r.dispatchEvent(new Event('input',{bubbles:true}));
         })()""")
         time.sleep(0.6)
         check("rename_fr.name_hit_has_box", bool(js(window, """(function(){
@@ -1355,8 +1658,60 @@ def probe(window):
               f"({g.get('caretLine')!r} — the gap above must not offset it)")
         check("gaps.clear_removes_all", g.get("cleared") is True)
 
-        print()
-        print("FAILURES:", FAILURES if FAILURES else "none")
+        # ---- alt+arrow line moves: the component contract, in isolation ----
+        mv_out = js(window, """(function(){
+            var host=document.createElement('div');
+            host.style.cssText='position:fixed;left:0;top:0;width:400px;height:220px;visibility:hidden';
+            document.body.appendChild(host);
+            var ed=BV.lsEditor(host,{text:'AAA\\nBBB\\nCCC\\nDDD'});
+            var out={};
+            function alt(key){ ed.code.dispatchEvent(new KeyboardEvent('keydown',
+                {key:key,altKey:true,bubbles:true,cancelable:true})); }
+            /* collapsed caret on line 2: the line rides down, the caret rides
+               with it (same column on the same text) */
+            ed.focusLine(2);
+            alt('ArrowDown');
+            out.down=ed.getText();
+            out.caretAfterDown=ed.caretLine();
+            alt('ArrowUp');
+            out.up=ed.getText();
+            /* a selection spanning lines 1-2 moves as one block */
+            window._selIn(ed.code, 0, 7);
+            alt('ArrowDown');
+            out.blockDown=ed.getText();
+            alt('ArrowUp');
+            out.blockBack=ed.getText();
+            /* the edges consume the key without changing anything */
+            ed.focusLine(1);
+            alt('ArrowUp');
+            out.topEdge=ed.getText();
+            ed.focusLine(4);
+            alt('ArrowDown');
+            out.bottomEdge=ed.getText();
+            /* each move is one undo step */
+            ed.focusLine(2);
+            alt('ArrowDown');
+            ed.code.dispatchEvent(new KeyboardEvent('keydown',
+                {key:'z',ctrlKey:true,bubbles:true,cancelable:true}));
+            out.undo=ed.getText();
+            host.remove();
+            return JSON.stringify(out);
+        })()""")
+        mv = json.loads(mv_out or "{}")
+        check("move.line_down", mv.get("down") == "AAA\nCCC\nBBB\nDDD",
+              f"({mv.get('down')!r})")
+        check("move.caret_rides_along", mv.get("caretAfterDown") == 3,
+              f"(line {mv.get('caretAfterDown')!r} — the caret stays on the moved text)")
+        check("move.line_back_up", mv.get("up") == "AAA\nBBB\nCCC\nDDD")
+        check("move.selection_block_moves", mv.get("blockDown") == "CCC\nAAA\nBBB\nDDD",
+              f"({mv.get('blockDown')!r})")
+        check("move.selection_block_returns", mv.get("blockBack") == "AAA\nBBB\nCCC\nDDD")
+        check("move.top_edge_consumed_noop", mv.get("topEdge") == "AAA\nBBB\nCCC\nDDD")
+        check("move.bottom_edge_consumed_noop", mv.get("bottomEdge") == "AAA\nBBB\nCCC\nDDD")
+        check("move.one_undo_step", mv.get("undo") == "AAA\nBBB\nCCC\nDDD",
+              "(a move then ctrl+z restores exactly)")
+
+        report()
     except Exception as e:  # noqa: BLE001
         print("[FAIL] probe crashed:", type(e).__name__, e)
         import traceback
@@ -1391,7 +1746,7 @@ def main():
     window._bv_api = api
     api.bind(window)
     webview.start(probe, window, gui="edgechromium")
-    sys.exit(1 if FAILURES else 0)
+    sys.exit(exit_code())
 
 
 if __name__ == "__main__":

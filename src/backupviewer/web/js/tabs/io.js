@@ -247,8 +247,8 @@
             mode: "pair",
             stateKey: "io." + c.id + ".both",
             panes: [
-              { label: (c.inT || "") + " · inputs", columns: signalColumns(false), data: byType[c.inT] || [] },
-              { label: (c.outT || "") + " · outputs", columns: signalColumns(false), data: byType[c.outT] || [] },
+              { label: "inputs", columns: signalColumns(false), data: byType[c.inT] || [] },
+              { label: "outputs", columns: signalColumns(false), data: byType[c.outT] || [] },
             ],
             onOpen: openSearch,
             onCount: function (n, all) { sb.setCount(n, all); },
@@ -289,8 +289,8 @@
             mode: "pair",
             stateKey: "io.cfg." + c.id,
             panes: [
-              { label: (c.inT || "") + " · inputs", columns: cfgCols, data: rowsFor(c.inT) },
-              { label: (c.outT || "") + " · outputs", columns: cfgCols, data: rowsFor(c.outT) },
+              { label: "inputs", columns: cfgCols, data: rowsFor(c.inT) },
+              { label: "outputs", columns: cfgCols, data: rowsFor(c.outT) },
             ],
             onOpen: open,
             onCount: function (n, all) { sb.setCount(n, all); },

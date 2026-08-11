@@ -12,6 +12,179 @@
   landing so a yanked stick never leaves a half-written file pretending to be
   whole, and each copy keeps the source's modified time — extracted evidence
   still dates itself.
+
+## v1.5 — the library overhaul
+- **Renaming a robot no longer rescans the library.** Every app-initiated
+  metadata change — rename/relocate, camera link, note or IP edit, add,
+  merge, bulk add — already updates the library index in place, but its
+  `robot.json` write bumped the folder tree and the next listing paid a full
+  rescan for data it already had: seconds of blanked view and a lost scroll
+  position for a one-entry change. Those operations now claim their own tree
+  delta (the signature re-baselines only when the tree was clean *before*
+  the op, so an Explorer copy racing a rename still gets its rescan — files
+  stay law), and the post-action refresh is a cache read that repaints in
+  place through the existing scroll anchor.
+- **The library listing never blocks on a rescan.** A changed tree used to
+  hold the whole screen behind "checking library…" while the walk ran. Now
+  the last-known library is served instantly (stamped `scanning`), the
+  rescan runs on a background thread with the slim progress strip over the
+  live tree, and a push refetches the settled cache — a ms-cheap in-place
+  repaint. The disk walk also moved outside the library lock, so edits made
+  mid-scan aren't held behind it; a tree that moved *during* the walk is
+  never stamped as current (the runner re-walks until its start and end
+  signatures agree). The one blocking case left is a library with nothing
+  to serve — virgin install, wiped cache, or a switched root, where showing
+  an empty or wrong-root tree would be a lie. A listing during an active
+  backup run serves the cache quietly and leaves the scanning to the run's
+  end, exactly like the watcher always has.
+- **Cold scans stream the library in as it's found.** The first-ever look at
+  a big tree (and any blocking scan) publishes each robot as the walk leaves
+  its folder — favorites first, re-read from their own folders ahead of the
+  walk — and the home screen renders the growing library under the progress
+  bar instead of a dead spinner. Entries only ever appear or grow during the
+  roll-out; nothing is dropped until the final merged result says so.
+- **The library is a details view now.** Rows became dense aligned columns —
+  name · ip · last backup · saved · cams · status — under a sticky column
+  header; every column sorts (saved and cams by count, status by severity —
+  missing, then partial, then never-backed-up, worst first), clicking the
+  same column again flips the direction (the caret says which way), and the
+  old chrome-bar sort button survives only in the cam lens, which has no
+  columns. Each
+  plant (and the ★ favorites strip, whose rows render exactly like tree rows
+  — plant/line context rides the tooltip) is ONE bordered, frostable panel;
+  the per-row card chrome, its per-row backdrop-filter, and the hairlines
+  between robots are gone (separators belong to the line headers, robot
+  names sized with them). The robot model came out of the labels — it lives
+  in the row tooltip and the edit modal; only the small pills that identify
+  cameras remain. Selection boxes are hand-drawn now (an SVG mask painted by
+  the theme, star-sized, honest tri-state: box · box+X · box+dash). Notes
+  keep their inline editor as a dim second line; a running pull swaps the
+  row's data cells for its live progress bar. Row layout is flex on shared
+  column widths, deliberately not grid — a viewport shows ~50% more rows and
+  grid track resolution measured ~4× a flex pass on the 2400-row perf probe
+  (its editor-open budget is re-baselined to the new density and says so).
+- **Robots fold their cameras.** Linked cameras collapse behind a caret that
+  sits with the row controls (right of the favorite star), while the cams
+  column counts them — a number and a small camera glyph. On a CAMERA row
+  that same column is its remote access point: an uncolored `remote` pill
+  straight into the live camera (Matrox web UI or CV-X screen mirror),
+  shown only when there is an IP to reach. The fold persists per robot, the
+  favorites strip honors the same fold, and a filter that matches a hidden
+  camera forces its robot open — a match never hides.
+  Camera rows gained a direct "link to robot…" action (the same picker the
+  edit modal uses, committing straight through the link endpoint), so
+  linking no longer requires the full edit form.
+- **"untaught positions" now catches `P[...]` too.** A motion line printed as
+  `P[...]` carries no position id at all, so it matched neither the numbered
+  `P[n]` reference nor the `P[R[..]]` indirect bucket — it slipped through
+  both nets and was reported nowhere. It is now a finding in its own right,
+  counted separately in the summary and listed with its line. A program that
+  prints `P[...]` while recording no positions whatsoever is counted
+  separately again — a listing written without position data is a different
+  story from one point never taught, and the app does not claim to know
+  which produced a given file.
+- **Findings read as evidence, not commentary.** Every row in the report is
+  now the program line itself (`line 254  J P[...] 100% CNT100`) instead of
+  a sentence explaining it — the section header already says what the
+  problem is. Caveats that apply to a whole robot are stated once in its
+  summary rather than repeated on every line.
+- **Two new fleet-scan checks: PAUSE and logic-on-continuous.** "PAUSE in
+  programs" flags live PAUSE instructions (remarked lines and MESSAGE texts
+  that merely say "pause" don't count). "logic on continuous" catches the
+  classic mid-flight mistake: a CNT-terminated motion whose next real
+  instruction is logic rather than another motion — outputs flip and clears
+  get checked while the robot is still moving. The forward scan sees through
+  comments, remarks and bare labels (a commented block can't hide the logic
+  behind it), register-driven CNT R[..] counts, logic riding on the motion
+  line itself doesn't, and a program that *ends* on a CNT flags too — the
+  blend carries out into whatever the caller does next.
+- **The scan report is a tree now.** Findings arrive structured, so a robot's
+  row expands into per-program groups with every line listed — the capped
+  "+8 more" text is gone, and so is the run-on detail sentence. Left-click
+  expands; every action moved to right-click: open this backup, ignore this
+  finding, ignore the flag, exclude program X from the scan (drops X's
+  findings across every robot in the report — one right-click cleans a
+  fleet-wide standard you don't care about), and add the program straight to
+  the edit workspace — right-clicking a section header offers all its
+  flagged programs at once. A program header carries both scopes: "ignore
+  these findings" hides that program's lines on that robot only, "exclude"
+  sweeps the fleet — across *every* section, so excluding a program drops
+  its remarked lines, its broken CALLs and its find hits in one action.
+  Ignores are view filters scoped to the open report: a "reset filters (N)"
+  chip brings everything back, filtering never moves the view (what's
+  expanded stays expanded, the scroll stays put), and every count follows —
+  the report header, each section header and each robot row all recount to
+  what is actually shown ("4 of 17 findings"), so a filtered report never
+  quotes its pre-filter numbers. "copy report" emits exactly that filtered
+  tree as clean indented text — paste beats a screenshot.
+- **A scan report is hard to lose now.** The scan dialog ignores stray
+  clicks outside it (✕ and Esc close it), and the finished report is written
+  to its own file in `%APPDATA%` — it survives closing the app, filters and
+  folds included. The scan picker grows a "last scan · 14:32" button that
+  reopens it instead of re-running minutes of work, and **"scan" no longer
+  greys out when nothing is selected**: with no robots picked the window
+  opens straight into the last report, because re-reading a finished scan
+  should not cost you a robot selection you did not want.
+- **The scan window is a list now, and it uses the screen.** It was a small
+  box whose content fought for room: every check spent three lines on a
+  description, categories sat in fixed grid cells (so a two-check category
+  reserved the height of the tallest one), and the whole thing still
+  scrolled. Now it is one plain list flowing across three columns —
+  one line per check, the description on hover — so every check fits on
+  screen at once under its category heading. The window is wider and sized
+  to sit centred rather than hanging off the bottom edge. Everything you act
+  with is stapled to the footer: the find box, the scan button and
+  "last scan" stay put no matter how the list scrolls, and the report's own
+  toolbar does the same.
+- **Two ways to copy a report.** "copy full" is the line-by-line version you
+  work from. **"copy list"** is the short one you paste to someone: a ruled
+  banner per check, then each robot with its finding count and just the
+  programs involved — no line detail. Both leave a blank line between robots
+  so the result reads as a list instead of a wall.
+- **Find programs across the whole library.** The edit workspace's working
+  set gained "find…": type a name or a piece of one (KEYPLC finds
+  S01KEYPLCTRG and S62KEYPLCTRG alike, * wildcards work), search every
+  robot's saved backup in one shot, and add the hits — grouped per robot,
+  pre-ticked — in bulk. The "same program on 22 robots" job is now search,
+  glance, add.
+- **Find/replace takes whole blocks now.** The find and replace boxes accept
+  multiple lines — paste a block (or press Enter) and the search goes
+  multi-line: a hit is the exact block wherever it occurs, shown as a line
+  range with how many lines it spans, and replacing swaps the whole block
+  for whatever you typed, growing or shrinking the program as needed.
+  Ctrl+F with a multi-line selection prefills a block search. Options that
+  cannot apply to a block (whole word, identity matching, the remark filter)
+  step aside while one is in the box.
+- **The find panel stays where you put your eyes.** The search box is
+  stapled to the top of the rail and the "N selected / M found" line with
+  its replace button to the bottom — a long hit list scrolls between them
+  instead of pushing either out of view. Search options and the replace box
+  fold behind a ▸ caret, closed by default, so a plain search spends one
+  row. If the replace box is folded away and empty, the replace button
+  reveals it instead of silently deleting every ticked match — deleting
+  takes a second, informed click.
+- **Remarks are shown by default, and the filter knows both spellings.**
+  "include ! remarks" (off, hiding them) became "exclude ! // remarks"
+  (off, showing everything): search results now include remarked-out lines
+  unless you ask to hide them, and hiding covers both the `!` remark and
+  the newer `//` comment line. The call navigator learned the same lesson —
+  a CALL on a `//` line calls nothing, so it is no longer listed.
+- **Alt+arrow moves lines.** Alt+↑/↓ in the editor moves the caret line —
+  or every line the selection touches — one line up or down, with the
+  caret and selection riding along so the gesture repeats. Each move is one
+  undo step.
+- **Quick copy shuttles code between programs.** A toolbar toggle: while it
+  is on, highlighting code in one editor copies it (mirrored to the system
+  clipboard when allowed), and the next highlight in a *different* program
+  replaces that highlight with the copy — or double-click an empty spot to
+  paste at the caret. The clip clears itself after every paste so a stray
+  gesture can never paste twice, esc drops an armed clip, and the flow is
+  symmetric: A→B and B→A are the same two gestures.
+- **A removed program can no longer be reopened from a stale rail row.**
+  Removing an entry through the state API while its rail row still stood
+  let a double-click resurrect a ghost tab over a buffer the workspace no
+  longer owned — edits into it went nowhere. Opening now refuses and
+  repaints the rail instead.
 - **Review your edits before they leave the tool.** A "review…" button beside
   export (and "review changes" on any program's ⋯ menu) shows original vs
   edited side by side — body lines aligned and highlighted, plus attribute

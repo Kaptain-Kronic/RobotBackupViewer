@@ -199,6 +199,8 @@
       document.documentElement.style.removeProperty("--app-zoom");
       /* accent panel borders on by default; "off" flattens the UI (see base.css .no-edges) */
       document.documentElement.classList.toggle("no-edges", settings.edges === false);
+      /* the chrome bars: frosted glass by default, opaque --bg when toggled off */
+      document.documentElement.classList.toggle("chrome-solid", settings.chrome_frost === false);
       /* frosted surfaces: 0/0 = the solid original. A pre-split `frost`
          value seeds opacity once, so an existing look carries over. */
       var op = settings.glass_op != null ? Number(settings.glass_op) : (Number(settings.frost) || 0);
@@ -249,6 +251,10 @@
         segRow(into, "borders", [true, false], s.edges !== false,
           function (v) { return v ? "on" : "off"; },
           function (v) { persist("edges", v); applyPrefs(); });
+        /* the top/bottom bars: frosted glass by default, opaque on request */
+        segRow(into, "frosted chrome", [true, false], s.chrome_frost !== false,
+          function (v) { return v ? "on" : "off"; },
+          function (v) { persist("chrome_frost", v); applyPrefs(); });
         sliderRow(into, "text size", FONT_MIN, FONT_MAX, 1, s.font_size || DEFAULT_FONT,
           function (v) { return v + "px"; },
           function (v) { persist("font_size", v); applyPrefs(); },
