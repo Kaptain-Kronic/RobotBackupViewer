@@ -210,86 +210,19 @@
         hero.innerHTML = "";
         if (!p) return;
 
-        /* left: the full image (a CV-X pair gets both layers + its slider) */
-        var figCol = BV.el("div", { style:
-          "flex:1 1 380px;min-width:280px;max-width:640px;display:flex;" +
-          "flex-direction:column;gap:0.45rem" });
-        var figure = BV.el("div", { style:
-          "background:var(--bg2);border:1px solid var(--sub-alt);border-radius:8px;" +
-          "overflow:hidden;display:flex;align-items:center;justify-content:center;" +
-          "min-height:220px" });
-        figure.style.cursor = "zoom-in";
-        var img = BV.el("img", { alt: BV.esc(p.name), style:
-          "max-width:100%;max-height:46vh;display:block;object-fit:contain" });
-        var curRel = "";
-        function showImage(rel) {
-          if (!rel) return;
-          curRel = rel;
-          loadImage(rel).then(function (uri) { img.src = uri; }).catch(function () {
-            figure.innerHTML = '<span class="dim">image unavailable</span>';
-          });
-        }
-
-        /* A CV-X stores every scene TWICE — a grayscale photo and a height map
-           of the same moment — so the two stack and the slider crossfades them.
-           The height layer is absolutely positioned over the base and both use
-           the same object-fit box, which keeps them registered at any size. */
-        var ov = p.overlay;
-        if (ov) {
-          var stack = BV.el("div", { style: "position:relative;line-height:0;max-width:100%" });
-          stack.appendChild(img);
-          var top = BV.el("img", { alt: "", style:
-            "position:absolute;inset:0;width:100%;height:100%;object-fit:contain;" +
-            "pointer-events:none" });
-          stack.appendChild(top);
-          figure.appendChild(stack);
-          showImage(ov.base);
-          loadImage(ov.top).then(function (uri) { top.src = uri; }).catch(function () {
-            /* a missing height half must SAY so — a live slider quietly
-               crossfading to nothing would read as "flat part", a claim */
-            top.style.opacity = "0";
-            slider.disabled = true;
-            readout.textContent = "height unavailable";
-          });
-
-          var mix = pst.mix === undefined ? 100 : Number(pst.mix);
-          top.style.opacity = String(mix / 100);
-          var slider = BV.el("input", { type: "range", min: "0", max: "100",
-            step: "1", value: String(mix), "aria-label": "height / greyscale mix" });
-          var readout = BV.el("span", { class: "range-val" }, mix + "%");
-          slider.addEventListener("input", function (e) {
-            var v = Number(e.target.value);
-            pst.mix = v;                      /* sticky across photos and tab returns */
-            top.style.opacity = String(v / 100);
-            readout.textContent = v + "%";
-          });
-          var row = BV.el("div", { style:
-            "display:flex;align-items:center;gap:0.5rem;font-size:0.78rem;color:var(--sub)" });
-          row.appendChild(BV.el("span", {}, BV.esc(ov.base_label || "photo")));
-          var sliderWrap = BV.el("div", { class: "range-wrap" });
-          sliderWrap.appendChild(slider);
-          sliderWrap.appendChild(readout);   /* .range-val is styled inside .range-wrap */
-          row.appendChild(sliderWrap);
-          row.appendChild(BV.el("span", {}, BV.esc(ov.top_label || "overlay")));
-          figCol.appendChild(figure);
-          figCol.appendChild(row);
-          figure.title = "click to view fullscreen";
-          figure.addEventListener("click", function () {
-            openFullscreen({ base: ov.base, top: ov.top, mix: Number(pst.mix === undefined ? 100 : pst.mix) });
-          });
-        } else {
-          figure.appendChild(img);
+        /* left: the full image — the shared figure component (a CV-X pair
+           gets both layers + its crossfade slider; components/photofigure.js) */
+        var fig = BV.photoFigure({ photo: p, load: loadImage, state: pst,
+          onOpen: openFullscreen });
+        if (!p.overlay) {
           /* filtered (annotated jpg) vs raw (clean png) is a sticky preference:
              picking raw survives changing photos and leaving the tab */
           var hasBothImgs = p.thumb && p.full && p.thumb !== p.full;
           var raw = pst.imgMode === "raw" && (hasBothImgs || !p.thumb);
-          showImage(raw ? p.full : (p.thumb || p.full));
-          figCol.appendChild(figure);
-          figure.title = "click to view fullscreen";
-          figure.addEventListener("click", function () { if (curRel) openFullscreen(curRel); });
+          fig.show(raw ? p.full : (p.thumb || p.full));
         }
-        hero.appendChild(figCol);
-        var hasBoth = !ov && p.thumb && p.full && p.thumb !== p.full;
+        hero.appendChild(fig);
+        var hasBoth = !p.overlay && p.thumb && p.full && p.thumb !== p.full;
 
         /* right: the parsed inspection report */
         var panel = BV.el("div", { style: "flex:1 1 300px;min-width:260px" });
@@ -329,7 +262,7 @@
           ], { value: pst.imgMode === "raw" ? "raw" : "boxes",
                onChange: function (id) {
                  pst.imgMode = id;   /* sticks across photo changes + tab returns */
-                 showImage(id === "raw" ? p.full : p.thumb);
+                 fig.show(id === "raw" ? p.full : p.thumb);
                } });
           ctrls.appendChild(viewSeg.el);
           panel.appendChild(ctrls);

@@ -51,6 +51,7 @@ PROBES = [
     "perf_probe.py",
     "ui_batch_probe.py",
     "ui_bgfx_probe.py",
+    "ui_cvx3d_probe.py",
     "ui_cvxremote_probe.py",
     "ui_edit_probe.py",
     "ui_fk_probe.py",

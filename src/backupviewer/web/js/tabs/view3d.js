@@ -849,6 +849,10 @@
   /* ---- tab ---- */
 
   function render(view, toolbar, params) {
+    /* cameras carry scanner CAD, not DCS - their 3d view lives in cvx3d.js */
+    if ((BV.state.manifest.backup_type || "").indexOf("camera") >= 0 && BV.cvx3d) {
+      return BV.cvx3d.render(view, toolbar, params);
+    }
     view.innerHTML = "";
     toolbar.innerHTML = "";
     Promise.all([
