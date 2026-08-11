@@ -47,6 +47,9 @@ log = logging.getLogger(__name__)
 _DCS_MAIN = "DCSVRFY.DG"
 _ENDIS = re.compile(r"\b(ENABLE|DISABLE)D?\b")
 _SXX = re.compile(r"^S\d{2}")
+# the MAIN programs the PLC launches through the style table: STYLE04,
+# STYLE61... S##-prefixed names are that style's subroutine kit, never mains
+_STYLE_MAIN = re.compile(r"^STYLE(\d+)$")
 _BLAL = re.compile(r"\bBLAL\b", re.I)
 
 # /MN instruction stream: numbered lines ("   5:J P[1]... ;") and the unnumbered
@@ -96,9 +99,11 @@ CHECKS = [
     {"id": "battery_alarm", "label": "low battery alarm", "category": "mastering",
      "desc": "a BLAL / SRVO-065 low-battery alarm in the alarm history — replace the batteries before mastering is lost"},
     {"id": "style_broken", "label": "style table broken", "category": "programs",
-     "desc": "a style points at a TP program that isn't in the backup"},
-    {"id": "style_orphans", "label": "unused S## programs", "category": "programs",
-     "desc": "S-number programs never reached from any style program's call tree"},
+     "desc": "a style row points at a program that isn't in the backup — or a STYLE-named"
+             " main sits in the backup with no style row (the PLC can't start it)"},
+    {"id": "style_orphans", "label": "S## subroutine discipline", "category": "programs",
+     "desc": "S## subs never reached from a style's call tree (dead style code), or reached"
+             " by the WRONG style — an S61 program inside STYLE04's tree"},
     {"id": "broken_calls", "label": "broken CALLs", "category": "programs",
      "desc": "programs CALLed or RUN but not in the backup (info — a partial backup type makes this normal)"},
     {"id": "remarked_positions", "label": "remarked positions", "category": "programs",
@@ -448,6 +453,12 @@ def _mast_vector(ctx: _RobotData) -> list | None:
 
 
 def _check_style_broken(ctx: _RobotData) -> dict:
+    """The style table checked in BOTH directions: a row pointing at a program
+    the backup doesn't have, and a STYLE-named main sitting in the backup with
+    no table row at all - the PLC starts styles through the table, so an
+    unlisted STYLE## exists but can never be launched. A disabled row still
+    claims its program (parked deliberately, not missing), and S## kit
+    subroutines are the discipline check's business, never this one's."""
     table = ctx.styles()
     if table is None:
         return _na("no style table (CELLIO/SYSTEM.VA)")
@@ -458,17 +469,28 @@ def _check_style_broken(ctx: _RobotData) -> dict:
     # disabled fleet-wide), so it rides along as detail, never a flag
     live = [t for t in missing if t.get("enabled", True)]
     parked = len(missing) - len(live)
-    if live:
-        caps = [f"style {t['style']} → {t['program']}" for t in live]
-        return {"status": "flag",
-                "summary": f"{len(live)} enabled style{'s' if len(live) != 1 else ''}"
-                           " point at missing programs",
+    listed = {t.get("program", "").upper() for t in table if t.get("program")}
+    unlisted = sorted(p for p in texts if _STYLE_MAIN.match(p) and p not in listed)
+    if live or unlisted:
+        parts, caps, items = [], [], []
+        if live:
+            parts.append(f"{len(live)} enabled style{'s point' if len(live) != 1 else ' points'}"
+                         " at missing programs")
+            caps += [f"style {t['style']} → {t['program']}" for t in live]
+            # the MISSING program is the finding's subject - excluding a
+            # name the plant knowingly does not ship cuts it fleet-wide
+            items += [{"prog": t["program"], "text": f"style {t['style']}"}
+                      for t in live]
+        if unlisted:
+            parts.append(f"{len(unlisted)} STYLE program{'s' if len(unlisted) != 1 else ''}"
+                         " not in the style table")
+            caps += [f"{p} — in the backup, no style row" for p in unlisted]
+            items += [{"prog": p, "text": "in the backup, no style row"}
+                      for p in unlisted]
+        return {"status": "flag", "summary": " · ".join(parts),
                 "detail": _cap(caps) +
                           (f" (+{parked} disabled slots missing theirs)" if parked else ""),
-                # the MISSING program is the finding's subject - excluding a
-                # name the plant knowingly does not ship cuts it fleet-wide
-                "items": [{"prog": t["program"], "text": f"style {t['style']}"}
-                          for t in live]}
+                "items": items}
     if parked:
         return {"status": "ok", "summary": "all enabled style programs present",
                 "detail": f"{parked} disabled placeholder style(s) point at absent programs: " +
@@ -477,28 +499,64 @@ def _check_style_broken(ctx: _RobotData) -> dict:
 
 
 def _check_style_orphans(ctx: _RobotData) -> dict:
+    """The S## subroutine discipline: S04* is STYLE04's kit - one model of
+    car runs style 04, its main calls its own subs. Two rules fall out:
+    every S## program should be reached from a style's call tree (uncalled =
+    dead style code, info), and the numbers must agree - an S61 subroutine
+    inside STYLE04's tree runs the wrong model's process (flag). Each walk
+    STOPS at a foreign STYLE main: styles chain (04 calls 05 when it
+    finishes), and the next style owns its own subroutines. Roots are the
+    table's programs plus every STYLE-named main; loadouts that don't name
+    mains STYLE## simply keep the table-rooted reachability and can never
+    produce a wrong-style finding."""
     table = ctx.styles()
     if table is None:
         return _na("no style table (CELLIO/SYSTEM.VA)")
     texts = ctx.program_texts()
     graph = ctx.call_graph()
-    # everything reachable from the style roots, CALL/RUN/macro edges alike
-    todo = [t["program"].upper() for t in table if t.get("program", "").upper() in texts]
-    reach = set(todo)
-    while todo:
-        prog = todo.pop()
-        for e in graph["calls"].get(prog, []):
-            tgt = e.get("target", "").upper()
-            if tgt and tgt not in reach:
-                reach.add(tgt)
+    roots = [t["program"].upper() for t in table if t.get("program", "").upper() in texts]
+    roots += [p for p in sorted(texts) if _STYLE_MAIN.match(p) and p not in roots]
+
+    reach: set = set()
+    wrong: dict = {}          # (root, sub) -> the caller that pulled it in
+    for root in roots:
+        m = _STYLE_MAIN.match(root)
+        want = m.group(1) if m else None     # "04" as written in the name
+        seen, todo = {root}, [root]
+        while todo:
+            cur = todo.pop()
+            for e in graph["calls"].get(cur, []):
+                tgt = (e.get("target") or "").upper()
+                if not tgt or tgt in seen:
+                    continue
+                if _STYLE_MAIN.match(tgt):
+                    continue                 # the chained style owns its tree
+                seen.add(tgt)
                 todo.append(tgt)
+                # digit-prefix match, not equality: S042DMTX1 is 04's sub
+                if (want and tgt in texts and _SXX.match(tgt)
+                        and not tgt[1:].startswith(want)):
+                    wrong.setdefault((root, tgt), cur)
+        reach |= seen
     orphans = sorted(p for p in texts if _SXX.match(p) and p not in reach)
-    if orphans:
-        return {"status": "info",
-                "summary": f"{len(orphans)} S## programs never reached from a style",
-                "detail": _cap(orphans, 12),
-                "items": [{"prog": p, "text": ""} for p in orphans]}
-    return {"status": "ok", "summary": "every S## program is reachable"}
+    if wrong or orphans:
+        parts, caps, items = [], [], []
+        if wrong:
+            parts.append(f"{len(wrong)} wrong-style sub{'s' if len(wrong) != 1 else ''}")
+            for (root, sub), via in sorted(wrong.items()):
+                where = f"reached from {root}" + (f" via {via}" if via != root else "")
+                caps.append(f"{sub} — {where}")
+                items.append({"prog": sub, "text": where})
+        if orphans:
+            parts.append(f"{len(orphans)} S## program{'s' if len(orphans) != 1 else ''}"
+                         " never reached from a style")
+            caps += orphans
+            items += [{"prog": p, "text": ""} for p in orphans]
+        return {"status": "flag" if wrong else "info",
+                "summary": " · ".join(parts),
+                "detail": _cap(caps, 12),
+                "items": items}
+    return {"status": "ok", "summary": "every S## program is reachable, styles matching"}
 
 
 def _check_broken_calls(ctx: _RobotData) -> dict:
@@ -891,14 +949,19 @@ def _check_override(ctx: _RobotData) -> dict:
 
 
 def _fmt_secs(s: float) -> str:
+    """Unit cascade, largest first, zero units skipped: a clock years off must
+    read '15Y 11M 28D 8H', never '140000h' — and a few minutes stays a plain
+    '7m'. Y=365d / M=30d are display approximations only; the detail line
+    beside every drift carries both exact stamps, so the truth is one glance
+    away. Zero in, '0s' out."""
     s = int(round(abs(s)))
-    if s < 60:
-        return f"{s}s"
-    m, sec = divmod(s, 60)
-    if m < 60:
-        return f"{m}m{sec}s" if sec else f"{m}m"
-    h, m = divmod(m, 60)
-    return f"{h}h{m}m" if m else f"{h}h"
+    parts = []
+    for tag, span in (("Y", 31536000), ("M", 2592000), ("D", 86400),
+                      ("H", 3600), ("m", 60), ("s", 1)):
+        n, s = divmod(s, span)
+        if n:
+            parts.append(f"{n}{tag}")
+    return " ".join(parts) if parts else "0s"
 
 
 def _parse_tolerance(raw, default_s: int = 120) -> tuple[int, bool]:

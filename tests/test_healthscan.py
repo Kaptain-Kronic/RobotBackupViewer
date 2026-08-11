@@ -11,7 +11,8 @@ from backupviewer.healthscan import (
     _check_mastering, _check_override, _check_pause, _check_payload,
     _check_remarked_logic, _check_remarked_positions, _check_sigs,
     _check_style_broken, _check_style_orphans, _check_sw_version,
-    _check_uninit_points, _check_uninit_prs, _parse_tolerance, norm_queries,
+    _check_uninit_points, _check_uninit_prs, _fmt_secs, _parse_tolerance,
+    norm_queries,
 )
 
 # -- fixture texts (formats validated against the real parsers) -------------------
@@ -381,12 +382,30 @@ def test_style_checks(tmp_path):
     broken = _check_style_broken(ctx)
     assert broken["status"] == "flag"
     assert "S05GONE" in broken["detail"]          # style 2 points at a missing program
+    # S## kit subs are the discipline check's business - never this flag
+    assert "S05DEAD" not in broken["detail"]
+
+    # the REVERSE direction: a STYLE-named main the table never lists - the
+    # PLC launches styles through the table, so this one can never start
+    rogue = progs + [_prog(tmp_path, "STYLE07", ["CALL S07GRIP"]),
+                     _prog(tmp_path, "S07GRIP", ["! leaf"])]
+    b2 = _check_style_broken(_RobotData(
+        FakeSession({"CELLIO.VA": CELLIO}, program_files=rogue)))
+    assert b2["status"] == "flag"
+    assert "STYLE07" in b2["detail"] and "not in the style table" in b2["summary"]
+    assert {"prog": "STYLE07", "text": "in the backup, no style row"} in b2["items"]
 
     # disabled style with its program absent = placeholder, never a flag
     parked = _check_style_broken(_RobotData(
         FakeSession({"CELLIO.VA": CELLIO_PARKED}, program_files=progs)))
     assert parked["status"] == "ok"
     assert "MOVREPR2" in parked["detail"]
+    # a STYLE main only a DISABLED row references is still IN the table -
+    # parked deliberately, never the unlisted flag
+    quiet = _check_style_broken(_RobotData(FakeSession(
+        {"CELLIO.VA": CELLIO_PARKED.replace("MOVREPR2", "STYLE09")},
+        program_files=progs + [_prog(tmp_path, "STYLE09", ["! parked"])])))
+    assert quiet["status"] == "ok"
     orph = _check_style_orphans(ctx)
     assert orph["status"] == "info"
     assert "S05DEAD" in orph["detail"]
@@ -394,6 +413,35 @@ def test_style_checks(tmp_path):
     assert "UTIL9" not in orph["detail"]          # not an S## program
     # no style table at all -> n/a, never a guess
     assert _check_style_orphans(_RobotData(FakeSession({})))["status"] == "na"
+
+
+def test_style_discipline(tmp_path):
+    """The STYLE##-main model: S04* is STYLE04's kit, chains stop the walk,
+    and a wrong-number sub inside a style's tree is the flag."""
+    progs = [
+        _prog(tmp_path, "STYLE04", ["CALL S04MAIN", "CALL STYLE05"]),  # chains 05
+        _prog(tmp_path, "S04MAIN", ["CALL S042GRIP", "CALL S61ROGUE", "CALL UTIL9"]),
+        _prog(tmp_path, "S042GRIP", ["! S04 kit - digit-led suffix"]),
+        _prog(tmp_path, "S61ROGUE", ["! the wrong model's sub"]),
+        _prog(tmp_path, "STYLE05", ["CALL S05STEP"]),
+        _prog(tmp_path, "S05STEP", ["! style 05's own sub"]),
+        _prog(tmp_path, "UTIL9", ["CALL S04TAIL"]),   # walks pass through utils
+        _prog(tmp_path, "S04TAIL", ["! leaf"]),
+        _prog(tmp_path, "S99DEAD", ["! unreached"]),
+    ]
+    d = _check_style_orphans(_RobotData(
+        FakeSession({"CELLIO.VA": CELLIO}, program_files=progs)))
+    assert d["status"] == "flag"                      # wrong-style outranks dead code
+    assert "S61ROGUE — reached from STYLE04 via S04MAIN" in d["detail"]
+    assert {"prog": "S61ROGUE", "text": "reached from STYLE04 via S04MAIN"} in d["items"]
+    # number match is a digit-PREFIX: S042GRIP is style 04's kit, not style 42's
+    assert "S042GRIP" not in d["detail"]
+    # the walk passes through utils but STOPS at a chained STYLE: 05's subs
+    # belong to 05, and S04TAIL is still 04's own through UTIL9
+    assert "S05STEP" not in d["detail"]
+    assert "S04TAIL" not in d["detail"]
+    assert "S99DEAD" in d["detail"]                   # dead style code still listed
+    assert "wrong-style" in d["summary"] and "never reached" in d["summary"]
 
 
 # -- the job ------------------------------------------------------------------------
@@ -878,6 +926,17 @@ def test_parse_tolerance():
     assert _parse_tolerance(None) == (120, False)
 
 
+def test_fmt_secs_unit_cascade():
+    # largest unit first, zero units skipped — the YY/MM/DD/HH/mm/ss condense
+    # (Y=365d, M=30d display approximations; sign belongs to the caller)
+    assert _fmt_secs(0) == "0s"
+    assert _fmt_secs(7 * 60) == "7m"                   # a few minutes stays plain
+    assert _fmt_secs(-(7 * 60)) == "7m"
+    assert _fmt_secs(2 * 2592000 + 4 * 86400 + 10 * 3600 + 43 * 60 + 12) \
+        == "2M 4D 10H 43m 12s"
+    assert _fmt_secs(140000 * 3600) == "15Y 11M 28D 8H"    # the 140,000-hour robot
+
+
 def _clock_session(tmp_path, name, content, controller_dt, offset_s):
     """A session whose file mtime sits offset_s seconds BEFORE the controller
     stamp inside it - i.e. the controller runs offset_s ahead of the PC."""
@@ -905,7 +964,15 @@ def test_clock_drift(tmp_path):
     behind = _check_clock(_RobotData(
         _clock_session(tmp_path, "BACKDATE.DT", BACKDATE, ctrl, -400)), "5m")
     assert behind["status"] == "flag"
-    assert "off by -6m40s" in behind["summary"]
+    assert "off by -6m 40s" in behind["summary"]
+
+    # a clock YEARS off condenses to the unit cascade, never a wall of hours;
+    # the dead-RTC / copied-folder note rides along past 30 days
+    years = _check_clock(_RobotData(
+        _clock_session(tmp_path, "BACKDATE.DT", BACKDATE, ctrl, 140000 * 3600)))
+    assert years["status"] == "flag"
+    assert "off by +15Y 11M 28D 8H" in years["summary"]
+    assert "dead RTC battery" in years["detail"]
 
     # no BACKDATE.DT: the DG head carries the stamp at minute resolution
     dg = _check_clock(_RobotData(_clock_session(
