@@ -198,6 +198,27 @@ one click backs up the robot + all its cameras together.
   `TDM_L` matching templates stay an honest info card; that encoding is still
   unreversed. WebGL still parked; canvas 2d works under software rendering.
 
+- ✅ **CV-X inspection logic: the scripts and the names decode** (landed on
+  `cvx-camera-tabs`, 2026-08-11) — `inspect.dat` is an `ST` container that is
+  ~98 % zlib blocks, stored as a working + recovery copy; inside, two regions
+  are self-describing text. The **calculation scripts** a technician wrote come
+  out as plain ASCII in the CV-X's own expression grammar (`@local`, `ANSn`,
+  `IF/ELSEIF…THEN/ENDIF`, `Tnnn.RSLT.<MNEMONIC>[i]:MS`), and the **tool names**
+  come out of a length-prefixed language table (`(u32 lang, u32 len, bytes)`,
+  ascending indices, slot 1 = English). Read off real cameras plus a controlled
+  experiment in the vendor's simulator; parser `parsers/cvx_program.py`, surface
+  the camera **logic** tab.
+  **What this does NOT solve, so nobody assumes it:** (1) **per-tool mapping** —
+  no tool number or type code has been found beside a name record, and no owner
+  field beside a script, so names are a list and never "tool 5"; (2) a
+  technician's names and the vendor's built-in tool-type vocabulary are
+  indistinguishable in-file, so both are shown together; (3) the **parameter
+  slots** (float64 at an offset 6 mod 8 with a ~1e12 "unset" sentinel) are
+  unmapped — exactly one was located by experiment, so a camera's *settings*
+  remain unread and nothing numeric is surfaced. The route for (3) is the same
+  experiment repeated one setting at a time; see `docs/subsystems/parsing.md`
+  §8 items 10–11.
+
 - 🔨 **Discovery** — agreed direction: probe the DesignAssistant web portal
   (:80/:443) and EtherNet/IP ListIdentity (UDP 44818, Matrox vendor ID) for
   the newer Iris GTX — the old FTP/SMB port gates only find Keyence CV-X and

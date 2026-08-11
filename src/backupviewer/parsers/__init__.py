@@ -25,6 +25,8 @@ TAB_REQUIREMENTS = {
     # instead shows the backup's 3D model blobs ("*cvx3d" = vouched CV-X model
     # containers present - special-cased by BackupSession)
     "view3d": ["DCSPOS.VA", "DCSVRFY.DG", "*cvx3d"],
+    # a keyence camera's inspection programs: tool names + calculation logic
+    "logic": ["*cvxlogic"],
     "sysvars": ["SYSTEM.VA"],
     "mhvalves": ["MHGRIPDT.VA"],
     # matrox camera: lights up when the backup carries saved inspection photos

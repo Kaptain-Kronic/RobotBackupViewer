@@ -23,7 +23,7 @@ batch lands, or with `--check` to hear about drift).
 > When per-subsystem docs land, they supersede this file for their own area. This
 > map's remaining job is breadth: what exists, and where.
 
-**Scope.** 259 files / ~74,282 lines. Covers everything in the working tree except: the
+**Scope.** 262 files / ~75,466 lines. Covers everything in the working tree except: the
 `.git` internals, build outputs (`dist/`, `build/`, `__pycache__/`), the private
 `SampleBackup/` fixture tree, the `.rmd` model corpus (61 binary robot-model blobs
 that are input data, not source), and the two local-only real-plant reference files
@@ -43,27 +43,27 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 |---|---|---|---|---|
 | `.gitignore` | 21 | ignore rules for pycache/build/dist plus the local-only sample backup, real ip list and diag folders | build/config | active |
 | `build_exe.log` | 106 | pyinstaller transcript of one successful onefile build on store python 3.13 with pyinstaller 6.20 *(untracked, local-only)* | build/config | generated |
-| `CHANGELOG.md` | 1164 | prose changelog newest-first: a large unreleased section over v1.4 back to v0.1, feature by feature | docs | active |
+| `CHANGELOG.md` | 1187 | prose changelog newest-first: a large unreleased section over v1.4 back to v0.1, feature by feature | docs | active |
 | `CLAUDE.md` | 273 | the build contract: locked stack, layer map, composition/honesty rules and the plant-identifier firewall | docs | active |
-| `CVX_FTP_LAYOUT.md` | 70 | field notes on the cv-x ftp tree and simulator workspace layout, and what env.dat cannot prove | docs | active |
+| `CVX_FTP_LAYOUT.md` | 108 | field notes on the cv-x ftp tree and simulator workspace layout, and what env.dat cannot prove | docs | active |
 | `LICENSE` | 620 | verbatim gnu gpl v3 license text, the license the readme points at | docs | vendored |
 | `pyproject.toml` | 31 | project metadata (v1.4, pywebview), the pytest pythonpath=src a fresh clone needs to collect tests, and the `probe` marker + `addopts` that keep the default run fast | build/config | active |
 | `README.md` | 255 | public readme: feature tour, tab-to-source-file table, run/package/test commands, theme json shape | docs | active |
-| `ROADMAP.md` | 304 | lane-claiming roadmap: shipped/building/decided/open items per subsystem, plus the 2.0 editing principles | docs | active |
+| `ROADMAP.md` | 325 | lane-claiming roadmap: shipped/building/decided/open items per subsystem, plus the 2.0 editing principles | docs | active |
 | `run.py` | 10 | dev launcher and pyinstaller entry script: puts src on sys.path, calls backupviewer.app.main | build/config | active |
 | `run_libraryimporter.py` | 10 | dev launcher and pyinstaller entry script for the companion libraryimporter app | LibraryImporter | active |
-| `docs/INVENTORY.md` | 627 | this file: dated file-level map of the repo plus the findings from the phase-1 documentation pass, with resolved items marked inline | docs | active |
+| `docs/INVENTORY.md` | 630 | this file: dated file-level map of the repo plus the findings from the phase-1 documentation pass, with resolved items marked inline | docs | active |
 | `docs/proposals/home-split.md` | 284 | investigation of tabs/home.js (2,277 lines) by responsibility, where the real seams are, what must become shared components first, and a phased sequence — no code changed | docs | active |
 | `docs/subsystems/3d-viewer.md` | 560 | subsystem doc #3 (the 3D viewer): the pendant-proven FK solve and its JS twin, the 228-type table's validated-vs-not honesty, flange residuals re-measured on the pins, the zone degradation ladder, and the unprobed-viewport gap said plainly | docs | active |
 | `docs/subsystems/backup-capture.md` | 656 | subsystem doc #2 (the backup/discovery jobs + shared plumbing): transport ground truth tagged live-run-vs-assumed, the gentle-with-equipment invariants, a dedicated failure-modes section, and the batch-flow coverage gap said plainly | docs | active |
-| `docs/subsystems/parsing.md` | 572 | subsystem doc #1 (parsers/ + session.py): ground truth marked verified-vs-assumed per fact, cross-file invariants, paid-for traps, honest coverage gaps — and the template later subsystem docs follow | docs | active |
+| `docs/subsystems/parsing.md` | 616 | subsystem doc #1 (parsers/ + session.py): ground truth marked verified-vs-assumed per fact, cross-file invariants, paid-for traps, honest coverage gaps — and the template later subsystem docs follow | docs | active |
 | `docs/subsystems/remote-mobile.md` | 615 | subsystem doc #4 (CV-X/Matrox remotes + phone view): the reverse-engineered CV-X wire protocol whose reference client is gone, the vendor-reflected mouse enum, the only listening socket's trust posture, and the app's one UAC elevation | docs | active |
 | `packaging/backupviewer.ico` | *75 KB* | multi-resolution app icon embedded in the exe and inherited by the pywebview window | build/config | active |
 | `packaging/backupviewer.spec` | 58 | pyinstaller onefile spec: bundles web/ and cvx_handshake/, edgechromium hidden imports, excludes paramiko | build/config | active |
 | `packaging/libraryimporter.spec` | 41 | pyinstaller onefile spec for libraryimporter.exe, bundling src/libraryimporter/web, no icon | build/config | active |
 | `src/backupviewer/__init__.py` | 1 | package marker holding the single source of the app version string (1.4) | shared/infra | active |
 | `src/backupviewer/__main__.py` | 6 | python -m backupviewer entry point delegating to app.main | shared/infra | active |
-| `src/backupviewer/api.py` | 4106 | the pywebview bridge class: 117 @_endpoint methods returning {ok,data} envelopes across every feature area | shared/infra | active |
+| `src/backupviewer/api.py` | 4173 | the pywebview bridge class: 117 @_endpoint methods returning {ok,data} envelopes across every feature area | shared/infra | active |
 | `src/backupviewer/app.py` | 251 | window boot: arg parsing, resource_path, pywebview window, and the one-shot webview2 failure rescue relaunch | shared/infra | active |
 | `src/backupviewer/backuplog.py` | 144 | durable backup-run log in %appdata%: per-run job rows, retry attempt counting, failed-spec list, never a password | backup capture | active |
 | `src/backupviewer/compare.py` | 527 | pure two-backup diff functions: io/registers/frames/payloads/programs rows plus tp-line alignment | compare engine | active |
@@ -80,7 +80,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/library.py` | 1586 | persistent robot library in %appdata%: folder-tree-as-truth scan, robot.json sidecars, rename/merge/relocate | library | active |
 | `src/backupviewer/modeldb.py` | 151 | robot-kinematics registry merging the built-in table under roboguide .def imports, with strict type matching | 3D viewer | active |
 | `src/backupviewer/mtxbackup.py` | 470 | matrox camera backup job over smb: wnet+credential login, da tree and newest images copy, probe and naming | cameras | active |
-| `src/backupviewer/parsers/__init__.py` | 34 | parsers package init holding TAB_REQUIREMENTS, the map of which backup files make each ui tab available | backup parsing | active |
+| `src/backupviewer/parsers/__init__.py` | 36 | parsers package init holding TAB_REQUIREMENTS, the map of which backup files make each ui tab available | backup parsing | active |
 | `src/backupviewer/parsers/alarms.py` | 75 | parses ERRALL/ERRACT/ERRHIST .LS alarm history into seq/datetime/code/severity rows plus unparsed lines | backup parsing | active |
 | `src/backupviewer/parsers/callgraph.py` | 114 | extracts CALL/RUN/macro edges from .LS bodies into a call graph plus per-line clickable jump hops | backup parsing | active |
 | `src/backupviewer/parsers/common.py` | 61 | shared parsing helpers: cp1252 read_text, binary sniff, scalar coercion, fanuc two-digit date/time | backup parsing | active |
@@ -88,6 +88,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/parsers/cvx_image.py` | 303 | decodes keyence cv-x setting .bmp files: 8-bpp intensity photo or 24-bpp packed 15-bit height, to rgba | cameras | active |
 | `src/backupviewer/parsers/cvx_inspect.py` | 96 | reads the inspection program name from a cv-x inspect.dat (two copies must agree) and elects a camera name | cameras | active |
 | `src/backupviewer/parsers/cvx_models.py` | 489 | decodes cv-x 3d-pick model containers: zlib-wrapped stl facets (part cad / workspace scans), robot identity, hand-eye calibration records | cameras | active |
+| `src/backupviewer/parsers/cvx_program.py` | 230 | reads a cv-x inspection program out of inspect.dat: the zlib block container (working+recovery folded to one), the tool-name language table and the technician's calculation scripts | cameras | active |
 | `src/backupviewer/parsers/dcs.py` | 576 | parses DCSVRFY/DCSCHGD/DCSDIFF .DG verify reports into classified sections, signatures and ok/chgd/ng counts | backup parsing | active |
 | `src/backupviewer/parsers/dcszones.py` | 627 | builds the 3d zone payload from DCSPOS.VA shadow tables plus the DCSVRFY.DG report: zones, frames, user models | 3D viewer | active |
 | `src/backupviewer/parsers/frames.py` | 77 | builds the tool/jog/uframe model from SYSFRAME.VA positions, FRAMEVAR.VA comments and active frame numbers | backup parsing | active |
@@ -113,14 +114,14 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/qr.py` | 264 | hand-rolled qr encoder (byte mode, ec level l, versions 1-5) returning a 0/1 module matrix | remote/mobile | active |
 | `src/backupviewer/screengrab.py` | 159 | windows bitblt capture of a named window's client area, dpi-aware, encoded to png with ctypes+zlib | remote/mobile | active |
 | `src/backupviewer/search.py` | 134 | backup-wide search: type[n] signal queries vs free text across programs, io, registers, frames, macros, filenames | backup parsing | active |
-| `src/backupviewer/session.py` | 462 | BackupSession: recursive case-insensitive file index, lazy parse cache, ls/karel classify, backup-type sniff | backup parsing | active |
+| `src/backupviewer/session.py` | 491 | BackupSession: recursive case-insensitive file index, lazy parse cache, ls/karel classify, backup-type sniff | backup parsing | active |
 | `src/backupviewer/settings.py` | 103 | settings.json under %appdata% with atomic locked writes, plus app_dir, library_root, sim_root and logging setup | shared/infra | active |
 | `src/backupviewer/updatecheck.py` | 109 | github releases/latest check with version compare and a policy that only lets the frozen exe auto-check | shared/infra | active |
 | `src/backupviewer/web/css/base.css` | 531 | root css: theme variable contract (--bg/--accent/--edge/--panel), app shell layout, chrome bars, bgfx layers | theming | active |
 | `src/backupviewer/web/css/components.css` | 2296 | the app's single component stylesheet: cards, tables, pills, modals, plus per-tab styles for every subsystem | theming | active |
 | `src/backupviewer/web/fonts/Orbitron-VariableFont_wght.ttf` | *38 KB* | bundled orbitron variable font, loaded by base.css @font-face and offered as the 'rog' ui font in settings | theming | vendored |
-| `src/backupviewer/web/index.html` | 147 | the single page: the two chrome rows (topbar with the screens button, per-screen toolbar), #view, jobstrip, statusbar, and the ordered script list | shared/infra | active |
-| `src/backupviewer/web/js/api.js` | 143 | promise wrapper over the pywebview bridge: {ok,data} envelope, solo/cvx-window sid injection, slow-call dedupe | shared/infra | active |
+| `src/backupviewer/web/index.html` | 148 | the single page: the two chrome rows (topbar with the screens button, per-screen toolbar), #view, jobstrip, statusbar, and the ordered script list | shared/infra | active |
+| `src/backupviewer/web/js/api.js` | 148 | promise wrapper over the pywebview bridge: {ok,data} envelope, solo/cvx-window sid injection, slow-call dedupe | shared/infra | active |
 | `src/backupviewer/web/js/bgfx.js` | 2080 | canvas/css background-effects engine: 18 themed looks (16 canvas) with global and per-effect sliders | theming | active |
 | `src/backupviewer/web/js/components/backuptabs.js` | 240 | BV.session plus the #sessionbar browser-style backup tab strip: switch, close, reorder, pop out, tear off; the active tab is the breadcrumb hosting the screens menu | shared/infra | active |
 | `src/backupviewer/web/js/components/builders.js` | 84 | BV.kv / BV.card / BV.hero: dom builders for key-value lists, the card shell and the identity hero line | shared/infra | active |
@@ -163,6 +164,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/web/js/tabs/frames.js` | 250 | frames tab: pendant-style tool/uframe/jog/payload cards per motion group, with show-empty and vs mode | backup parsing | active |
 | `src/backupviewer/web/js/tabs/home.js` | 2642 | the #home library screen: plant/line/robot tree, per-row actions, batch ftp backup, discover, cam tiles | library | active |
 | `src/backupviewer/web/js/tabs/io.js` | 336 | io tab: pendant-style signal browser by category, in/out panes, rack/slot/port config view, vs mode | backup parsing | active |
+| `src/backupviewer/web/js/tabs/logic.js` | 262 | logic tab: a cv-x program's calculation scripts as code beside the names present in it, with what the format does not prove said on screen | cameras | active |
 | `src/backupviewer/web/js/tabs/macros.js` | 113 | macro table (name, program, assignment) rendered inside the programs tab, with side-by-side vs mode | backup parsing | active |
 | `src/backupviewer/web/js/tabs/mhvalves.js` | 227 | mh valves tab: gripper/valve setup cards from MHGRIPDT.VA with resolved io links, magnet section, full tree | backup parsing | active |
 | `src/backupviewer/web/js/tabs/overview.js` | 834 | overview dashboard: hero plus draggable persisted cards (mastering, memory, ethernet, tasks) + date picker | backup parsing | active |
@@ -204,6 +206,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/test_cvx_image.py` | 281 | pytest for the cv-x bmp decoder: 15-bit height packing, no-data sentinel, pairing, and the photos endpoint | tests | active |
 | `tests/test_cvx_inspect.py` | 162 | pytest for reading a cv-x camera's own name out of inspect.dat and teaching it into the library | tests | active |
 | `tests/test_cvx_models.py` | 691 | pytest for the cv-x model decoder: containers, zlib-stl gate, calibration self-validation, and the models/export endpoints | tests | active |
+| `tests/test_cvx_program.py` | 459 | pytest for the cv-x inspection-program reader: st-magic gate, recovery-copy fold, name-table and script-grammar refusals, plus the logic tab requirement and the cvx_logic endpoint | tests | active |
 | `tests/test_cvx_remote.py` | 417 | pytest for the cv-x remote wire protocol: framing, ctx echo, jpeg harvest, frame-ack, mouse encode and reorder, plus the firewall assertion that the bundled handshake blobs carry only documentation addresses | tests | active |
 | `tests/test_cvx_window.py` | 266 | pytest for cv-x remote session lifecycle at the api: adopt, reload, pop-out window, host-window fullscreen | tests | active |
 | `tests/test_dcs.py` | 173 | pytest for parse_dcs_report over real DCSVRFY/DCSCHGD dumps: sections, signatures, frames, user models *(untracked, local-only)* | tests | active |
@@ -280,14 +283,14 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 
 | subsystem | files | ~lines |
 |---|---:|---:|
-| tests | 73 | 20,863 |
-| shared/infra | 27 | 8,271 |
-| docs | 12 | 6,000 |
+| tests | 74 | 21,322 |
+| shared/infra | 27 | 8,344 |
+| docs | 12 | 6,129 |
 | theming | 34 | 5,934 |
-| backup parsing | 31 | 5,827 |
+| backup parsing | 31 | 5,858 |
 | program editor | 5 | 4,929 |
 | library | 4 | 4,736 |
-| cameras | 13 | 3,931 |
+| cameras | 15 | 4,423 |
 | 3D viewer | 16 | 3,836 |
 | flag scanning | 2 | 2,080 |
 | remote/mobile | 10 | 2,032 |
@@ -296,7 +299,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | compare engine | 5 | 1,355 |
 | tools/scripts | 5 | 1,087 |
 | build/config | 7 | 267 |
-| **total** | **259** | **74,282** |
+| **total** | **262** | **75,466** |
 
 > Counts are by *primary* subsystem only — a file appears once, so these add up to the
 > whole repo. The `tests` row is the largest because every probe and unit suite counts as

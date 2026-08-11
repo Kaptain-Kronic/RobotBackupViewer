@@ -7,13 +7,16 @@ commit is the reference. §5 invariant 10, §7 Coverage and §8 items 1–2 upda
 §2, §7 and the CV-X facts updated 2026-08-10 with the `cvx_models` parser
 (the cvx-camera-tabs slice); the CV-X facts updated again later that day, same
 slice, when `raw_facets` decoded the HND gripper mesh and then the RMD
-robot arm that shares its encoding.*
+robot arm that shares its encoding. §2, §4 and §8 updated 2026-08-11, same
+slice, with `cvx_program` — the `inspect.dat` reader behind the camera **logic**
+tab: the container shape, the tool-name language table, the calculation
+scripts, and the three things that pass could not prove.*
 
 Covers: src/backupviewer/session.py, src/backupviewer/parsers/__init__.py,
 src/backupviewer/parsers/alarms.py, src/backupviewer/parsers/callgraph.py,
 src/backupviewer/parsers/common.py, src/backupviewer/parsers/curpos.py,
 src/backupviewer/parsers/cvx_image.py, src/backupviewer/parsers/cvx_inspect.py,
-src/backupviewer/parsers/cvx_models.py,
+src/backupviewer/parsers/cvx_models.py, src/backupviewer/parsers/cvx_program.py,
 src/backupviewer/parsers/dcs.py, src/backupviewer/parsers/dcszones.py,
 src/backupviewer/parsers/frames.py, src/backupviewer/parsers/gmwizlog.py,
 src/backupviewer/parsers/io_dg.py, src/backupviewer/parsers/kinematics.py,
@@ -25,7 +28,7 @@ src/backupviewer/parsers/payloads.py, src/backupviewer/parsers/registers.py,
 src/backupviewer/parsers/roboguidedef.py, src/backupviewer/parsers/styles.py,
 src/backupviewer/parsers/summary_dg.py, src/backupviewer/parsers/sysvars.py,
 src/backupviewer/parsers/va.py
-(30 files)
+(31 files)
 
 *Four of those — `curpos`, `dcszones`, `kinematics`, `roboguidedef` — are also
 claimed by [3d-viewer.md](3d-viewer.md), which uses what they produce. Here they
@@ -66,11 +69,11 @@ counted but never decoded — only text formats are parsed, by design.
 
 Per-file descriptions live in the [INVENTORY map](../INVENTORY.md); this is
 the structure the flat listing hides. The folder is *not* one subsystem — the
-inventory assigns its 29 files to four: **backup parsing** (19: the engine
+inventory assigns its 30 files to four: **backup parsing** (19: the engine
 plus the robot-file leaves), **3D viewer** (4: `curpos`, `dcszones`,
-`kinematics`, `roboguidedef`), **cameras** (5: `cvx_image`, `cvx_inspect`,
-`cvx_models`, `mtx_portal`, `mtx_saved_image`), **program editor** (1:
-`ls_edit`).
+`kinematics`, `roboguidedef`), **cameras** (6: `cvx_image`, `cvx_inspect`,
+`cvx_models`, `cvx_program`, `mtx_portal`, `mtx_saved_image`), **program
+editor** (1: `ls_edit`).
 `session.py` is backup parsing (also cameras). Use those assignments; don't
 reinvent them.
 
@@ -86,8 +89,9 @@ Structurally the layer is two tiers:
   `dcszones`) sit on `va.py`; `.DG` leaves (`summary_dg`, `io_dg`, `dcs`,
   `curpos`) and `.LS` leaves (`ls_program`, `ls_edit`, `alarms`, `callgraph`)
   each carry their own line grammar; the camera leaves parse bytes
-  (`cvx_image`, `cvx_inspect`) or non-backup text (`mtx_saved_image`, and
-  `mtx_portal`, which parses live portal HTML fetched by the api layer).
+  (`cvx_image`, `cvx_inspect`, `cvx_models`, `cvx_program`) or non-backup text
+  (`mtx_saved_image`, and `mtx_portal`, which parses live portal HTML fetched
+  by the api layer).
 
 New code goes where CLAUDE.md's quick reference says: a new file format is a
 pure parser module here, a thin endpoint, and a `TAB_REQUIREMENTS` entry in
@@ -172,6 +176,12 @@ verified* — or an honest **assumed**. The evidence tags:
 - **corpus-measured** — measured across N real files; N stated.
 - **live-run 2026-07-31** — re-verified today by command against the private
   fixture tree (counts printed, identifiers not).
+- **simulator-experiment 2026-08-11** — a *controlled* write: a known value was
+  typed into a named place in the vendor's own CV-X simulator, the program
+  saved, and the bytes searched for it. This is the strongest tag for "where
+  does field X live" — the value is unique, so a hit is not a coincidence — and
+  it proves nothing whatsoever about fields nobody typed into. Where it is
+  cited, the scope of the experiment is stated with it.
 - **assumed** — plausible, in the code, *not* verified; UI must show `?` +
   raw per CLAUDE.md's parse-what-you-can-prove rule.
 
@@ -251,6 +261,13 @@ verified* — or an honest **assumed**. The evidence tags:
 | A CV-X carries no readable controller name over FTP (banner = model only; env.dat = paths, no identity); the inspection *program names* are the camera's own account of itself | `cvx_inspect.py:3-9` |
 | `inspect.dat` holds the program name at 0x4C and a byte-for-byte echo at 0x398; the two agreed in **154/154** real files (13 cameras, 2026-07-25) — so the parser *requires* agreement, making the read self-validating against mis-seeks and impostor files (nearby fields hold localized factory defaults like `Neu115` a looser scan would grab) | `cvx_inspect.py:11-23` |
 | One camera name out of many drifting program names: most-frequent wins, ties break to the lowest program slot (oldest, plainest); verified to pick right for all 13 sample cameras | `cvx_inspect.py:66-88` |
+| `inspect.dat` is an `ST`-magic container that is almost all zlib: **98.2–98.7 %** of its bytes are complete zlib streams, and the block set is stored **twice** — a working copy and a recovery copy, the second at a fixed offset from the first. Every block but the leading one inflates byte-identically between the copies (the two leading blocks differ in bytes while matching in inflated size), so `blocks()` folds on exact inflated content and never on position — a program's contents are counted once, and a block without a twin is still kept | **corpus-measured** 2026-08-11: six real camera programs, 6–8 zlib streams each folding to 3–5 distinct contents (three of them taken apart stream by stream, which is where the copy structure and the odd leading pair were seen); `cvx_program.py:4-8` records 98.7 % from the slice's own files |
+| Tool names are a length-prefixed **language table**: `(u32 language_index, u32 byte_length, <bytes>)` repeated with **ascending** indices, empty languages present at length 0, text cp932 (a superset of ASCII, so one decode serves every slot). A real record carries about twenty consecutive slots (0–19); `LANGUAGES` names only the six the experiment proved. **Slot 1 is English** — the slot a technician types and reads, the same rule `cvx_inspect` uses for the program name | **simulator-experiment 2026-08-11** for the layout and the English slot: a known string typed into two tools' English names was found at both records with every other language slot intact around it (`cvx_program.py:10-19`). **corpus-measured** the same day: 695 records over three real programs — 577 English slots pure ASCII, 539 slot-0 texts non-ASCII, 118 records with an empty English slot (kept: nobody having named that tool in English is itself evidence) |
+| A name record ends where the bytes stop being plausible, not at a declared count — there is no length field for the run. 9 of those 695 records ran one slot past 19 to a trailing index 64; whether that is a real slot or a neighbouring u32 pair that happened to satisfy the ascending rule is **unresolved**. It is never the English slot, so nothing displayed depends on it | **corpus-measured** 2026-08-11 (three real programs); `cvx_program._read_name_record`, guarded by `MIN_LANG_SLOTS`/`MAX_NAME_BYTES` |
+| The **calculation scripts** a technician wrote are stored as plain ASCII in the CV-X's own expression grammar — `@local` assignments, `ANSn` outputs, `IF`/`ELSEIF … THEN`/`ELSE`/`ENDIF`, `Tnnn.RSLT.<MNEMONIC>[i]:MS` cross-tool references, `'` comments — and real cameras genuinely carry them, at plant scale | **simulator-experiment 2026-08-11**: a known string typed into two script comments came back verbatim. **corpus-measured** the same day, twice over — the two cameras measured while the endpoint was built (8–26 script runs per program, 270–506 script lines, 68–102 of them distinct) and an independent six-program sample (4–26 runs, 135–512 lines, 89–139 distinct, 18–45 distinct English names) |
+| **NEGATIVE — no name record has been tied to a tool NUMBER.** The records sit in a plausible order, but no tool number or type code has been found beside one, so the parser returns names as a list and nothing may label one "tool 5" or imply an ordering | **not proved** 2026-08-11, recorded as an explicit non-claim (`cvx_program.py:27-31`); the experiment renamed tools and located their records, which pins *where a name lives*, not *whose* it is |
+| **NEGATIVE — a technician's own names cannot be told from the vendor's built-in tool-type vocabulary in-file.** The same records carry both: three programs yielded 74 distinct English names, among them stock strings like "Color Detection", "Edge Pitch" and "Edge Position" sitting beside names a tech typed. No discriminator was found, so the honest surface lists them together and *says so* rather than filtering on a guess | **corpus-measured** 2026-08-11 (three real programs); filtering here would silently drop real names, the failure this repo cares most about |
+| **NEGATIVE — the numeric parameter slots are unmapped.** The blocks' numeric half is sparse float64 at an offset **6 mod 8**, with a repeated ~1e12 value that reads as an "unset" sentinel. The experiment identified exactly ONE slot by typing a known number; the slot → setting map is unknown, so no parameter value is surfaced anywhere. A camera's *settings* are therefore NOT solved — its names and its logic are | **simulator-experiment 2026-08-11**, one slot only (`cvx_program.py:35-37`); §8 item 10 |
 | CV-X 3D-pick model blobs use two container headers: u32 `1001` + u32 `1342` (header size) + payload size + u16 type id + a cp932 label at 0x0E with an English copy at 0x4A; or u32 `28` + u32 `1001` with the payload size at 0x10 — both verified byte-exact against one real 3D-pick backup (file = header + payload to the byte) | **corpus-measured** 2026-08-07/10: `cvx_models.py:1-40` |
 | The geometry inside `TDC_L`/`WSM_L` blobs is zlib streams of raw binary-STL facet records (50 B: unit normal + 3 vertices + u16 attr, no STL header); a stream is geometry only if its length divides by 50 AND ≥90 % of sampled records carry a unit first vector — name is never evidence | `cvx_models.py` `stl_streams`; real T101 part = 5,144 facets, decompressed size matches the container's own count field |
 | A WSM stream is a part-CAD *copy* or a workspace *scan*; the split keys on distance from origin (part-local CAD sits inside 700 mm, robot-world scans sit 1.26–1.5 m out) — span is useless, a real fixture scan spanned only 109×227×191 mm | `api.py` `_cvx_stream_kind`; measured 2026-08-10 |
@@ -410,11 +427,16 @@ story was measured too, on a facsimile holding only the tracked+unexcluded
 file set: **596 passed, 2 skipped, 0 errors** — one of the two skips being
 the fixture gate's visible "0 backup roots present" line.
 
-**Tracked, direct** (run on any clone) — 122 tests across 11 files:
+**Tracked, direct** (run on any clone) — 249 tests across 13 files, recollected
+2026-08-11 (the 701-passed total above is from 2026-08-01 and predates the
+cvx-camera-tabs slice):
 `test_ls_edit` (31, incl. the byte-round-trip engine), `test_cvx_image` (29),
 `test_dcszones` (12), `test_kinematics` (11, synthetic `.def`; FK
-expectations hand-derived), `test_cvx_inspect` (10), `test_cvx_models` (62, incl. the
-session/api integration over a synthetic pull), `test_sysvar_merge` (9),
+expectations hand-derived), `test_cvx_inspect` (10), `test_cvx_models` (74, incl. the
+session/api integration over a synthetic pull), `test_cvx_program` (53: the
+`ST` container and its recovery copy, the name-table and script-grammar
+refusals, and the `*cvxlogic` tab gate + `cvx_logic` endpoint over a synthetic
+camera pull), `test_sysvar_merge` (9),
 `test_backup_formats` (7: format detection, recursive index, dupe-basename
 priority, per-format tabs, io-from-summary fallback — synthetic trees,
 the tracked successor to the retired real-corpus format tests),
@@ -540,6 +562,21 @@ re-derive it.
 9. **`mtx_saved_image`'s grouping half has no tests** (§7). The parse half
    is pinned indirectly; `group_photo_files`/`photo_record` — which decide
    what the photos tab shows — are not.
+10. **CV-X inspection *settings* are not decoded** (§4 negatives, 2026-08-11).
+    The float64 slots at offset 6 mod 8 hold the numbers behind every tool —
+    thresholds, windows, tolerances — and exactly one slot has been located,
+    by typing a known value into the vendor's simulator. The route is the same
+    experiment repeated one setting at a time (type a unique value, save, find
+    it, then vary it to confirm the slot rather than the string); until a slot
+    is pinned that way it must not be surfaced, because a wrong threshold on a
+    troubleshooting screen is worse than a blank one.
+11. **Which tool owns a name, and which owns a script** (§4 negatives). Names
+    have no tool number beside them and scripts carry no owner field; a script's
+    first comment line often says, but that is a technician's habit, not a
+    format. Both would need either a field found by experiment (rename tool *n*
+    and watch which record moves) or an index table nobody has found yet.
+    Everything downstream — endpoint and UI — is built to state this plainly
+    rather than imply an order.
 
 ---
 
@@ -566,6 +603,13 @@ The honest tail, per the template. Later subsystem docs: end with yours.
   claimed "in practice" for all. Other software loadouts unchecked.
 - **The two-digit-year pivot at 70** — no backup old enough (or clock-wrong
   enough) to exercise the 19xx branch was available.
+- **The CV-X program experiment's reach** (added 2026-08-11). It was run in
+  the vendor's *simulator*, not on a controller, and it typed known values into
+  a handful of named places — two tool names, two script comments, one numeric
+  slot. That is enough to prove where those fields live and nothing more: every
+  claim above that rests on it is scoped to the field that was typed, and the
+  parameter map, the per-tool ownership of names and scripts, and the meaning of
+  every slot nobody touched stay open (§8 items 10–11).
 - **Behaviour on a genuinely malformed `.VA`/`.DG`** (truncated mid-record,
   binary garbage) — the parsers are written tolerant (skip/unparsed/verbatim
   branches) and `alarms`/`summary_dg` state it, but no test feeds them

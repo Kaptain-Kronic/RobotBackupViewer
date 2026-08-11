@@ -54,6 +54,29 @@
   facet records, full detail even when the viewer decimates) to a user-picked
   folder through the house export contract — never into a backup, `.part` →
   rename, reveal-in-explorer — one model or all of them at once.
+- **A camera backup now shows the calculation logic the camera actually runs.**
+  A CV-X inspection program is more than tools and pictures: it carries the
+  expression scripts a technician wrote — `@local` variables, `IF`/`ELSEIF …
+  THEN`/`ENDIF`, `ANSn` outputs, and `Tnnn.RSLT.<MNEMONIC>[i]:MS` references
+  pulling another tool's result — and those lived only behind the controller's
+  own screen. The **logic** tab reads them straight out of `inspect.dat` and
+  shows them as plain text, so the judgement a camera makes can be read at a
+  desk, and read against another dated pull of the same camera instead of being
+  reconstructed from memory. Real cameras carry 4–26 scripts and 135–512 script
+  lines per program. The tab appears only when a backup holds a program whose
+  own bytes vouch for it (`TAB_REQUIREMENTS` special `"*cvxlogic"`), so it is
+  simply absent on a Matrox pull. The tool names in the same file are listed
+  beside the scripts — with what could *not* be proved said out loud rather than
+  papered over: nothing in the file ties a name to a tool **number**, so no name
+  is labeled "tool 5"; and the vendor's own tool-type vocabulary ("Color
+  Detection", "Edge Pitch") is stored right beside the names a tech typed with
+  no discriminator found, so both are listed rather than one being filtered away
+  on a guess. The numeric settings behind each tool (float64 slots at an offset
+  6 mod 8, with a ~1e12 "unset" sentinel) stay unmapped and unshown — this reads
+  a camera's *logic*, not its *settings*. Format read off real cameras plus a
+  controlled experiment in the vendor's own simulator (a known value typed into
+  a named place, then found verbatim in the saved file): `parsers/cvx_program.py`,
+  written up in `docs/subsystems/parsing.md`.
 - Probe: `ui_cvx3d_probe.py` (tabs light/vanish, canvas paints pixels, extract
   modal, enlarge overlay). Inventory: dropped the three long-deleted
   `*_sandbox.html` rows that were blocking `update_inventory.py`.

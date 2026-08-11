@@ -189,8 +189,17 @@ def probe(window):
     try:
         time.sleep(4)  # boot
 
-        check("boot.tabs_registered", js(window, "BV.tabs.length") == 16,
-              f"(got {js(window, 'BV.tabs.length')})")
+        # every <script src="js/tabs/*.js"> must actually register a tab - the
+        # invariant, not a frozen count that turns into a lie the day a tab is
+        # added (alarms.js and macros.js deliberately register none, so they are
+        # excluded by name rather than by fudging the number)
+        tab_files = js(window, """(function(){
+            return [...document.querySelectorAll('script[src*="js/tabs/"]')]
+                .map(function(s){ return s.src.split('/').pop().replace('.js',''); })
+                .filter(function(n){ return n !== 'alarms' && n !== 'macros'; }).length;
+        })()""")
+        check("boot.tabs_registered", js(window, "BV.tabs.length") == tab_files,
+              f"(registered {js(window, 'BV.tabs.length')}, tab scripts {tab_files})")
 
         # ---- home library renders the synthetic tree ----
         nrows = poll(window, "document.querySelectorAll('.lib-robot').length")

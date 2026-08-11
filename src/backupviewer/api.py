@@ -41,7 +41,7 @@ from . import screengrab
 from . import search as search_mod
 from . import settings
 from .parsers import (alarms, callgraph, curpos, cvx_image, cvx_inspect,
-                      cvx_models, dcs, dcszones, frames, gmwizlog, io_dg,
+                      cvx_models, cvx_program, dcs, dcszones, frames, gmwizlog, io_dg,
                       kinematics, ls_edit, ls_program, macros, magnet,
                       mastering, mhvalves, mtx_portal, mtx_saved_image,
                       payloads, registers, styles, summary_dg, sysvars)
@@ -122,6 +122,19 @@ def _cvx_setting_parts(rel: str) -> tuple[str, str]:
 
 # the families whose geometry is stored uncompressed (see cvx_models.raw_facets)
 _CVX_RAW_MESH_KINDS = ("hand", "robot")
+
+
+def _cvx_script_title(lines: list) -> str:
+    """A script's own leading comment, which technicians use as a heading
+    ("'3D Pick Bin 1 Calculation 6/1/26"). Empty when the script does not open
+    with one - never invented."""
+    for ln in lines[:3]:
+        s = ln.strip()
+        if s.startswith("'"):
+            s = s.lstrip("'").strip()
+            if s and not s.startswith("*"):
+                return s[:80]
+    return ""
 
 
 def _cvx_stream_kind(file_kind: str, bounds: dict) -> str:
@@ -2446,6 +2459,60 @@ class Api:
         settings.set_value("last_export_folder", str(d))
         return {"dest": str(d), "root": folder, "files": written,
                 "count": len(written), "bytes": total}
+
+    @_endpoint
+    def cvx_logic(self, sid: str | None = None):
+        """A Keyence camera's inspection programs as a technician reads them:
+        the calculation scripts they wrote, and the names present in each
+        program.
+
+        Honesty, because this feeds troubleshooting: a script is reported only
+        when a run of lines matches the language's own grammar, and the names
+        are given as a deduplicated list WITHOUT claiming which tool each
+        belongs to (nothing in the file has been shown to tie a name record to
+        a tool number) and WITHOUT separating the technician's own names from
+        the built-in tool-type vocabulary the program also carries - both
+        appear, the count says how often, and the reader decides."""
+        s = self._need_session(sid)
+        if not s.backup_type.startswith("keyence"):
+            raise ApiError("NOT_CVX", "this backup is not a keyence camera")
+
+        def build():
+            progs = []
+            for rel, p in s.cvx_program_files():
+                try:
+                    data = p.read_bytes()
+                except OSError as e:
+                    raise ApiError("UNREADABLE", f"cannot read {p.name}: {e}") from e
+                try:
+                    r = cvx_program.read_program(data)
+                except cvx_program.BadProgram:
+                    continue
+                # the program number is the folder the file lives in
+                parts = rel.replace("\\", "/").split("/")
+                num = parts[-2] if len(parts) >= 2 else ""
+                counts: dict[str, int] = {}
+                for tl in r["tools"]:
+                    nm = (tl.get("name") or "").strip()
+                    if nm:
+                        counts[nm] = counts.get(nm, 0) + 1
+                scripts = [{"lines": len(x["lines"]), "text": x["text"],
+                            "title": _cvx_script_title(x["lines"])}
+                           for x in r["scripts"]]
+                scripts.sort(key=lambda x: -x["lines"])
+                progs.append({
+                    "program": num,
+                    "rel": rel,
+                    "name": cvx_inspect.program_name(data) or "",
+                    "scripts": scripts,
+                    "script_lines": sum(x["lines"] for x in scripts),
+                    "names": [{"name": k, "count": v}
+                              for k, v in sorted(counts.items(),
+                                                 key=lambda kv: kv[0].lower())],
+                })
+            return {"programs": progs, "count": len(progs)}
+
+        return s.cached("cvx_logic", build)
 
     @_endpoint
     def cvx_overview(self, sid: str | None = None):

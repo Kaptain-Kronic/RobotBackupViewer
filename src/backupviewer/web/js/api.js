@@ -51,6 +51,7 @@
     get_call_tree: 2, get_alarm_files: 0, get_alarms: 4, list_files: 0,
     get_file: 1, get_photos: 0, get_image: 1,
     cvx_models: 0, cvx_model: 2, cvx_model_export: 3, cvx_overview: 0,
+    cvx_logic: 0,
     /* the ws_* edit-workspace endpoints are deliberately absent: they are
        path-addressed and take no sid, so a solo window needs no injection. */
   };
@@ -80,6 +81,10 @@
     lib_list: "loading library…",  /* a changed tree makes this a full rescan */
     lib_rescan: "rescanning library…", lib_bulk_add: "adding robots…",
     lib_resolve_names: "reading names from backups…",  /* fix-names preview: opens every selected backup */
+    /* a camera's program is ~2.4 MB of inflated tables per block; reading the
+       scripts and names out of it measures 3-4 s cold on a real camera (then
+       the session cache serves it instantly) */
+    cvx_logic: "reading the camera's programs…",
   };
   var inflight = {};   /* method + BV.KEYSEP + argsJSON -> the pending promise */
 

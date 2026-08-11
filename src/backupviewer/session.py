@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Callable
 
 from .ftpbackup import long_path
-from .parsers import TAB_REQUIREMENTS, cvx_image, cvx_models
+from .parsers import TAB_REQUIREMENTS, cvx_image, cvx_models, cvx_program
 from .parsers.common import read_text
 
 log = logging.getLogger(__name__)
@@ -326,6 +326,31 @@ class BackupSession:
 
         return self.cached("cvx_images", build)
 
+    def cvx_program_files(self) -> list[tuple[str, Path]]:
+        """Every CV-X inspection program (`setting/<NNN>/inspect.dat`) whose
+        first bytes prove the container, as (rel, path) in program order.
+
+        The program number is the folder the file sits in, which is how the
+        camera itself numbers them; the name only claims, the magic proves."""
+        def build():
+            out = []
+            for key in sorted(self.files):
+                if not key.endswith("/INSPECT.DAT"):
+                    continue
+                parts = key.split("/")
+                if "CV-X" not in parts[:-1]:
+                    continue
+                p = self.files[key]
+                try:
+                    with open(p, "rb") as fh:      # indexed paths carry the prefix
+                        head = fh.read(8)
+                except OSError:
+                    continue
+                if cvx_program.is_program(head):
+                    out.append((self.rel(p), p))
+            return out
+        return self.cached("cvx_programs", build)
+
     def cvx_model_files(self) -> list[tuple[str, Path]]:
         """Every vouched CV-X 3D-model container in the camera's `cv-x/` tree,
         as (rel, path) pairs in index order: part CAD (TDC), workspace models
@@ -412,6 +437,10 @@ class BackupSession:
             return self.has_photos()
         if need == "*camera":
             return self.backup_type.endswith("camera")
+        if need == "*cvxlogic":
+            # the logic tab reads inspection programs; only a Keyence camera
+            # has them, and the magic must vouch before the tab appears
+            return self._is_keyence() and bool(self.cvx_program_files())
         if need == "*cvx3d":
             # gated on _is_keyence so a robot backup never pays the model
             # scan just to decide view3d (its DCS files already decided it)

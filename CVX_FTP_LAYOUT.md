@@ -68,3 +68,41 @@ self-validation (a run of records with unit-or-zero normals, grown outward),
 never by a hardcoded offset; two real hand files decode to 46,952 and 481,039
 facets. `TDM_L` (matching template) payload encoding remains undecoded.
 Parser: `src/backupviewer/parsers/cvx_models.py`; viewer: the camera 3d view.
+
+## `inspect.dat` — the inspection program container (2026-08-11)
+
+One per program directory: `setting/<NNN>/inspect.dat`, where `<NNN>` is the
+camera's own program number. Shape, measured over six real camera programs plus
+a controlled experiment in the vendor's simulator:
+
+- magic `ST` (2 bytes) — the only cheap gate; the *name* is never evidence.
+- **98.2–98.7 % of the file is zlib**: 6–8 complete streams per file, inflating
+  to ~0.2–2.4 MB each. They are the program's parameter memory — sparse, mostly
+  zero, with two regions of self-describing text.
+- The block set is written **twice**, a working copy and a recovery copy, the
+  second at a fixed offset from the first. Every block but the leading one
+  inflates byte-identically between the copies (the two leading blocks differ in
+  bytes while matching in inflated size), so the reader folds duplicates on
+  exact inflated content — never by position — and 6–8 streams become 3–5
+  distinct contents.
+- **Tool names** are a length-prefixed language table inside a block:
+
+  ```
+  (u32 language_index, u32 byte_length, <byte_length bytes>)  repeated
+  ```
+
+  indices strictly ascending, empty languages present at length 0, text cp932.
+  A record carries about twenty consecutive slots (0–19) and has no length field
+  of its own — the run ends where the bytes stop being plausible. **Slot 1 is
+  English**, the slot a technician types and reads (the same slot
+  `cvx_inspect.py` takes the program name from at 0x4C).
+- **Calculation scripts** are plain ASCII in the CV-X's expression grammar
+  (`@local` assignments, `ANSn` outputs, `IF`/`ELSEIF … THEN`/`ELSE`/`ENDIF`,
+  `Tnnn.RSLT.<MNEMONIC>[i]:MS` cross-tool references, `'` comments).
+
+Not decoded, and therefore not claimed anywhere: which **tool number** a name
+record or a script belongs to, how to tell a technician's own name from the
+vendor's built-in tool-type vocabulary, and the numeric parameter slots (float64
+at an offset 6 mod 8, ~1e12 = unset). Parser:
+`src/backupviewer/parsers/cvx_program.py`; surface: the camera logic tab; the
+long form with evidence tags is in `docs/subsystems/parsing.md` §4.
