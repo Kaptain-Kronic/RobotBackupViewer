@@ -80,8 +80,11 @@ def payload(**over):
 
 
 def stub(window, p):
-    js(window, """window.pywebview.api.net_status = function () {
-        return Promise.resolve({ ok: true, data: %s });
+    """Canned bridge answer, and the same payload kept on window so a repaint
+    can be driven by hand (this window is hidden, so the poller never ticks)."""
+    js(window, """window.__probe_payload = %s;
+    window.pywebview.api.net_status = function () {
+        return Promise.resolve({ ok: true, data: window.__probe_payload });
     };""" % json.dumps(p))
 
 
@@ -201,7 +204,10 @@ def probe(window):
             return JSON.stringify(r.map(function (x) {
                 return { dot: x.children[0].className,
                          name: x.children[1].textContent,
-                         ip: x.children[2].textContent,
+                         // identity lives in the attribute: the ip CELL is blank
+                         // for a device we can name, by design
+                         ip: x.getAttribute('data-ip'),
+                         shown_ip: x.children[2].textContent,
                          tag: x.children[3].textContent };
             }));
         })()""")
@@ -215,6 +221,51 @@ def probe(window):
         stranger = by_ip.get("192.0.2.77") or {}
         check("panel.stranger_flagged", "not in library" in stranger.get("tag", ""),
               f"({stranger})")
+
+        # the address earns its place only when it IS the identifier. Beside a
+        # robot's own name it is a column of noise, so it is dropped there and
+        # kept in the tooltip; for the gateway and anything unlisted it is the
+        # only handle you have, so it must still be on screen.
+        named = by_ip.get("192.0.2.40") or {}
+        check("panel.named_device_hides_its_ip", named.get("shown_ip") == "",
+              f"({named})")
+        check("panel.stranger_still_shows_its_ip",
+              stranger.get("shown_ip") == "192.0.2.77", f"({stranger})")
+        check("panel.gateway_still_shows_its_ip",
+              (by_ip.get("192.0.2.1") or {}).get("shown_ip") == "192.0.2.1",
+              f"({by_ip.get('192.0.2.1')})")
+        check("panel.ip_stays_in_the_tooltip", js(window, """(function () {
+            var r = [...document.querySelectorAll('.bv-drop .net-row')]
+                .find(function (x) { return x.getAttribute('data-ip') === '192.0.2.40'; });
+            return !!r && r.title.indexOf('192.0.2.40') === 0;
+        })()"""))
+
+        # the folds must survive the 2s repaint - rebuilding the panel wholesale
+        # used to snap the adapter section shut within a tick of opening it
+        js(window, """(function () {
+            var s = [...document.querySelectorAll('.bv-drop .net-sec')].find(function (x) {
+                var h = x.querySelector('.net-sec-head');
+                return h && h.textContent.indexOf('adapter') >= 0;
+            });
+            s.querySelector('.net-sec-head').click();
+        })()""")
+        opened_fold = js(window, """(function () {
+            var s = [...document.querySelectorAll('.bv-drop .net-sec')].find(function (x) {
+                var h = x.querySelector('.net-sec-head');
+                return h && h.textContent.indexOf('adapter') >= 0;
+            });
+            return s.classList.contains('open');
+        })()""")
+        check("panel.adapter_fold_opens", opened_fold is True)
+        js(window, "BV.netstatus._render(window.__probe_payload)")
+        time.sleep(0.2)
+        check("panel.fold_survives_a_repaint", js(window, """(function () {
+            var s = [...document.querySelectorAll('.bv-drop .net-sec')].find(function (x) {
+                var h = x.querySelector('.net-sec-head');
+                return h && h.textContent.indexOf('adapter') >= 0;
+            });
+            return !!s && s.classList.contains('open');
+        })()"""))
 
         # THE anti-lie lock: a library device with no neighbour entry is hollow.
         # If this ever renders as `gone`, the panel is calling a healthy camera

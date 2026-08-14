@@ -36,6 +36,7 @@
   var LOUD = { "no-link": 1, "no-ip": 1 };
 
   var btn = null, dot = null, label = null;
+  var ui = null;               /* the panel's nodes, built once, updated in place */
   var timer = null, inFlight = false, panel = null, panelBody = null;
   var last = null, lastState = null, booted = false;
   var prevLive = {};           /* ip -> was it reachable on the previous tick */
@@ -139,7 +140,10 @@
   /* ---- the panel ----------------------------------------------------------- */
 
   function row(d) {
-    var el = BV.el("div", { class: "net-row" });
+    /* the ip is the row's identity for patching, and it must live in an
+       attribute rather than in the ip cell - that cell is blank for a device we
+       can name, so reading identity off it would lose the row */
+    var el = BV.el("div", { class: "net-row", "data-ip": d.ip });
     el.appendChild(BV.el("span", { class: "net-dot" }));
     el.appendChild(BV.el("span", { class: "net-name" }, ""));
     el.appendChild(BV.el("span", { class: "net-ip" }, ""));
@@ -160,16 +164,20 @@
       })(el.children[0]);
     }
     var name = d.name || (d.gateway ? "gateway" : "");
-    el.children[1].textContent = name || "—";
-    el.children[2].textContent = d.ip;
     var tag = "";
     if (d.gateway) tag = BV.pill("gw", "acc");
     else if (!d.in_library) {
       tag = BV.pill("not in library", "ghost");
-      if (d.vendor_kind) el.children[1].textContent = d.vendor_kind + " (unlisted)";
+      if (d.vendor_kind) name = d.vendor_kind + " (unlisted)";
     } else if (d.device_type && d.device_type.indexOf("camera") === 0) {
       tag = BV.pill(d.device_type === "camera-mtx" ? "mtx cam" : "cv-x cam", "acc");
     }
+    el.children[1].textContent = name || "—";
+    /* the address earns its place only when it IS the identifier: for the
+       gateway and for anything not in the library it is the only handle you
+       have, but beside a robot's own name it is a column of noise. It stays in
+       the row's tooltip either way, so nothing is lost. */
+    el.children[2].textContent = (!d.in_library || !d.name) ? d.ip : "";
     el.children[3].innerHTML = tag;
     el.title = d.ip + (d.mac ? " · " + d.mac : "")
       + (d.dot === "absent"
@@ -189,143 +197,172 @@
       seen[d.ip] = 1;
     });
     Array.prototype.slice.call(host.children).forEach(function (el) {
-      var ip = el.children && el.children[2] && el.children[2].textContent;
+      var ip = el.getAttribute("data-ip");
       if (ip && !seen[ip]) host.removeChild(el);
     });
   }
 
-  function section(title, note) {
-    var s = BV.el("div", { class: "net-sec" });
-    s.appendChild(BV.el("div", { class: "net-sec-head" }, BV.esc(title)));
-    if (note) s.appendChild(BV.el("div", { class: "net-sec-note" }, BV.esc(note)));
-    return s;
-  }
+  var FOOT = "this segment only — devices on other subnets are reached through "
+    + "the gateway and cannot be seen from here. A blink means this laptop's "
+    + "neighbour cache just confirmed that device; it is not the switch's port LED.";
+  var FACTS = ["adapter", "address", "gateway", "mac", "link", "holding", "chosen"];
 
+  /* The panel is built ONCE here and updated in place by paintPanel. It used to
+     be rebuilt from scratch on every 2s tick, which quietly threw away whatever
+     the reader had done: opening the adapter section snapped it shut within a
+     tick. A surface that repaints under someone must never reset their state. */
   function buildPanel() {
     panelBody = BV.el("div", { class: "net-panel" });
+    ui = { facts: {}, picks: {} };
+
+    var head = BV.el("div", { class: "net-head" });
+    var top = BV.el("div", { class: "net-head-top" });
+    ui.state = BV.el("span", { class: "net-head-state" }, "");
+    ui.where = BV.el("span", { class: "net-head-where" }, "");
+    top.appendChild(ui.state);
+    top.appendChild(ui.where);
+    head.appendChild(top);
+    ui.detail = BV.el("div", { class: "net-head-detail" }, "");
+    head.appendChild(ui.detail);
+
+    var facts = BV.el("div", { class: "net-facts" });
+    FACTS.forEach(function (k) {
+      var r = BV.el("div", { class: "net-fact" });
+      r.appendChild(BV.el("span", { class: "net-fact-k" }, BV.esc(k)));
+      ui.facts[k] = BV.el("span", { class: "net-fact-v" }, "");
+      r.appendChild(ui.facts[k]);
+      facts.appendChild(r);
+    });
+    head.appendChild(facts);
+
+    var sub = BV.el("div", { class: "net-sub" });
+    ui.count = BV.el("span", {}, "");
+    ui.check = BV.el("button", { class: "btn", title:
+      "send one ARP request to each listed address — layer 2 only, no service is touched" },
+      "check now");
+    ui.check.addEventListener("click", checkNow);
+    sub.appendChild(ui.count);
+    sub.appendChild(ui.check);
+    head.appendChild(sub);
+    ui.skipNote = BV.el("div", { class: "net-sec-note hidden" }, "");
+    head.appendChild(ui.skipNote);
+    panelBody.appendChild(head);
+
+    var s1 = BV.el("div", { class: "net-sec" });
+    s1.appendChild(BV.el("div", { class: "net-sec-head" }, "on this switch"));
+    ui.hereList = BV.el("div", {});
+    s1.appendChild(ui.hereList);
+    panelBody.appendChild(s1);
+
+    ui.quietSec = BV.el("div", { class: "net-sec" });
+    var qh = BV.el("div", { class: "net-sec-head" }, "");
+    ui.quietList = BV.el("div", {});
+    ui.quietSec.appendChild(qh);
+    ui.quietSec.appendChild(ui.quietList);
+    BV.collapsible(ui.quietSec, qh, ui.quietList, { open: false });
+    ui.quietLabel = BV.el("span", {}, "");
+    qh.appendChild(ui.quietLabel);
+    panelBody.appendChild(ui.quietSec);
+
+    panelBody.appendChild(BV.el("div", { class: "net-foot" }, BV.esc(FOOT)));
+
+    ui.pickSec = BV.el("div", { class: "net-sec" });
+    var ph = BV.el("div", { class: "net-sec-head" }, "");
+    ui.pickBody = BV.el("div", { class: "net-pick" });
+    ui.pickSec.appendChild(ph);
+    ui.pickSec.appendChild(ui.pickBody);
+    BV.collapsible(ui.pickSec, ph, ui.pickBody, { open: false });
+    ph.appendChild(BV.el("span", {}, "adapter"));
+    ui.pickAuto = BV.el("button", { class: "net-pick-row" }, "");
+    ui.pickAuto.appendChild(BV.el("span", {}, "automatic"));
+    ui.pickAutoWhy = BV.el("span", { class: "net-pick-why" }, "");
+    ui.pickAuto.appendChild(ui.pickAutoWhy);
+    ui.pickAuto.addEventListener("click", function () { pick(null, null); });
+    ui.pickBody.appendChild(ui.pickAuto);
+    panelBody.appendChild(ui.pickSec);
+
     return panelBody;
   }
 
+  function pick(mac, name) {
+    BV.api.call("set_setting", "net_adapter", mac ? { mac: mac, name: name } : null)
+      .catch(function () {});
+    tick(true);
+  }
+
+  /* Updates the skeleton buildPanel made. Touches text and classes only - no
+     node is replaced - so folds the reader opened stay open and the scroll
+     position holds while the data underneath keeps ticking. */
   function paintPanel(p) {
-    if (!panelBody) return;
+    if (!ui) return;
     var devices = p.devices || [];
     var here = devices.filter(function (d) { return d.dot !== "absent"; });
     var quiet = devices.filter(function (d) { return d.dot === "absent"; });
     var a = p.adapter || {};
 
-    panelBody.innerHTML = "";
-    var head = BV.el("div", { class: "net-head" });
-    var top = BV.el("div", { class: "net-head-top" });
-    top.appendChild(BV.el("span", { class: "net-head-state" }, BV.esc(look(p.state)[0])));
-    top.appendChild(BV.el("span", { class: "net-head-where" },
-      BV.esc((a.name || "") + (p.cidr ? " · " + p.cidr : ""))));
-    head.appendChild(top);
-    head.appendChild(BV.el("div", { class: "net-head-detail" }, BV.esc(p.detail || "")));
+    ui.state.textContent = look(p.state)[0];
+    ui.where.textContent = (a.name || "") + (p.cidr ? " · " + p.cidr : "");
+    ui.detail.textContent = p.detail || "";
 
     /* the full connection picture, so nobody has to go hunting in ipconfig:
        everything the OS told us about this link, and nothing inferred */
-    var facts = BV.el("div", { class: "net-facts" });
-    [["adapter", a.name || "—"],
-     ["address", a.ip ? a.ip + (a.prefix ? "/" + a.prefix : "") : "none"],
-     ["gateway", p.gateway || "none configured"],
-     ["mac", a.mac || "—"],
-     ["link", speed(a.speed)],
-     ["holding", ago(p.since_ms) + " in this state"],
-     ["chosen", why(p.why)]].forEach(function (kv) {
-      var r = BV.el("div", { class: "net-fact" });
-      r.appendChild(BV.el("span", { class: "net-fact-k" }, BV.esc(kv[0])));
-      r.appendChild(BV.el("span", { class: "net-fact-v" }, BV.esc(kv[1])));
-      facts.appendChild(r);
-    });
-    head.appendChild(facts);
-    panelBody.appendChild(head);
+    ui.facts.adapter.textContent = a.name || "—";
+    ui.facts.address.textContent = a.ip ? a.ip + (a.prefix ? "/" + a.prefix : "") : "none";
+    ui.facts.gateway.textContent = p.gateway || "none configured";
+    ui.facts.mac.textContent = a.mac || "—";
+    ui.facts.link.textContent = speed(a.speed);
+    ui.facts.holding.textContent = ago(p.since_ms) + " in this state";
+    ui.facts.chosen.textContent = why(p.why);
 
-    var sub = BV.el("div", { class: "net-sub" });
-    sub.appendChild(BV.el("span", {}, BV.esc(here.length + " answering · " +
-      quiet.length + " quiet")));
+    ui.count.textContent = here.length + " answering · " + quiet.length + " quiet";
     var busy = !!p.checking;
-    var check = BV.el("button", { class: "btn", title:
-      "send one ARP request to each listed address — layer 2 only, no service is touched" },
-      busy ? "checking…" : "check now");
-    check.disabled = busy;
-    check.addEventListener("click", checkNow);
-    sub.appendChild(check);
-    head.appendChild(sub);
-    if (skipped) {
-      head.appendChild(BV.el("div", { class: "net-sec-note" },
-        BV.esc(skipped + " more were not checked (the sweep is capped)")));
-    }
+    ui.check.textContent = busy ? "checking…" : "check now";
+    ui.check.disabled = busy;
+    ui.skipNote.textContent = skipped
+      ? skipped + " more were not checked (the sweep is capped)" : "";
+    ui.skipNote.classList.toggle("hidden", !skipped);
 
-    var s1 = section("on this switch");
-    var list = BV.el("div", {});
-    s1.appendChild(list);
-    panelBody.appendChild(s1);
-    rowEls = {};
-    paintList(list, here);
+    paintList(ui.hereList, here);
+    ui.quietSec.classList.toggle("hidden", !quiet.length);
+    ui.quietLabel.textContent = "not heard from (" + quiet.length + ")";
+    paintList(ui.quietList, quiet);
 
-    if (quiet.length) {
-      var s2 = BV.el("div", { class: "net-sec" });
-      var h2 = BV.el("div", { class: "net-sec-head" }, "");
-      var b2 = BV.el("div", {});
-      s2.appendChild(h2); s2.appendChild(b2);
-      BV.collapsible(s2, h2, b2, { open: false });
-      h2.appendChild(BV.el("span", {},
-        BV.esc("not heard from (" + quiet.length + ")")));
-      paintList(b2, quiet);
-      panelBody.appendChild(s2);
-    }
-
-    panelBody.appendChild(BV.el("div", { class: "net-foot" },
-      BV.esc("this segment only — devices on other subnets are reached through "
-        + "the gateway and cannot be seen from here. A blink means this laptop's "
-        + "neighbour cache just confirmed that device; it is not the switch's "
-        + "port LED.")));
-
-    if (p.adapters) panelBody.appendChild(picker(p));
+    paintPicker(p);
 
     prevLive = {};
     devices.forEach(function (d) { prevLive[d.ip] = d.dot === "live"; });
-
-    /* the list grows and shrinks as devices answer, so the box has to be
-       re-placed or it drifts off the bottom again */
-    if (panel && panel.reflow) panel.reflow();
   }
 
-  function picker(p) {
-    var wrap = BV.el("div", { class: "net-sec" });
-    var head = BV.el("div", { class: "net-sec-head" }, "");
-    var body = BV.el("div", { class: "net-pick" });
-    wrap.appendChild(head); wrap.appendChild(body);
-    BV.collapsible(wrap, head, body, { open: false });
-    head.appendChild(BV.el("span", {}, "adapter"));
+  function paintPicker(p) {
     var chosen = (p.adapter || {}).mac || "";
     var pinned = p.why === "pinned";
+    ui.pickAuto.classList.toggle("on", !pinned);
+    ui.pickAutoWhy.textContent = pinned ? "" : "chosen by " + (p.why || "");
 
-    function pick(mac, name) {
-      BV.api.call("set_setting", "net_adapter", mac ? { mac: mac, name: name } : null)
-        .catch(function () {});
-      tick(true);
-    }
-
-    var auto = BV.el("button", { class: "net-pick-row" + (pinned ? "" : " on") }, "");
-    auto.appendChild(BV.el("span", {}, "automatic"));
-    auto.appendChild(BV.el("span", { class: "net-pick-why" },
-      BV.esc(pinned ? "" : "chosen by " + (p.why || ""))));
-    auto.addEventListener("click", function () { pick(null, null); });
-    body.appendChild(auto);
-
+    var seen = {};
     (p.adapters || []).forEach(function (ad) {
-      var b = BV.el("button",
-        { class: "net-pick-row" + (pinned && ad.mac === chosen ? " on" : "") }, "");
-      b.appendChild(BV.el("span", { class: "net-dot " + (ad.up ? "live" : "absent") }));
-      b.appendChild(BV.el("span", { class: "net-name" },
-        BV.esc(ad.name + (ad.ip ? " · " + ad.ip : ""))));
-      b.appendChild(BV.el("span", { class: "net-pick-why" },
-        BV.esc(ad.library ? ad.library + " library" : ad.neighbours + " seen")));
-      b.addEventListener("click", function () { pick(ad.mac, ad.name); });
-      body.appendChild(b);
+      var b = ui.picks[ad.mac];
+      if (!b) {
+        b = ui.picks[ad.mac] = BV.el("button", { class: "net-pick-row" }, "");
+        b.appendChild(BV.el("span", { class: "net-dot" }));
+        b.appendChild(BV.el("span", { class: "net-name" }, ""));
+        b.appendChild(BV.el("span", { class: "net-pick-why" }, ""));
+        b.addEventListener("click", function () { pick(ad.mac, ad.name); });
+      }
+      b.children[0].className = "net-dot " + (ad.up ? "live" : "absent");
+      b.children[1].textContent = ad.name + (ad.ip ? " · " + ad.ip : "");
+      b.children[2].textContent = ad.library
+        ? ad.library + " library" : ad.neighbours + " seen";
+      b.classList.toggle("on", pinned && ad.mac === chosen);
+      if (b.parentNode !== ui.pickBody) ui.pickBody.appendChild(b);
+      seen[ad.mac] = 1;
     });
-    return wrap;
+    Object.keys(ui.picks).forEach(function (mac) {
+      if (!seen[mac] && ui.picks[mac].parentNode) {
+        ui.picks[mac].parentNode.removeChild(ui.picks[mac]);
+        delete ui.picks[mac];
+      }
+    });
   }
 
   function checkNow() {
@@ -354,9 +391,11 @@
     var p = BV.dropPanel(btn, content, {
       className: "net-drop",
       mount: document.getElementById("chrome-bottom"),
-      onClose: function () { panel = null; panelBody = null; rowEls = {}; },
+      onClose: function () {
+        panel = null; panelBody = null; ui = null; rowEls = {};
+      },
     });
-    if (!p) { panelBody = null; return; }  /* swallowed half of a toggle */
+    if (!p) { panelBody = null; ui = null; return; }  /* swallowed half of a toggle */
     panel = p;
     tick(true);                     /* the panel wants the device list, so re-ask */
   }
