@@ -57,6 +57,15 @@ Each of these is deliberately scoped to land on its own. Good places to start.
 - ✅ **Auto-update check** — shipped: the packaged exe pings GitHub releases
   once on boot (toast + statusbar pill, fully offline-tolerant), the about
   box checks manually anywhere; see CHANGELOG.
+- ✅ **Plant-link status indicator** — a statusbar pill that answers "is it me,
+  the network, or the device?" without leaving the app: no plant adapter / no
+  link / no ip / no gateway / connected, read from this laptop's own adapter,
+  gateway and neighbour tables via `iphlpapi` (netlink.py). **The switch is
+  never contacted** — no SSH, no SNMP, no management plane. Clicking it drops a
+  panel listing the segment, merged with the library, flagging devices that are
+  not in it. Passive by default at zero added packets; the explicit "check now"
+  sends one ARP per listed address (layer 2, no service touched) and refreshes
+  the very table the panel already reads, so there is no second source of truth.
 - 📋 **Library-wide content search** — "which robots call PROG_X / use R[57] /
   reference DI[279]" across the whole library, not just the open backup.
 - 📋 **Absorb `tools/restyle.py`** — the style-clone kit builder gets UI inside

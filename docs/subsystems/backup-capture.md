@@ -8,8 +8,11 @@ commit is the reference.*
 
 Covers: src/backupviewer/ftpbackup.py, src/backupviewer/keyencebackup.py,
 src/backupviewer/mtxbackup.py, src/backupviewer/discover.py,
-src/backupviewer/backuplog.py
-(5 files)
+src/backupviewer/netlink.py, src/backupviewer/backuplog.py
+(6 files)
+
+*§10 (the plant-link watch) was added 2026-08-14 against `main` @ `b1ef1c9` and
+brought `netlink.py` under this doc; the rest of the pass is unchanged.*
 
 *It also describes the job plumbing those five share — `api.py`'s device
 registry and backup/scan endpoints, `web/js/jobs.js`, the launch and retry flows
@@ -105,6 +108,11 @@ Structure worth knowing before touching it:
   (PowerShell via absolute path — `discover.py:106-198`) and the read-only
   `diagnose_*` probes whose JSON lands in app.log for shop-PC debugging
   (`discover.py:601-669`, `keyencebackup.py:301-359`, `mtxbackup.py:376-409`).
+- **The plant-link watch** (`discover.LinkWatch`, added 2026-08-14) is the one
+  thing here that touches no equipment at all: it reads *this laptop's* adapter,
+  gateway and neighbour tables through `netlink.py` (ctypes → `iphlpapi`) to
+  answer "am I on the switch?". The switch itself is never contacted — no SSH,
+  no SNMP, no credentials. See §10.
 
 ## 3. The flow
 
@@ -610,6 +618,73 @@ code changes). Evidence attached.
    unlikely for robots (shallow names), possible for a deep library root.
    Traced only; no field failure known. Worth folding into any future
    `long_path` consolidation (item 7's module).
+
+---
+
+## 10. The plant-link watch (added 2026-08-14)
+
+The only thing in this subsystem that touches no equipment. It answers the
+question a tech asks before any of the above: *am I even on the plant switch?*
+
+**Where it reads.** `netlink.py` binds three `iphlpapi` calls through ctypes —
+`GetAdaptersAddresses` (link state, IPv4 + prefix, gateway, MAC, ifType),
+`GetIpNetTable2` (the neighbour/ARP table with real NUD states), and `SendARP`.
+No subprocess, no new dependency, same native-call approach `mtxbackup.py`
+already uses for `mpr.dll`. Policy — which adapter is the plant link, and what
+the evidence adds up to — stays in `discover.py` (`LinkWatch`, `choose_adapter`,
+`classify_state`); `netlink.py` only reports what Windows says.
+
+**Why not the PowerShell path `list_adapters` uses.** Measured on a plant
+laptop: `Get-NetAdapter` 1609 ms, `Get-NetIPAddress` 1556 ms,
+`Get-NetIPConfiguration` 3784 ms, plus ~360 ms of process spawn. The two ctypes
+reads together cost **12 ms**. That is the whole reason a pill can poll at all,
+and it is why `list_adapters` was correctly built as a one-shot dialog call.
+
+**Measured facts the design rests on** (dev machine, 2026-08-14, live plant
+segment — recorded, not re-provable from a clean clone):
+
+- Of 15 real neighbours, **13 sat in state `stale` and 2 in `reachable`** on a
+  healthy network. `stale` means "not confirmed recently", not "unreachable".
+  Rendering it as a fault would light the panel with false alarms, so `stale`
+  publishes **connected**. This is the single most important honesty rule here.
+- Cross-referenced against `library.json`, 13 of those 15 were known cameras and
+  2 were network infrastructure.
+- The library held 2532 devices across **63 distinct /24s**; **83** were on the
+  laptop's subnet and **0** on either wi-fi or the tunnel. Hence adapter choice
+  by "whose subnet holds the most library devices" is decisive.
+
+**Invariants worth keeping:**
+
+1. **Wi-fi is never promoted to "the plant link" on a hunch.** Only a user pin,
+   or the library's own devices being on that subnet, may name it. With no
+   evidence the pill reads `no plant adapter` and asks. A laptop on a phone
+   hotspot with the dongle out still has fine internet; calling that "connected"
+   would answer a question nobody asked.
+2. **A downgrade needs two consecutive agreeing samples; an upgrade publishes
+   at once.** One dropped read cannot flash a false alarm, and good news cannot
+   raise one.
+3. **A failed read is not evidence.** It holds the previous verdict, sets
+   `probe_ok: False` and dims the chip. A tool that turns red when *it* breaks
+   teaches people to ignore it.
+4. **`absent` is not `down`.** A library device with no neighbour entry renders
+   as a hollow ring. A camera nobody has talked to since the cable went in has
+   no ARP entry while running perfectly.
+5. **The adapter that went away reads as `no link`, not `no plant adapter`.**
+   USB dongles usually vanish from the table when unplugged rather than
+   reporting down, so `LinkWatch` remembers its last choice — otherwise the
+   commonest real event shows the most confusing words.
+6. **`check now` introduces no second source of truth.** It sends one ARP per
+   listed address, which *populates the very table the panel already reads*, so
+   the next poll shows the answer. It refuses off-segment addresses, because
+   those would resolve the gateway's MAC and read as a confident answer about a
+   device never reached. Its cap is reported, never silent.
+
+**Gentleness.** Default posture is zero added packets — adapter and neighbour
+tables are pure OS reads. The one probe is an ARP request: layer 2, touching no
+service on the device, strictly lighter than the `_tcp_open` pre-check this
+subsystem uses elsewhere against a camera's FTP/SMB port. Fan-out is 8, against
+`SCAN_WORKERS = 48` for the user-launched sweep, and it is throttled to once
+per 10 s.
 
 ---
 

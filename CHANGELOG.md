@@ -1,6 +1,38 @@
 # Changelog
 
 ## unreleased — the camera gets its 3d view, and the files tab extracts
+- **The statusbar says whether you are actually on the plant switch.** When a
+  backup fails on the floor, the first question is whether it is you, the
+  network, or the device, and until now the app had no opinion at all. A pill
+  now sits between the status line and the version reading one of five things —
+  `no plant adapter`, `no link`, `no ip`, `no gateway`, `connected` — each
+  naming the next thing to check rather than just going red. It is read
+  entirely from this laptop: adapter link state, address, gateway and the
+  neighbour (ARP) table, straight out of `iphlpapi` through ctypes
+  (`netlink.py`). **The switch is never contacted** — no SSH, no SNMP, no
+  credentials anywhere in it. Two measurements shaped the design: the whole
+  read costs 12 ms (the PowerShell cmdlets that answer the same questions cost
+  3.8 s, which is why the discover dialog's adapter list was never poll-able),
+  and on a healthy plant segment 13 of 15 neighbours sit in ARP state `stale` —
+  so `stale` renders as *known and quiet*, never as a fault, or the panel would
+  cry wolf on a perfectly good network.
+- **Clicking it lists what is on that switch.** The OS's neighbour table merged
+  with the library: known devices by name, and anything answering that is *not*
+  in the library flagged rather than hidden — an unexpected device on a robot
+  subnet is exactly what you want to see. A device the laptop simply has not
+  spoken to since the cable went in shows a hollow ring and says so; it is
+  never painted as down. Devices on other subnets are honestly out of scope,
+  because they are reached through the gateway and cannot be seen from here.
+  A dot pulses only when that device's entry genuinely just refreshed, so a
+  blink always means real traffic. Which adapter counts as the plant link is
+  decided by where your own library devices live (on the dev machine: 83 on the
+  dongle, 0 on wi-fi, 0 on the tunnel) and the panel shows that reasoning and
+  lets you pin a different one — wi-fi is never promoted on a hunch, because
+  calling a phone hotspot "connected" would answer a question nobody asked.
+- **"check now" is one ARP request per listed address.** Layer 2 only, touching
+  no service on the device — strictly gentler than opening a camera's FTP or
+  SMB port — and it refreshes the very table the panel already reads, so there
+  is no second set of answers to disagree with the first.
 - **The files tab extracts to USB.** Every row grew a checkbox — tick one,
   shift-click a range, or take the header box, which selects exactly what the
   filter shows (the `tp` chip plus one click is every TP file in the backup).
