@@ -23,7 +23,7 @@ batch lands, or with `--check` to hear about drift).
 > When per-subsystem docs land, they supersede this file for their own area. This
 > map's remaining job is breadth: what exists, and where.
 
-**Scope.** 272 files / ~79,566 lines. Covers everything in the working tree except: the
+**Scope.** 272 files / ~79,661 lines. Covers everything in the working tree except: the
 `.git` internals, build outputs (`dist/`, `build/`, `__pycache__/`), the private
 `SampleBackup/` fixture tree, the `.rmd` model corpus (61 binary robot-model blobs
 that are input data, not source), and the two local-only real-plant reference files
@@ -119,7 +119,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/settings.py` | 103 | settings.json under %appdata% with atomic locked writes, plus app_dir, library_root, sim_root and logging setup | shared/infra | active |
 | `src/backupviewer/updatecheck.py` | 109 | github releases/latest check with version compare and a policy that only lets the frozen exe auto-check | shared/infra | active |
 | `src/backupviewer/web/css/base.css` | 555 | root css: theme variable contract (--bg/--accent/--edge/--panel), app shell layout, chrome bars, bgfx layers | theming | active |
-| `src/backupviewer/web/css/components.css` | 2357 | the app's single component stylesheet: cards, tables, pills, modals, plus per-tab styles for every subsystem | theming | active |
+| `src/backupviewer/web/css/components.css` | 2374 | the app's single component stylesheet: cards, tables, pills, modals, plus per-tab styles for every subsystem | theming | active |
 | `src/backupviewer/web/fonts/Orbitron-VariableFont_wght.ttf` | *38 KB* | bundled orbitron variable font, loaded by base.css @font-face and offered as the 'rog' ui font in settings | theming | vendored |
 | `src/backupviewer/web/index.html` | 152 | the single page: the two chrome rows (topbar with the screens button, per-screen toolbar), #view, jobstrip, statusbar, and the ordered script list | shared/infra | active |
 | `src/backupviewer/web/js/api.js` | 148 | promise wrapper over the pywebview bridge: {ok,data} envelope, solo/cvx-window sid injection, slow-call dedupe | shared/infra | active |
@@ -176,11 +176,11 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/web/js/tabs/search.js` | 158 | hidden #search route rendering backup-wide hits grouped by programs, io, registers, frames, macros, files | backup parsing | active |
 | `src/backupviewer/web/js/tabs/sysvars.js` | 193 | system vars tab: lazy collapsible $-variable tree with source-file tags; exports treeNode for other tabs | backup parsing | active |
 | `src/backupviewer/web/js/tabs/view3d.js` | 956 | 3d view tab: svg-projected dcs zones, orbit/pan/zoom + snap cube, posed fk arm, per-check side panel | 3D viewer | active |
-| `src/backupviewer/web/js/netstatus.js` | 367 | plant-link pill + drop panel: 4-state link chip, segment device list merged with the library, gentle arp recheck | backup capture | active |
+| `src/backupviewer/web/js/netstatus.js` | 379 | plant-link pill + drop panel: 4-state link chip, segment device list merged with the library, gentle arp recheck | backup capture | active |
 | `src/backupviewer/web/js/theme.js` | 310 | theme data + apply layer: maps 9 theme colors onto css vars, hex/contrast math, the custom-theme color editor | theming | active |
 | `src/backupviewer/web/js/theme_ui.js` | 269 | the theme picker row + drop panel: categories, credits, filter, hover-preview, edit/delete of custom themes | theming | active |
 | `src/backupviewer/web/js/update.js` | 135 | release-check UI: boot autocheck toast, statusbar update pill, about-box updates row with skip-version | shared/infra | active |
-| `src/backupviewer/web/js/util.js` | 410 | boots window.BV: esc/el/fmt/toast/copy, host-window fullscreen, modal+dirtyGuard, menu/dropPanel, collapsible | shared/infra | active |
+| `src/backupviewer/web/js/util.js` | 441 | boots window.BV: esc/el/fmt/toast/copy, host-window fullscreen, modal+dirtyGuard, menu/dropPanel, collapsible | shared/infra | active |
 | `src/backupviewer/web/js/workspace.js` | 383 | the multi-robot edit working set (BV.workspace): entry ids, buffers, persisted drafts, export payload | program editor | active |
 | `src/backupviewer/web/themes/*.json (28 files)` | 448 | 28 bundled read-only theme packs, each {id,name,category,colors{9 hex}} in monkeytype/sports/cyberpunk/vibes | theming | active |
 | `src/libraryimporter/__init__.py` | 6 | version + APP_NAME for the separate Library Importer app, and the note on where its brand strings live | LibraryImporter | active |
@@ -270,7 +270,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/ui_files_extract_probe.py` | 234 | hidden-window probe of the files-tab extract flow: tick/range/header selection against the filter, the extract modal, and the landed tree's shape | tests | active |
 | `tests/ui_fk_probe.py` | 135 | hidden-window probe holding BV.fk.chain equal to kinematics.chain_frames within 1e-6 across builtin chains plus the synthetic parallel-link arm | tests | active |
 | `tests/ui_logic_probe.py` | 227 | hidden-window probe of the camera logic tab: tab lights only on a script-bearing backup, calculation units lead the rail, the show-other toggle, script text renders whole | tests | active |
-| `tests/ui_netstatus_probe.py` | 288 | hidden-window probe of the plant-link pill: state→word table, panel open/close, and the honesty locks (absent is hollow, strangers are flagged, an unread probe dims) | tests | active |
+| `tests/ui_netstatus_probe.py` | 323 | hidden-window probe of the plant-link pill: state→word table, panel open/close, and the honesty locks (absent is hollow, strangers are flagged, an unread probe dims) | tests | active |
 | `tests/ui_probe.py` | 2108 | the original full-app probe: boots a real local backup and walks every tab, primitive and compare view *(untracked, local-only)* | tests | active |
 | `tests/ui_sim_export_probe.py` | 286 | hidden-window probe of the cv-x simulator-folder settings row and the load-cameras picker guard | tests | active |
 | `tests/ui_tabs_probe.py` | 275 | hidden-window probe of backup tabs: strip, per-backup memory, tear-off, and the solo pop-out window | tests | active |
@@ -293,23 +293,23 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 
 | subsystem | files | ~lines |
 |---|---:|---:|
-| tests | 82 | 23,194 |
-| shared/infra | 27 | 8,740 |
+| tests | 82 | 23,229 |
+| shared/infra | 27 | 8,771 |
 | docs | 12 | 6,405 |
+| theming | 34 | 6,036 |
 | backup parsing | 31 | 6,031 |
-| theming | 34 | 6,019 |
 | program editor | 5 | 4,929 |
 | library | 4 | 4,875 |
 | cameras | 15 | 4,524 |
 | 3D viewer | 16 | 3,836 |
-| backup capture | 6 | 2,759 |
+| backup capture | 6 | 2,771 |
 | flag scanning | 2 | 2,080 |
 | remote/mobile | 10 | 2,070 |
 | LibraryImporter | 11 | 1,395 |
 | compare engine | 5 | 1,355 |
 | tools/scripts | 5 | 1,087 |
 | build/config | 7 | 267 |
-| **total** | **272** | **79,566** |
+| **total** | **272** | **79,661** |
 
 > Counts are by *primary* subsystem only — a file appears once, so these add up to the
 > whole repo. The `tests` row is the largest because every probe and unit suite counts as

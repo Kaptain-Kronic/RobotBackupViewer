@@ -139,6 +139,41 @@ def probe(window):
         opened = poll(window, "!!document.querySelector('.bv-drop .net-panel')")
         check("panel.opens", bool(opened))
 
+        # THE placement lock. This panel hangs off the statusbar at the very
+        # bottom of the window, so if it is ever placed while empty, dropPanel
+        # measures an empty box (14px), tucks it just above the anchor, and the
+        # panel then grows 440px PAST the bottom of the screen - 8% of it
+        # visible. Assert it is fully on screen and actually uses the room.
+        geo = json.loads(js(window, """(function () {
+            var d = document.querySelector('.bv-drop');
+            var b = d.getBoundingClientRect();
+            var sb = document.getElementById('statusbar').getBoundingClientRect();
+            return JSON.stringify({
+                top: Math.round(b.top), bottom: Math.round(b.bottom),
+                h: Math.round(b.height), vh: window.innerHeight,
+                room: Math.round(sb.top)
+            });
+        })()""") or "{}")
+        check("panel.not_below_the_viewport", geo.get("bottom", 1e9) <= geo.get("vh", 0),
+              f"(bottom {geo.get('bottom')} vs viewport {geo.get('vh')})")
+        check("panel.not_clipped_above", geo.get("top", -1) >= 0, f"({geo})")
+        # it must earn its space: more than half the height available above the
+        # statusbar, or it has silently collapsed again
+        check("panel.uses_the_room",
+              geo.get("h", 0) > geo.get("room", 0) * 0.5,
+              f"(height {geo.get('h')} of {geo.get('room')} available)")
+        # pinned, not floated: it lives in the bottom slab so its position can
+        # never go stale, which is why scrolling the library behind it must NOT
+        # dismiss it - you read link dots while you work
+        check("panel.is_pinned_to_the_slab", js(window, """(function () {
+            var d = document.querySelector('.bv-drop');
+            return !!d && !!d.closest('#chrome-bottom');
+        })()"""))
+        js(window, "window.dispatchEvent(new Event('scroll', {bubbles:true}))")
+        time.sleep(0.3)
+        check("panel.survives_a_page_scroll",
+              js(window, "!!document.querySelector('.bv-drop .net-panel')"))
+
         # "all of the connection info" - the box must answer the whole question
         # without sending anyone to ipconfig, and every value is something the OS
         # told us rather than something we inferred

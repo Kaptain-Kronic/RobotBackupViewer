@@ -276,8 +276,15 @@ window.BV = {};
       attached = true;
       document.addEventListener("mousedown", onOutside, true);
       keyTarget.addEventListener("keydown", onKey, true);
-      window.addEventListener("scroll", onScroll, true);
-      window.addEventListener("resize", close);
+      /* scroll and resize close a FLOATING surface because its fixed coords go
+         stale the moment anything moves. A pinned one is laid out by its own
+         container and never goes stale, so closing it would just be rude — and
+         a live diagnostic you are reading while you scroll the library is
+         exactly the case that made this worth splitting. */
+      if (!opts.pinned) {
+        window.addEventListener("scroll", onScroll, true);
+        window.addEventListener("resize", close);
+      }
     }, 0);
     return { close: close };
   }
@@ -333,23 +340,47 @@ window.BV = {};
      Esc is captured on WINDOW, not document: a panel opened from inside a
      dialog must not let the dialog's own Esc handler (a document-capture
      listener registered first, so it would win) close the dialog underneath.
-     opts: {align: "right", onKey(e)->bool, onClose}. */
+
+     Returns {close, reflow}, or null when this call is the swallowed half of a
+     toggle.
+
+     TWO MOUNTS. By default the panel floats: fixed coords measured off the
+     anchor. **Then you must fill contentEl BEFORE calling**, because placement
+     measures the panel — an empty box gets placed as an empty box and then
+     grows off-screen once you fill it. That is not hypothetical: the plant-link
+     panel hangs off the statusbar, so its flip-above branch tucked an empty
+     14px box just over the anchor and the real content then ran 440px past the
+     bottom of the window, leaving 8% of it visible.
+
+     Pass opts.mount to sidestep measurement entirely: the panel is appended
+     into that element (which must be position:relative) and positioned by CSS
+     instead. Pin it by an edge it can grow away from — `bottom: 100%` over a
+     bottom bar — and content height stops mattering at all. A mounted panel is
+     also `pinned`: its coords cannot go stale, so page scroll and window resize
+     no longer close it.
+     opts: {align: "right", className, mount, onKey(e)->bool, onClose}. */
   BV.dropPanel = function (anchorEl, contentEl, opts) {
     opts = opts || {};
     var anchorNode = anchorEl && anchorEl.nodeType === 1 ? anchorEl : null;
     if (swallowReopen(anchorNode)) return null;
-    var panel = BV.el("div", { class: "bv-drop" });
+    var panel = BV.el("div", { class: "bv-drop" + (opts.className ? " " + opts.className : "") });
     var body = BV.el("div", { class: "bv-drop-body" });
     body.appendChild(contentEl);
     panel.appendChild(body);
-    document.documentElement.appendChild(panel);
-    placeFloat(panel, anchorEl, opts.align === "right");
-    return wireDismiss(panel, {
+    (opts.mount || document.documentElement).appendChild(panel);
+    function place() {
+      if (!opts.mount) placeFloat(panel, anchorEl, opts.align === "right");
+    }
+    place();
+    var handle = wireDismiss(panel, {
       anchorNode: anchorNode,
       escOnWindow: true,
+      pinned: !!opts.mount,
       onKey: opts.onKey,
       onClose: opts.onClose,
     });
+    handle.reflow = place;   /* no-op when mounted: CSS already tracks the size */
+    return handle;
   };
 
   /* ---- collapsible primitive ----

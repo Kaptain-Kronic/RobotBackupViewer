@@ -285,6 +285,10 @@
 
     prevLive = {};
     devices.forEach(function (d) { prevLive[d.ip] = d.dot === "live"; });
+
+    /* the list grows and shrinks as devices answer, so the box has to be
+       re-placed or it drifts off the bottom again */
+    if (panel && panel.reflow) panel.reflow();
   }
 
   function picker(p) {
@@ -339,13 +343,21 @@
 
   function toggle() {
     if (panel) { panel.close(); return; }
-    var p = BV.dropPanel(btn, buildPanel(), {
-      align: "right",
+    /* mounted into the bottom slab rather than floated: pinned by its bottom
+       edge it grows UPWARD as devices arrive and as the folds open, with no
+       measurement to get wrong. Floating it measured an empty box and dropped
+       the real content off the bottom of the screen. Being pinned also means
+       scrolling the library no longer closes it — you can watch the dots while
+       you work. */
+    var content = buildPanel();
+    if (last) paintPanel(last);
+    var p = BV.dropPanel(btn, content, {
+      className: "net-drop",
+      mount: document.getElementById("chrome-bottom"),
       onClose: function () { panel = null; panelBody = null; rowEls = {}; },
     });
-    if (!p) return;                 /* swallowed half of a toggle - it just closed */
+    if (!p) { panelBody = null; return; }  /* swallowed half of a toggle */
     panel = p;
-    if (last) paintPanel(last);
     tick(true);                     /* the panel wants the device list, so re-ask */
   }
 

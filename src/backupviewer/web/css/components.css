@@ -2296,6 +2296,23 @@ text.v3-ax-z { fill: var(--accent); }
 .theme-pick-search .search-box { max-width: none; }
 
 /* ---- plant link panel (netstatus.js) ---- */
+/* Mounted INSIDE #chrome-bottom (which is position:relative) rather than
+   floated, and pinned by its BOTTOM edge to the top of that slab. That single
+   choice is what makes it reliable: the panel grows upward as the device list
+   fills and as the folds open, so nothing has to measure it, and there is no
+   placement to go stale. Floating it did measure it — while it was still empty
+   — and put 92% of the panel below the bottom of the window.
+   Height is capped against the viewport, not in rem, so it uses the room a tall
+   window actually has while never becoming a full-screen takeover. */
+.bv-drop.net-drop {
+  position: absolute; inset: auto 1.65rem 100% auto;
+  width: min(34rem, 94vw);
+  max-height: min(72vh, calc(100vh - 7rem));
+  margin-bottom: 0.45rem;
+  /* above #toast and .card.expanded (60), below .cvx-remote (80) and the
+     modal root (90); it never opens from a dialog so it needs no more */
+  z-index: 70;
+}
 /* the list scrolls inside .bv-drop-body, which is what keeps wireDismiss's
    scroll-to-close from firing on our own scrolling */
 .net-head { padding: 0.25rem 0.35rem 0.5rem; border-bottom: 1px solid var(--edge-soft); }
