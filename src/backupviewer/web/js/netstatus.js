@@ -168,16 +168,17 @@
     if (d.gateway) tag = BV.pill("gw", "acc");
     else if (!d.in_library) {
       tag = BV.pill("not in library", "ghost");
-      if (d.vendor_kind) name = d.vendor_kind + " (unlisted)";
+      name = d.vendor_kind ? d.vendor_kind + " (unlisted)" : "unknown device";
     } else if (d.device_type && d.device_type.indexOf("camera") === 0) {
       tag = BV.pill(d.device_type === "camera-mtx" ? "mtx cam" : "cv-x cam", "acc");
     }
     el.children[1].textContent = name || "—";
-    /* the address earns its place only when it IS the identifier: for the
-       gateway and for anything not in the library it is the only handle you
-       have, but beside a robot's own name it is a column of noise. It stays in
-       the row's tooltip either way, so nothing is lost. */
-    el.children[2].textContent = (!d.in_library || !d.name) ? d.ip : "";
+    /* only the gateway shows its address - it is the one row whose address the
+       facts block cross-references and the one a tech types into a ping. Every
+       other row reads by name (or by vendor for a stranger); the address and
+       mac stay a hover away in the tooltip, so nothing is lost, and the list
+       stops being a wall of numbers. */
+    el.children[2].textContent = d.gateway ? d.ip : "";
     el.children[3].innerHTML = tag;
     el.title = d.ip + (d.mac ? " · " + d.mac : "")
       + (d.dot === "absent"

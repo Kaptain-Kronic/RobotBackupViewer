@@ -222,18 +222,25 @@ def probe(window):
         check("panel.stranger_flagged", "not in library" in stranger.get("tag", ""),
               f"({stranger})")
 
-        # the address earns its place only when it IS the identifier. Beside a
-        # robot's own name it is a column of noise, so it is dropped there and
-        # kept in the tooltip; for the gateway and anything unlisted it is the
-        # only handle you have, so it must still be on screen.
+        # only the GATEWAY shows an address (Jake's call): every other row reads
+        # by name, or by vendor / "unknown device" for a stranger, with the
+        # address and mac kept a hover away in the tooltip.
         named = by_ip.get("192.0.2.40") or {}
         check("panel.named_device_hides_its_ip", named.get("shown_ip") == "",
               f"({named})")
-        check("panel.stranger_still_shows_its_ip",
-              stranger.get("shown_ip") == "192.0.2.77", f"({stranger})")
-        check("panel.gateway_still_shows_its_ip",
+        check("panel.stranger_hides_its_ip_too",
+              stranger.get("shown_ip") == "", f"({stranger})")
+        check("panel.stranger_still_reads_as_something",
+              bool(stranger.get("name") and stranger.get("name") != "—"),
+              f"({stranger})")
+        check("panel.gateway_is_the_one_address_shown",
               (by_ip.get("192.0.2.1") or {}).get("shown_ip") == "192.0.2.1",
               f"({by_ip.get('192.0.2.1')})")
+        check("panel.stranger_ip_in_tooltip", js(window, """(function () {
+            var r = [...document.querySelectorAll('.bv-drop .net-row')]
+                .find(function (x) { return x.getAttribute('data-ip') === '192.0.2.77'; });
+            return !!r && r.title.indexOf('192.0.2.77') === 0;
+        })()"""))
         check("panel.ip_stays_in_the_tooltip", js(window, """(function () {
             var r = [...document.querySelectorAll('.bv-drop .net-row')]
                 .find(function (x) { return x.getAttribute('data-ip') === '192.0.2.40'; });
