@@ -1,6 +1,28 @@
 # Changelog
 
-## unreleased — the camera gets its 3d view, the files tab extracts, and the statusbar finds the switch
+## unreleased — the camera gets its 3d view, backups drag in, and the statusbar finds the switch
+- **Existing backups drag-and-drop into the library.** `+ add robot` grew a
+  third entry — *import backup folder…* — for the coworker question "how do I
+  add a backup I already have?" without teaching anyone the folder
+  convention. Drop a folder (or browse to it): one robot's backup or a whole
+  slice of robots, dated trees, bare flat folders, even a stray `Latest/`
+  mirror — the scan groups it per robot (mirrors dedup against their dated
+  twins), reads device types off the same markers the library trusts, and
+  shows it all pre-ticked with sizes and honest leftovers (junk says "no
+  backups found inside", a folder already under the root says so, a capped
+  walk says it was capped). Pick plant &amp; line (the discover flow's own
+  step, now shared) and the copy runs in the background: file-for-file
+  through the MAX_PATH-safe path with modified times kept, staged to
+  `.__part` and verified before landing, *never* touching the source. A
+  snapshot that already exists lands as a skipped duplicate when it verifies
+  identical, a reported conflict when it doesn't — never an overwrite. No
+  fabricated sidecars: a bare folder's dated home comes from its own
+  `backup.json` when it has one, and a folder-mtime stand-in is labeled
+  "date from folder timestamp" right in the list. The landed tree is adopted
+  by the normal rescan, exactly as if Explorer had copied it in — the import
+  is that same supported path, with the plant/line question asked for you.
+  (A drop while the import window is closed gets a pointer to the flow —
+  never a silent ignore, never a surprise import.)
 - **CV-X cameras join the camera wall.** The cam lens used to tile Matrox
   only; Keyence controllers now tile beside them, each tile mirroring the
   controller's live screen through the same remote-desktop bridge the overlay
