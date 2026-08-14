@@ -1,6 +1,19 @@
 # Changelog
 
 ## unreleased — the camera gets its 3d view, and the files tab extracts
+- **CV-X cameras join the camera wall.** The cam lens used to tile Matrox
+  only; Keyence controllers now tile beside them, each tile mirroring the
+  controller's live screen through the same remote-desktop bridge the overlay
+  uses — strictly view-only: no input path is ever wired to a tile, and the
+  mouse endpoint refuses a tile session outright. Tiles dial staggered under
+  the grid's existing per-beat cap, back off honestly when a camera is off or
+  another terminal holds its one remote slot (and say which of those it is),
+  and hold that slot only while actually being watched: sessions are leases
+  the grid renews each tick, and a reaper hangs up anything unwatched for
+  ~8 seconds — lens flipped, window hidden, tile scrolled away, an overlay or
+  modal up — so the slot frees itself for Keyence Terminal on another PC.
+  Clicking a tile opens the full remote by adopting the tile's live session;
+  the controller is never asked for its slot twice.
 - **The CV-X remote paints its final frame.** When the controller's screen
   settled, the browser held the last frame of the burst un-painted until the
   mouse moved — Chromium's multipart parser releases frame N only when frame

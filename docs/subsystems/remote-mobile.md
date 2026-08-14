@@ -4,8 +4,10 @@
 (plus this pass's own two comment corrections in `cvx_remote.py` and
 `INVENTORY.md`, §9 item 1 — both 1-for-1 swaps, so cites into those files
 hold). Updated 2026-08-14 by the stream-flush pass (branch off `main` @
-`b1ef1c9`): §4a rendering shortcut, §7 multipart trap, §8 counts. Line-number
-cites drift with edits; the anchor commit is the reference.*
+`b1ef1c9`): §4a rendering shortcut, §7 multipart trap, §8 counts — and by the
+cvx-live-tiles pass on top of it: §1 fifth surface, §5 invariants 5+9, §6
+ladder 13, §9 item 3 resolved. Line-number cites drift with edits; the anchor
+commit is the reference.*
 
 Covers: src/backupviewer/cvx_remote.py, src/backupviewer/phoneview.py,
 src/backupviewer/qr.py, src/backupviewer/screengrab.py,
@@ -54,11 +56,9 @@ src/backupviewer/web/js/phoneview.js
 
 ## 1. What it is
 
-Four ways to put a live camera picture — or a live camera *screen* — in front
+Five ways to put a live camera picture — or a live camera *screen* — in front
 of a tech standing at the equipment, none of which exist while the app is only
-reading a backup. All four surface through the same two entry points (the
-camera-remote button on the photos and files tabs, and the 📱 button in the top
-bar), and all four vanish when there is nothing to drive:
+reading a backup. All of them vanish when there is nothing to drive:
 
 1. **The CV-X remote** (`cvx_remote.py` + `cvxremote.js`) — a full
    screen-mirror-plus-mouse remote desktop to a Keyence CV-X controller, spoken
@@ -81,8 +81,17 @@ bar), and all four vanish when there is nothing to drive:
    QR handoff, but the phone mirrors whatever one of *our* windows is showing (a
    camera remote, a popped-out backup) by grabbing that window's client area. No
    rectangle to pick; it follows the window.
+5. **The cam-lens tiles** (`home.js` multicam + the `cvx_tile_*` endpoints in
+   `api.py`) — the library's camera wall. A Matrox tile polls the HMI frame the
+   camera already serves; a CV-X tile is a fifth consumer of the same MJPEG
+   bridge the overlay uses, mirroring the controller's screen **view-only**: no
+   input path is wired to a tile, and `cvx_remote_mouse` refuses a tile session
+   outright. Tile sessions are *leases* — renewed by the grid every tick the
+   tile is actually on screen, hung up by a reaper within `CVX_TILE_TTL` (8 s)
+   of the wall not being watched — and clicking a tile *adopts* its live
+   session into the full remote (§5 invariants 5 and 9).
 
-The subsystem's centre of gravity is the CV-X protocol; the other three are
+The subsystem's centre of gravity is the CV-X protocol; the rest is
 comparatively ordinary once the trust posture is stated. Everything below
 spends its length accordingly.
 
@@ -352,8 +361,12 @@ What must stay true, what enforces it, what breaks if it doesn't.
 5. **The one remote slot is always released before it is re-taken.** A CV-X has
    exactly one remote slot. Reload hangs up, waits, then redials under the same
    session id (`api.py:2170-2189`); a pop-out *adopts* rather than re-dials
-   (`cvx_remote_info`); closing a window or the app stops the session; a failed
-   reload rebinds the registry to the new id. All test-enforced (`test_cvx_window.py`).
+   (`cvx_remote_info`); a clicked cam-lens tile *adopts* too (`cvx_tile_adopt`
+   promotes the leased session and the overlay takes it over); a tile dial is
+   idempotent per ip and answers `CVX_BUSY` rather than contending with an
+   overlay; closing a window or the app stops the session; a failed reload
+   rebinds the registry to the new id. All test-enforced (`test_cvx_window.py`,
+   `test_cvx_tiles.py`).
 6. **Only actual video bodies join the frame.** Control traffic on 8504 (op1
    acks, op6 responses) is excluded from the image buffer
    (`cvx_remote.py:320-327`); a frame comes out byte-identical across arbitrary
@@ -369,6 +382,15 @@ What must stay true, what enforces it, what breaks if it doesn't.
    tokens gate every route; unknown paths 404 with no reflection; the phone
    never reaches the camera VLAN, only the laptop (`phoneview.py:10-20`).
    Test-enforced (`test_unknown_paths_are_404`, `test_api_qr_renders_only_active_share_urls`).
+9. **A tile mirrors; it never drives — and an unwatched slot frees itself.**
+   Tile sessions carry `video_only`, which `cvx_remote_mouse` refuses
+   (`api.py`), and no tile wires an input handler. Their leases are renewed
+   only by a grid pass that is actually showing them (`cvx_tile_sync`), so
+   every path off the wall — lens flip, hidden window, scrolled-away tile, an
+   open modal or overlay, a crashed frontend — converges on the same reaper,
+   which hangs up within `CVX_TILE_TTL` and gives the controller's single
+   remote slot back to whoever needs it. Test-enforced (`test_cvx_tiles.py`;
+   the adopt/redial choreography in `ui_batch_probe.py`).
 
 ## 6. Failure modes
 
@@ -425,6 +447,15 @@ code does about it. "Test-enforced" = a unit test or the probe pins it;
     WebView2 with `CvxRemoteSession` faked (nothing dials a camera); the bar
     shape, the reload-keeps-the-id rule, fullscreen-through-the-window, and the
     pop-out adopt are all asserted on real DOM (`ui_cvxremote_probe.py`).
+13. **A cam-lens tile can't get its camera** → a failed dial backs off
+    exponentially (4/8/16 s → capped 30 s) and the tile says WHICH dark it is:
+    `CVX_BUSY` reads "in use — another terminal holds it", anything else "no
+    image — not answering" (`home.js` camTile). A session python reports dead
+    on sync is dropped and redialed on the same backoff. A popped-out remote
+    doesn't pause the grid (the pause check sees main-DOM overlays only), so
+    that camera's tile lands in the honest-busy state rather than silence —
+    known, acceptable. Test-enforced at the api layer (`test_cvx_tiles.py`);
+    the tile ladder is probe-covered for the dial/adopt/redial legs.
 
 ## 7. Traps paid for
 
@@ -590,9 +621,11 @@ changes). Evidence attached.
    (`photos.js:495-504`, `files.js:60-61`: `isCvx ? openCvxRemote : openMtxRemote`).
    So a CV-X camera surfaced as a home tile would open the Matrox web-UI overlay —
    which cannot connect to a CV-X (no web UI on port 80) — instead of the screen
-   mirror. Worth confirming whether a `camera-keyence` entry can reach the tile
-   path (the tile's `c` object carries `device_type`), then giving `camTile` the
-   same branch. Found this pass.
+   mirror. Found 2026-08-03.
+   > **✅ RESOLVED 2026-08-14 (the cvx-live-tiles pass).** The question was
+   > moot-by-gate then (a CV-X couldn't reach the grid); now it tiles, and the
+   > click branch adopts the tile's live session into the CV-X overlay —
+   > probe-enforced (`cam.cvx_tile_click_adopts`, `cam.adopted_not_redialled`).
 4. **`-EncodedCommand` in the UAC prompt.** The elevated firewall payload is
    base64, so a user granting admin cannot read it in the Windows prompt (§5
    invariant 4, §7). The answer may well be "acceptable, because the plain-text

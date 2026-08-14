@@ -142,20 +142,22 @@ one click backs up the robot + all its cameras together.
   window boots on a `#cvx=` fragment and *adopts* the live session: the
   controller's single remote slot is never asked for twice.
 
-- 🔨 **CV-X cameras in the cam lens — live tiles** (claimed 2026-08-14, with
-  its prerequisite stream-flush fix) — the multicam wall tiles Keyence
-  controllers beside Matrox by mirroring each screen through the shipped
-  remote-desktop bridge, strictly view-only: no input path is ever wired to a
-  tile, and `cvx_remote_mouse` refuses a tile session outright. One session
-  per controller (that is all the CV-X offers); sessions are leased by the
-  visible grid and reaped within seconds whenever the wall is not being
-  watched — lens flipped, window hidden, tile scrolled away, an overlay or
-  modal up — so the controllers' single remote slots free up for other
-  terminals. Clicking a tile *adopts* its live session into the full remote
-  (the pop-out pattern), never a second dial. Prerequisite landed first: the
-  MJPEG bridge re-sends a settled frame once after a 150 ms idle, because
-  Chromium's multipart parser only paints part N when part N+1's boundary
-  arrives — without that, a tile of a quiet camera would simply stay blank.
+- ✅ **CV-X cameras in the cam lens — live tiles** (claimed and landed
+  2026-08-14, on `cvx-live-tiles` stacked on the stream-flush fix) — the
+  multicam wall tiles Keyence controllers beside Matrox by mirroring each
+  screen through the shipped remote-desktop bridge, strictly view-only: no
+  input path is ever wired to a tile, and `cvx_remote_mouse` refuses a tile
+  session outright. One session per controller (that is all the CV-X offers);
+  sessions are leased by the visible grid (`cvx_tile_sync` per tick) and
+  reaped within `CVX_TILE_TTL` (8 s) whenever the wall is not being watched —
+  lens flipped, window hidden, tile scrolled away, an overlay or modal up —
+  so the controllers' single remote slots free up for other terminals.
+  Clicking a tile *adopts* its live session into the full remote (the pop-out
+  pattern), never a second dial. Prerequisite landed first: the MJPEG bridge
+  re-sends a settled frame once after a 150 ms idle, because Chromium's
+  multipart parser only paints part N when part N+1's boundary arrives —
+  without that, a tile of a quiet camera would simply stay blank (live-proven:
+  a real CV-X pushes exactly one frame at connect, then silence).
 
 - ✅ **A CV-X backup opens in the simulator** — the pull lands under `SD1/`
   with the simulator's `workspace.xml` beside it, so the camera folder in a
