@@ -33,6 +33,7 @@ from . import ftpbackup
 from . import healthscan
 from . import keyence_workspace
 from . import keyencebackup
+from . import libimport
 from . import library
 from . import modeldb
 from . import mtxbackup
@@ -187,23 +188,9 @@ def _endpoint(fn):
     return wrapper
 
 
-def _tree_size(root) -> tuple:
-    r"""(file count, total bytes) under `root`, walked through the \\?\ prefix so a
-    deep camera tree is measured rather than silently reported as empty (the same
-    MAX_PATH trap that once emptied the photos index). Best effort: an unreadable
-    file is skipped, never raised - this only feeds a size label."""
-    files = total = 0
-    try:
-        for dirpath, _dirs, names in os.walk(ftpbackup.long_path(root)):
-            for n in names:
-                try:
-                    total += os.path.getsize(os.path.join(dirpath, n))
-                    files += 1
-                except OSError:
-                    continue
-    except OSError:
-        pass
-    return files, total
+# promoted into libimport (the import scan sizes drafts with the same walk);
+# the local name stays so every size-label call site reads unchanged
+_tree_size = libimport.tree_size
 
 
 def _require_ip(spec: dict) -> str:
@@ -380,6 +367,14 @@ class Api:
         self._lib_progress_lock = threading.Lock()
         self._scan_thread: threading.Thread | None = None  # the one background library scan
         self._scan_thread_lock = threading.Lock()
+        # drop-import copy job (one at a time): progress snapshot for the UI
+        # poll + the cancel event the modal's cancel button sets
+        self._import_progress = {"active": False, "robot": "", "robot_no": 0,
+                                 "robot_total": 0, "bytes_done": 0,
+                                 "bytes_total": 0, "results": [], "cancelled": False}
+        self._import_lock = threading.Lock()
+        self._import_thread: threading.Thread | None = None
+        self._import_cancel: threading.Event | None = None
 
     def bind(self, window, initial_backup: str | None = None):
         self._window = window
@@ -423,6 +418,10 @@ class Api:
     def _backups_active(self) -> bool:
         return self._active_backup_count() > 0
 
+    def _import_active(self) -> bool:
+        t = self._import_thread
+        return t is not None and t.is_alive()
+
     def _confirm_close(self):
         """pywebview `closing` handler: returning False keeps the window open.
         Closing kills the daemon backup threads mid-download (the .part protocol
@@ -447,8 +446,8 @@ class Api:
         while True:
             time.sleep(self._WATCH_POLL_S)
             try:
-                if self._backups_active():
-                    continue
+                if self._backups_active() or self._import_active():
+                    continue    # both write bursts into the watched tree
                 sig = library.scan_signature(settings.library_root())
                 last, pending, fire = _watch_step(last, pending, sig)
                 # fire only when the tree differs from what the UI last saw:
@@ -4256,3 +4255,116 @@ class Api:
             return res
 
         return self._claim_tree_changes(apply)
+
+    # -- backup-folder import (drag-and-drop) ---------------------------------
+    # A dropped tree OUTSIDE the library root is scanned (libimport.scan_paths),
+    # confirmed in the UI, then copied in on a background thread - after which
+    # the NORMAL rescan adopts the folders exactly like an Explorer copy (no
+    # hand registration, no _claim_tree_changes: the tree is honestly dirty
+    # until the scan has looked at it).
+
+    def handle_drop(self, event) -> None:
+        """pywebview DOM drop handler (wired by app._wire_drop, not called over
+        the bridge): native drops only surface real OS paths on the PYTHON side
+        (`pywebviewFullPath`); the paths are pushed to JS, which decides what
+        the drop means - the import modal scans them, anywhere else shows a
+        hint toast pointing at + add robot."""
+        files = ((event or {}).get("dataTransfer") or {}).get("files") or []
+        paths = [f.get("pywebviewFullPath") for f in files
+                 if isinstance(f, dict) and f.get("pywebviewFullPath")]
+        w = self._window
+        if not paths or w is None:
+            return
+        try:
+            w.evaluate_js("window.BV && BV.importDrop && BV.importDrop(%s)"
+                          % json.dumps(paths))
+        except Exception:  # noqa: BLE001 - window mid-teardown at app exit
+            pass
+
+    @_endpoint
+    def import_scan(self, paths: list):
+        """What a drop/browse holds: per-robot drafts + honest leftovers.
+        Read-only - nothing is copied until import_start."""
+        existing = [{"plant": e.get("plant", ""), "line": e.get("line", ""),
+                     "robot": e.get("robot", ""), "id": e.get("id", "")}
+                    for e in library.load().get("robots", [])]
+        return libimport.scan_paths(paths or [], settings.library_root(), existing)
+
+    @_endpoint
+    def import_start(self, drafts: list, plant: str = "", line: str = ""):
+        """Copy the chosen drafts under plant/line on a background thread
+        (poll import_progress). One import at a time, and never during a
+        backup - both write file bursts into the same watched tree."""
+        if not (line or "").strip():
+            raise ApiError("BAD_SPEC", "a line name is required")
+        if not drafts:
+            raise ApiError("BAD_SPEC", "nothing is selected to import")
+        if self._backups_active():
+            raise ApiError("BUSY", "a backup is running - import when it finishes")
+        if self._import_active():
+            raise ApiError("BUSY", "an import is already running")
+        root = Path(settings.library_root())
+        try:
+            root.mkdir(parents=True, exist_ok=True)   # a brand-new library is BUILT, not refused
+        except OSError as ex:
+            raise ApiError("BAD_PATH",
+                           f"could not create the library folder {root}: {ex}")
+        ids = {e.get("id") for e in library.load().get("robots", []) if e.get("id")}
+        cancel = threading.Event()
+        with self._import_lock:
+            self._import_progress = {
+                "active": True, "robot": "", "robot_no": 0,
+                "robot_total": len(drafts), "bytes_done": 0,
+                "bytes_total": sum(int(d.get("bytes") or 0) for d in drafts),
+                "results": [], "cancelled": False}
+        self._import_cancel = cancel
+        t = threading.Thread(
+            target=self._import_runner,
+            args=(list(drafts), (plant or "").strip(), line.strip(), root, ids, cancel),
+            name="libimport", daemon=True)
+        self._import_thread = t
+        t.start()
+        return {"started": len(drafts)}
+
+    def _import_runner(self, drafts, plant, line, root, existing_ids, cancel):
+        def tick(ev):
+            with self._import_lock:
+                p = self._import_progress
+                if "robot" in ev:
+                    p["robot"] = ev["robot"]
+                    p["robot_no"] += 1
+                if "bytes" in ev:
+                    p["bytes_done"] += ev["bytes"]
+
+        try:
+            out = libimport.run_import(drafts, plant, line, root,
+                                       progress=tick, cancel=cancel,
+                                       existing_ids=existing_ids)
+        except Exception:  # noqa: BLE001 - a copy crash must not kill the app
+            log.exception("drop-import failed")
+            out = {"results": [{"robot": "", "dest": "", "status": "error",
+                                "copied": 0, "duplicates": 0, "conflicts": 0,
+                                "errors": ["internal error - see app.log"]}],
+                   "cancelled": False}
+        with self._import_lock:
+            self._import_progress.update(active=False, results=out["results"],
+                                         cancelled=out["cancelled"])
+        # landed like any Explorer copy: the normal rescan adopts it and
+        # pushes library-updated when the cache settles
+        self._start_background_scan(settings.library_root())
+
+    @_endpoint
+    def import_progress(self):
+        """The running (or last finished) import's snapshot - polled by the
+        progress modal. `results` fills in only once the copy ends."""
+        with self._import_lock:
+            return dict(self._import_progress)
+
+    @_endpoint
+    def import_cancel(self):
+        """Stop after the file in flight; snapshots already landed stay (they
+        are complete and verified), the one mid-copy is abandoned."""
+        c = self._import_cancel
+        if c is not None:
+            c.set()
+        return {"cancelling": c is not None}

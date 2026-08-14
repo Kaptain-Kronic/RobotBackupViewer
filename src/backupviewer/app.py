@@ -95,6 +95,22 @@ def _relaunch_cmd() -> list[str]:
     return [sys.executable] + sys.argv
 
 
+def _wire_drop(window, api: Api) -> None:
+    """Native file drops only surface real OS paths through a PYTHON-side DOM
+    subscription (the JS drop event's File objects carry no path) - the same
+    wiring LibraryImporter proved. Main window only; wired after page load;
+    failure is non-fatal (the import modal's browse button covers everything)."""
+    def wire(*_a):
+        try:
+            from webview.dom import DOMEventHandler
+            window.dom.document.events.drop += DOMEventHandler(
+                api.handle_drop, prevent_default=True)
+            log.info("drag-drop armed")
+        except Exception:  # noqa: BLE001 - surface varies across pywebview versions
+            log.exception("drag-drop unavailable - browse still works")
+    window.events.loaded += wire
+
+
 def _next_boot_action(failed: bool, mode: str, rescued: bool) -> str:
     """After webview.start() returns: 'ok', 'give-up' (a rescue already
     failed - never chain relaunches), or which mode to relaunch into."""
@@ -155,6 +171,7 @@ def main(argv=None) -> int:
         background_color=BG_FALLBACK,
     )
     api.bind(window, initial_backup=args.backup)
+    _wire_drop(window, api)
 
     watch = _WebView2FailureWatch(window)
     logging.getLogger("pywebview").addHandler(watch)
