@@ -42,7 +42,12 @@ BUDGET = {
     # density landed.
     "editor_open": 110,   # double-click a note -> box is there
     "editor_close": 80,
-    "star_toggle": 500,   # pins the row + rebuilds the strip
+    # rebaselined 500 -> 150 with the surgical star repaint (2026-08): a
+    # toggle now redraws the star + favorites strip only, measured 49 on the
+    # day it landed. The cliff this guards is a full tree rebuild sneaking
+    # back onto the click path — ~490ms here at 2400 rows, which the old 500
+    # budget sat 3% under: it asserted this machine's speed, not the cliff.
+    "star_toggle": 150,   # pins the row + rebuilds the strip (never the tree)
     "shift_range": 800,   # selecting ~900 rows at once
     "picker_open": 900,   # the link/compare picker builds its own tree
 }
@@ -154,9 +159,14 @@ def probe(window, rows):
         check("editor.newline_cheap", t.get("newline", 999) <= BUDGET["keystroke"] * 2,
               f"({t.get('newline')}ms)")
 
-        # your place in the list survives a rebuild. Rows off screen have
-        # ESTIMATED heights, so restoring a raw pixel offset drifts (measured
-        # ~40 robots) - home.js anchors on the top robot instead.
+        # your place in the list survives the two shapes of repaint. Rows off
+        # screen have ESTIMATED heights, so restoring a raw pixel offset
+        # drifts (measured ~40 robots) - home.js anchors on the top robot
+        # instead. A star toggle is the SURGICAL shape (the strip gains a row
+        # above you, no rebuild); a sort-header click is a full reordered
+        # rebuild — starring used to be the rebuild trigger here, so when it
+        # went surgical the rebuild check had to move to a trigger that still
+        # rebuilds.
         r = json.loads(js(window, """(function(){
           var view = document.getElementById('view');
           function topRobot() {
@@ -177,10 +187,18 @@ def probe(window, rows):
           document.querySelectorAll('.lib-robot')[1500].querySelector('.lib-fav').click();
           var after = topRobot();
           document.querySelector('.lib-favs .lib-fav').click();      /* undo */
-          return JSON.stringify({before: before, after: after});
+          var before2 = topRobot();
+          /* the active header re-renders on click — re-query for the undo */
+          document.querySelector('.hlc-cell.hlc-sort.on').click();   /* flip dir */
+          var after2 = topRobot();
+          document.querySelector('.hlc-cell.hlc-sort.on').click();   /* restore */
+          return JSON.stringify({before: before, after: after,
+                                 before2: before2, after2: after2});
         })()""") or "{}")
-        check("scroll.anchored_across_rebuild", r.get("before") == r.get("after"),
+        check("scroll.anchored_across_star", r.get("before") == r.get("after"),
               f"(top row {r.get('before')} -> {r.get('after')})")
+        check("scroll.anchored_across_rebuild", r.get("before2") == r.get("after2"),
+              f"(top row {r.get('before2')} -> {r.get('after2')})")
 
         # shift+click across rows that were never on screen. This is the one
         # that cost 42 SECONDS: BV.checklist asked offsetParent per row, and

@@ -29,6 +29,7 @@
   var _lastData = null;         /* last lib_list payload — filter re-renders without a refetch */
   var _liveTargets = null;      /* BV.jobs.activeTargets() snapshot, taken once per tree paint */
   var _camCounts = {};          /* robot id -> linked-camera count, built once per tree paint */
+  var _shownList = [];          /* the tree paint's post-hidden-filter list — repaintFavorite feeds it back to favSection */
   var _viewMode = "";           /* backup | multicam; set by a user flip, else home_view is read live */
   var _camTimer = null;         /* multi-cam live-image refresher (self-stops off-screen) */
   var _camRobotNames = {};      /* robot id -> name, for the tiles' "↳ robot" note */
@@ -782,6 +783,38 @@
     return node;
   }
 
+  /* a star toggle repaints ONLY what it changes: this robot's star (every
+     rendered copy) and the favorites strip it joins or leaves — the same
+     surgical rule as repaintNotes. The tree itself never moves on a star:
+     robotComparator doesn't sort on favorite, and the cam lens (which does)
+     has no star buttons — yet rebuilding it anyway was a ~490ms stall at
+     plant scale. */
+  function repaintFavorite(r) {
+    if (!_libWrap || !document.body.contains(_libWrap)) return;
+    var body = _libWrap.querySelector(".home-lib-body");
+    if (!body || !_lastData) { refresh(); return; }
+    _libWrap.querySelectorAll('.lib-robot[data-robot-id="' + r.id + '"] .lib-fav')
+      .forEach(function (btn) {
+        btn.classList.toggle("on", !!r.favorite);
+        btn.textContent = r.favorite ? "★" : "☆";
+        btn.title = r.favorite ? "unpin from favorites"
+                               : "pin to favorites (top of the library)";
+      });
+    /* the strip grows/shrinks ABOVE the viewport when you're deep in the
+       tree — anchor the scroll across the swap exactly like a rebuild does */
+    saveLensScroll();
+    var old = body.querySelector(".lib-favs");
+    var next = favSection(_shownList);
+    if (old && next) old.replaceWith(next);
+    else if (old) old.remove();
+    else if (next) {
+      var cols = body.querySelector(".home-lib-cols");
+      body.insertBefore(next, cols ? cols.nextSibling : body.firstChild);
+    }
+    restoreLensScroll();
+    reattachProgress();   /* a strip copy of a mid-backup robot gets its bar back */
+  }
+
   /* the sticky column-label row — Explorer's details header. One per render,
      on the shared --librow-grid template so labels align with every panel's
      cells; name / ip / last click through to the existing sort modes. */
@@ -863,6 +896,7 @@
       _cl.sync();
       return;
     }
+    _shownList = shownList;
     var res = _tree.render(body,
       { robots: shownList, emptyPlants: emptyPlants, emptyLines: emptyLines },
       { q: _filter, cmp: robotComparator() });
@@ -900,9 +934,10 @@
     ctl.appendChild(cb);
 
     /* the star lives by the checkbox (both are "act on this row" controls).
-       Toggling is INSTANT: flip the cached entry and repaint from cache — a
-       lib_list here re-walks the whole tree, seconds at plant scale — then
-       persist in the background and revert if the save fails. */
+       Toggling is INSTANT: flip the cached entry and surgically repaint the
+       star + strip (a lib_list here re-walks the whole tree, seconds at
+       plant scale; even a from-cache tree rebuild is a visible stall) —
+       then persist in the background and revert if the save fails. */
     var favBtn = BV.el("button", { class: "lib-fav" + (r.favorite ? " on" : ""),
       title: r.favorite ? "unpin from favorites" : "pin to favorites (top of the library)" },
       r.favorite ? "★" : "☆");
@@ -910,10 +945,10 @@
       e.stopPropagation();
       var want = !r.favorite;
       r.favorite = want;
-      rerenderFromCache();
+      repaintFavorite(r);
       BV.api.call("lib_set_favorite", r.id, want).catch(function (err) {
         r.favorite = !want;
-        rerenderFromCache();
+        repaintFavorite(r);
         BV.toast(err.message);
       });
     });
