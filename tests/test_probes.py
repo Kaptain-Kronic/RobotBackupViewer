@@ -56,6 +56,7 @@ PROBES = [
     "ui_edit_probe.py",
     "ui_files_extract_probe.py",
     "ui_fk_probe.py",
+    "ui_import_probe.py",
     "ui_logic_probe.py",
     "ui_sim_export_probe.py",
     "ui_tabs_probe.py",

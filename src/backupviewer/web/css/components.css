@@ -2077,6 +2077,22 @@ button.btn.danger:disabled { opacity: 0.5; cursor: default; }
   .disc-left { flex: none; }
 }
 
+/* import backup folder: the drop zone + scan leftovers. Colors derive from
+   the theme variables (drag state tints with the accent, never a hardcode). */
+.imp-drop {
+  border: 2px dashed var(--sub-alt); border-radius: var(--radius);
+  padding: 1.2rem 0.8rem; text-align: center; color: var(--sub);
+  display: flex; flex-direction: column; gap: 0.2rem;
+}
+.imp-drop.drag {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text);
+}
+.imp-drop-big { font-size: 0.95rem; font-weight: 600; }
+.imp-extras { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.78rem; }
+.imp-extras:empty { display: none; }
+
 /* discover: adapter picker + advanced toggle */
 .disc-adapter { width: 100%; text-align: left; justify-content: flex-start; }
 .disc-adapter::after { content: "▾"; margin-left: auto; opacity: 0.6; }

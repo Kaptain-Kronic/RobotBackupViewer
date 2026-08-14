@@ -513,10 +513,12 @@
       title: "add a robot to the library" }, "+ add robot");
     addBtn.addEventListener("click", function () {
       /* existing backups join the library by being COPIED into the library
-         folder (Explorer) — the scan/watcher picks them up. Adding here is for
-         robots that don't have backup data yet. */
+         folder — with Explorer (the scan/watcher picks them up) or via the
+         import flow, which is that same copy with plant/line asked for you.
+         discover/manually are for robots that don't have backup data yet. */
       BV.menu(addBtn, [
         { label: "discover on network", onClick: discoverFlow },
+        { label: "import backup folder…", onClick: importFlow },
         { label: "manually", onClick: function () { editRobotModal(null, true); } },
       ]);
     });
@@ -2385,6 +2387,41 @@
     return function stop() { clearInterval(iv); };
   }
 
+  /* the shared "which plant &amp; line?" second step of the add flows
+     (discover, import): a blurb, the two comboFields, back/confirm. onGo
+     gets (plant, line, step) with step.close()/step.fail(msg) so each flow
+     keeps its own submit; the line-required rule lives here once. */
+  function plantLineStep(opts) {
+    var body2 = BV.el("div", { class: "lib-form" });
+    body2.appendChild(BV.el("div", { class: "scan-info dim" }, opts.blurb));
+    var fPlant = inp(""), fLine = inp("");
+    body2.appendChild(comboField("plant", fPlant, knownPlants));
+    body2.appendChild(comboField("line", fLine, function () { return knownLines(fPlant.value); }));
+    var acts2 = BV.el("div", { class: "lf-actions" });
+    var back = BV.el("button", { class: "btn" }, "← back");
+    var go = BV.el("button", { class: "btn primary" }, BV.esc(opts.goLabel));
+    acts2.appendChild(back);
+    acts2.appendChild(go);
+    body2.appendChild(acts2);
+    var m2 = BV.modal(opts.title, body2, {
+      beforeClose: BV.dirtyGuard(function () {
+        return !!(fPlant.value.trim() || fLine.value.trim());
+      }, "plant/line"),
+    });
+    back.addEventListener("click", function () { m2.close(true); opts.onBack(); });
+    go.addEventListener("click", function () {
+      var line = fLine.value.trim();
+      /* same rule as the move flow: a robot never lands without a line */
+      if (!line) { BV.toast("a line name is required"); fLine.focus(); return; }
+      go.disabled = true;
+      opts.onGo(fPlant.value.trim(), line, {
+        close: function () { m2.close(true); },
+        fail: function (msg) { BV.toast(msg); go.disabled = false; },
+      });
+    });
+    fPlant.focus();
+  }
+
   /* ---- discover robots on the network ---- */
 
   function discoverFlow() {
@@ -2586,39 +2623,21 @@
     /* step 2: NOW ask where they go — the plant/line question sits right next
        to its confirm button instead of above a 38vh results list */
     function addStepTwo(drafts) {
-      var body2 = BV.el("div", { class: "lib-form" });
-      body2.appendChild(BV.el("div", { class: "scan-info dim" },
-        "add " + drafts.length + " robot" + (drafts.length === 1 ? "" : "s") +
-        " — which plant &amp; line?"));
-      var fPlant = inp(""), fLine = inp("");
-      body2.appendChild(comboField("plant", fPlant, knownPlants));
-      body2.appendChild(comboField("line", fLine, function () { return knownLines(fPlant.value); }));
-      var acts2 = BV.el("div", { class: "lf-actions" });
-      var back = BV.el("button", { class: "btn" }, "← back");
-      var go = BV.el("button", { class: "btn primary" },
-        "add " + drafts.length);
-      acts2.appendChild(back);
-      acts2.appendChild(go);
-      body2.appendChild(acts2);
-      var m2 = BV.modal("add to library", body2, {
-        beforeClose: BV.dirtyGuard(function () {
-          return !!(fPlant.value.trim() || fLine.value.trim());
-        }, "plant/line"),
+      plantLineStep({
+        title: "add to library",
+        blurb: "add " + drafts.length + " robot" + (drafts.length === 1 ? "" : "s") +
+          " — which plant &amp; line?",
+        goLabel: "add " + drafts.length,
+        onBack: openMain,
+        onGo: function (plant, line, step) {
+          BV.api.call("lib_bulk_add", drafts, plant, line).then(function (r) {
+            step.close();
+            var added = (r.added || []).length, skipped = (r.skipped || []).length;
+            BV.toast("added " + added + (skipped ? " · skipped " + skipped + " already in library" : ""));
+            refresh();
+          }).catch(function (e) { step.fail(e.message); });
+        },
       });
-      back.addEventListener("click", function () { m2.close(true); openMain(); });
-      go.addEventListener("click", function () {
-        var line = fLine.value.trim();
-        /* same rule as the move flow: a robot never lands without a line */
-        if (!line) { BV.toast("a line name is required"); fLine.focus(); return; }
-        go.disabled = true;
-        BV.api.call("lib_bulk_add", drafts, fPlant.value.trim(), line).then(function (r) {
-          m2.close(true);
-          var added = (r.added || []).length, skipped = (r.skipped || []).length;
-          BV.toast("added " + added + (skipped ? " · skipped " + skipped + " already in library" : ""));
-          refresh();
-        }).catch(function (e) { BV.toast(e.message); go.disabled = false; });
-      });
-      fPlant.focus();
     }
 
     addBtn.addEventListener("click", function () {
@@ -2631,6 +2650,255 @@
       m.close(true);              /* explicit handoff — the picks carry forward */
       addStepTwo(drafts);
     });
+  }
+
+  /* ---- import an existing backup folder (drag-and-drop / browse) ---- */
+  /* The pywebview drop subscription (app._wire_drop) pushes REAL OS paths to
+     BV.importDrop — the JS drop event's File objects carry no path, so the
+     page only paints highlight. While the import modal is open the hook scans
+     the drop; anywhere else it points at the flow (never a silent ignore,
+     never a surprise import). The document-level preventDefault keeps WebView2
+     from navigating to a dropped folder. */
+  document.addEventListener("dragover", function (e) { e.preventDefault(); });
+  document.addEventListener("drop", function (e) { e.preventDefault(); });
+  BV.importDrop = function () {
+    BV.toast("to import a backup: + add robot → import backup folder");
+  };
+  var _importDropHint = BV.importDrop;
+
+  function importFlow() {
+    var body = BV.el("div", { class: "lib-form imp-body" });
+    var dz = BV.el("div", { class: "imp-drop" },
+      '<div class="imp-drop-big">drop a backup folder here</div>' +
+      '<div class="dim">one robot’s backup, or a folder holding several</div>');
+    var bar = BV.el("div", { class: "scan-bar" });
+    var selRow = BV.el("div", { class: "scan-selall hidden" });
+    var selAll = BV.el("input", { type: "checkbox", class: "lf-check" });
+    selRow.appendChild(selAll);
+    selRow.appendChild(BV.el("span", null, "select all"));
+    var list = BV.el("div", { class: "scan-results" });
+    var extras = BV.el("div", { class: "imp-extras" });
+    var actions = BV.el("div", { class: "lf-actions" });
+    var browseBtn = BV.el("button", { class: "btn" }, "browse…");
+    var goBtn = BV.el("button", { class: "btn primary hidden" }, "import");
+    goBtn.disabled = true;
+    actions.appendChild(browseBtn);
+    actions.appendChild(goBtn);
+    body.appendChild(dz);
+    body.appendChild(bar);
+    body.appendChild(selRow);
+    body.appendChild(list);
+    body.appendChild(extras);
+    body.appendChild(actions);
+
+    var drafts = [], scanning = false;
+    var picks = BV.checklist({ onChange: updateGoBtn });   /* keyed by draft src */
+    var m;
+    var modalOpts = {
+      beforeClose: BV.dirtyGuard(function () {
+        return drafts.some(function (d) { return picks.has(d.src); });
+      }, "import picks"),
+      onClose: function () { BV.importDrop = _importDropHint; },
+    };
+    /* re-shown after "back" from the plant/line step: BV.modal only detaches
+       `body`, so the results list and its listeners survive */
+    function openMain() {
+      m = BV.modal("import backup folder", body, modalOpts);
+      BV.importDrop = function (paths) { runScan(paths); };
+    }
+    openMain();
+
+    ["dragenter", "dragover"].forEach(function (t) {
+      dz.addEventListener(t, function () { dz.classList.add("drag"); });
+    });
+    ["dragleave", "drop"].forEach(function (t) {
+      dz.addEventListener(t, function () { dz.classList.remove("drag"); });
+    });
+
+    /* the engine refuses these at import too — the row just says so up front */
+    function blocked(d) {
+      return d.warnings.some(function (w) { return w.indexOf("reserved name") === 0; });
+    }
+    function selectable() {
+      return drafts.filter(function (d) { return !blocked(d); });
+    }
+
+    function updateGoBtn() {
+      var n = selectable().filter(function (d) { return picks.has(d.src); }).length;
+      goBtn.classList.toggle("hidden", n === 0);
+      goBtn.disabled = n === 0;
+      goBtn.textContent = n ? "import " + n : "import";
+    }
+
+    function warnPills(d) {
+      /* compress the engine's sentence-length warnings into pills; the full
+         text rides in the title so hovering explains */
+      return d.warnings.map(function (w) {
+        var short = w.indexOf("reserved name") === 0 ? "reserved name"
+          : w.indexOf("date from folder") === 0 ? "date from folder time"
+          : w.indexOf("sidecar id") === 0 ? "id already in library" : w;
+        return '<span title="' + BV.esc(w) + '">' + BV.pill(short, "warn") + "</span>";
+      }).join(" ");
+    }
+
+    function renderResults(out) {
+      selRow.classList.toggle("hidden", drafts.length === 0);
+      list.innerHTML = "";
+      drafts.forEach(function (d) {
+        var row = BV.el("div", { class: "scan-row" });
+        var cb = BV.el("input", { type: "checkbox", class: "lf-check" });
+        if (blocked(d)) { cb.disabled = true; } else { picks.bind(cb, d.src); }
+        row.appendChild(cb);
+        var label = '<span class="lib-robot-name">' + BV.esc(d.robot) + "</span>";
+        var meta = [];
+        if (d.device_type === "camera-mtx") meta.push(BV.pill("MTX CAM", "acc"));
+        if (d.device_type === "camera-keyence") meta.push(BV.pill("CV-X CAM", "acc"));
+        meta.push(d.snapshots.length + " snapshot" + (d.snapshots.length === 1 ? "" : "s"));
+        meta.push(BV.fmt.bytes(d.bytes));
+        if (d.exists_at) meta.push(BV.pill("merges into " + d.exists_at, "acc"));
+        var w = warnPills(d);
+        if (w) meta.push(w);
+        label += ' <span class="lib-robot-meta">' + meta.join(" · ") + "</span>";
+        row.appendChild(BV.el("div", { class: "lib-robot-main" }, label));
+        list.appendChild(row);
+      });
+      picks.sync();
+      /* leftovers are evidence about the drop — listed, never silently gone */
+      extras.innerHTML = "";
+      (out.in_library || []).forEach(function (p) {
+        extras.appendChild(BV.el("div", { class: "dim" },
+          BV.esc(p) + " — already in the library"));
+      });
+      (out.ignored || []).forEach(function (i) {
+        extras.appendChild(BV.el("div", { class: "dim" },
+          BV.esc(i.path) + " — " + BV.esc(i.reason)));
+      });
+      (out.notes || []).forEach(function (n) {
+        extras.appendChild(BV.el("div", { class: "dim" }, BV.esc(n)));
+      });
+      if (out.truncated) {
+        extras.appendChild(BV.el("div", null,
+          BV.pill("scan hit its cap — not everything is listed", "warn")));
+      }
+      updateGoBtn();
+    }
+
+    function runScan(paths) {
+      if (scanning || !paths || !paths.length) return;
+      scanning = true;
+      drafts = []; picks.clear(); list.innerHTML = ""; extras.innerHTML = "";
+      bar.innerHTML = '<div class="membar"><div class="mb-label"><span>scanning…</span>' +
+        "<span></span></div>" +
+        '<div class="mb-track"><div class="mb-fill" style="width:8%"></div></div></div>';
+      BV.api.call("import_scan", paths).then(function (out) {
+        scanning = false;
+        bar.innerHTML = "";
+        drafts = out.drafts || [];
+        renderResults(out);
+        if (!drafts.length) BV.toast("no backups found in the drop");
+        /* everything importable starts ticked — the common case is "yes, all
+           of it"; unticking is the exception */
+        selectable().forEach(function (d) { picks.set(d.src, true); });
+        picks.sync(); updateGoBtn();
+      }).catch(function (e) {
+        scanning = false; bar.innerHTML = "";
+        BV.toast(e.message);
+      });
+    }
+
+    picks.group(selAll, function () {
+      return selectable().map(function (d) { return d.src; });
+    });
+
+    browseBtn.addEventListener("click", function () {
+      BV.api.call("pick_backup_folder").then(function (p) {
+        if (p) runScan([p]);
+      }).catch(function (e) { BV.toast(e.message); });
+    });
+
+    goBtn.addEventListener("click", function () {
+      var chosen = selectable().filter(function (d) { return picks.has(d.src); });
+      if (!chosen.length) return;
+      m.close(true);              /* explicit handoff — the picks carry forward */
+      var snaps = chosen.reduce(function (n, d) { return n + d.snapshots.length; }, 0);
+      plantLineStep({
+        title: "import to library",
+        blurb: "import " + chosen.length + " robot" + (chosen.length === 1 ? "" : "s") +
+          " (" + snaps + " snapshot" + (snaps === 1 ? "" : "s") +
+          ") — which plant &amp; line?",
+        goLabel: "import " + chosen.length,
+        onBack: openMain,
+        onGo: function (plant, line, step) {
+          BV.api.call("import_start", chosen, plant, line).then(function () {
+            step.close();
+            importProgress();
+          }).catch(function (e) { step.fail(e.message); });
+        },
+      });
+    });
+  }
+
+  function importProgress() {
+    var body3 = BV.el("div", { class: "lib-form" });
+    var bar3 = BV.el("div", { class: "scan-bar" });
+    var acts3 = BV.el("div", { class: "lf-actions" });
+    var cancelBtn = BV.el("button", { class: "btn" }, "cancel");
+    acts3.appendChild(cancelBtn);
+    body3.appendChild(bar3);
+    body3.appendChild(acts3);
+    var closed = false, done = false;
+    var m3 = BV.modal("importing…", body3, {
+      /* closing doesn't stop the copy (it's already safe: landed snapshots
+         are verified, the one in flight is staged) — the poll keeps running
+         detached so the summary toast still arrives */
+      beforeClose: BV.dirtyGuard(function () { return !done; }, "the progress view"),
+      onClose: function () { closed = true; },
+    });
+    cancelBtn.addEventListener("click", function () {
+      cancelBtn.disabled = true;
+      cancelBtn.textContent = "cancelling…";
+      BV.api.call("import_cancel").catch(function () {});
+    });
+    var iv = setInterval(function () {
+      BV.api.call("import_progress").then(function (p) {
+        if (!closed) {
+          var pct = p.bytes_total ? Math.round(100 * p.bytes_done / p.bytes_total) : 8;
+          bar3.innerHTML = '<div class="membar"><div class="mb-label"><span>' +
+            (p.robot ? "copying " + BV.esc(p.robot) + " · " + p.robot_no + " of " + p.robot_total
+                     : "starting…") +
+            "</span><span>" + BV.fmt.bytes(p.bytes_done) + " / " + BV.fmt.bytes(p.bytes_total) +
+            "</span></div>" +
+            '<div class="mb-track"><div class="mb-fill" style="width:' + pct + '%"></div></div></div>';
+        }
+        if (!p.active) {
+          clearInterval(iv);
+          done = true;
+          if (!closed) m3.close(true);
+          importSummary(p.results || [], p.cancelled);
+          refresh();
+        }
+      }).catch(function () {
+        clearInterval(iv);
+        done = true;
+        if (!closed) m3.close(true);
+      });
+    }, 500);
+  }
+
+  function importSummary(results, cancelled) {
+    var robots = 0, snaps = 0, dups = 0, conf = 0, bad = 0;
+    results.forEach(function (r) {
+      if (r.status === "imported" || r.status === "merged") robots += 1;
+      snaps += r.copied || 0; dups += r.duplicates || 0; conf += r.conflicts || 0;
+      if (r.status === "error" || r.status === "refused") bad += 1;
+    });
+    var msg = "imported " + robots + " robot" + (robots === 1 ? "" : "s") +
+      " · " + snaps + " snapshot" + (snaps === 1 ? "" : "s");
+    if (dups) msg += " · " + dups + " duplicate" + (dups === 1 ? "" : "s") + " skipped";
+    if (conf) msg += " · " + conf + " conflict" + (conf === 1 ? "" : "s") + " kept out";
+    if (bad) msg += " · " + bad + " failed";
+    if (cancelled) msg = "import cancelled — " + msg;
+    BV.toast(msg, 6000);
   }
 
   /* the lens is API now rather than a control living inside the screen: the
