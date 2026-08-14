@@ -233,6 +233,12 @@ one click backs up the robot + all its cameras together.
 
 ## DCDL importer
 
+- 🔨 **Backup-folder import** (claimed 2026-08-14, branch `import-backups`) —
+  drag an existing backup folder (one robot or a whole slice) onto
+  `+ add robot`, pick plant/line, and the app copies it into the library tree
+  for the normal scan to adopt. The drop-side sibling of the LibraryImporter
+  lane below, not its absorption: this imports *backups that exist*, that
+  seeds *robots that don't have backups yet*.
 - 📋 Absorb LibraryImporter into the viewer as an import wizard (the parser
   seam in `libraryimporter/core.py` exists for this).
 - 📋 Parse a raw DCDL (site-wide device/IP list) directly: generate the robot
