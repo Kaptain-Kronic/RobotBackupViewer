@@ -2304,6 +2304,14 @@ text.v3-ax-z { fill: var(--accent); }
 .net-head-where { color: var(--sub); margin-left: auto; font-size: 0.86em; }
 .net-head-detail { color: var(--sub); font-size: 0.86em; margin-top: 0.25rem;
   overflow-wrap: break-word; }
+/* the full link facts, two columns of label/value. break-word (not
+   word-break) so a long adapter name wraps at spaces instead of per glyph */
+.net-facts { margin-top: 0.45rem; display: grid;
+  grid-template-columns: minmax(min(5rem, 100%), auto) 1fr;
+  gap: 0.1rem 0.6rem; font-size: 0.82em; }
+.net-fact { display: contents; }
+.net-fact-k { color: var(--sub-alt); }
+.net-fact-v { color: var(--sub); overflow-wrap: break-word; }
 .net-sub { display: flex; align-items: center; gap: 0.5rem;
   padding: 0.35rem 0.35rem 0.2rem; color: var(--sub); font-size: 0.82em; }
 .net-sub .btn { margin-left: auto; padding: 0.1em 0.6em; font-size: 0.95em; }

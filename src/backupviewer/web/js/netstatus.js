@@ -51,6 +51,24 @@
     return Math.round(s / 3600) + "h";
   }
 
+  function speed(bps) {
+    if (!bps) return "—";
+    if (bps >= 1e9) return (bps / 1e9).toFixed(bps % 1e9 ? 1 : 0) + " Gbps";
+    if (bps >= 1e6) return Math.round(bps / 1e6) + " Mbps";
+    return Math.round(bps / 1e3) + " Kbps";
+  }
+
+  /* say WHY this adapter was picked - a heuristic that shows its reasoning can
+     be corrected; one that just asserts has to be trusted blindly */
+  function why(w) {
+    return {
+      pinned: "you pinned it",
+      library: "most library devices are on its subnet",
+      neighbours: "the busiest wired segment",
+      remembered: "it was the plant link a moment ago",
+    }[w] || (w || "—");
+  }
+
   /* ---- the pill ------------------------------------------------------------ */
 
   function ensureBtn() {
@@ -203,6 +221,23 @@
       BV.esc((a.name || "") + (p.cidr ? " · " + p.cidr : ""))));
     head.appendChild(top);
     head.appendChild(BV.el("div", { class: "net-head-detail" }, BV.esc(p.detail || "")));
+
+    /* the full connection picture, so nobody has to go hunting in ipconfig:
+       everything the OS told us about this link, and nothing inferred */
+    var facts = BV.el("div", { class: "net-facts" });
+    [["adapter", a.name || "—"],
+     ["address", a.ip ? a.ip + (a.prefix ? "/" + a.prefix : "") : "none"],
+     ["gateway", p.gateway || "none configured"],
+     ["mac", a.mac || "—"],
+     ["link", speed(a.speed)],
+     ["holding", ago(p.since_ms) + " in this state"],
+     ["chosen", why(p.why)]].forEach(function (kv) {
+      var r = BV.el("div", { class: "net-fact" });
+      r.appendChild(BV.el("span", { class: "net-fact-k" }, BV.esc(kv[0])));
+      r.appendChild(BV.el("span", { class: "net-fact-v" }, BV.esc(kv[1])));
+      facts.appendChild(r);
+    });
+    head.appendChild(facts);
     panelBody.appendChild(head);
 
     var sub = BV.el("div", { class: "net-sub" });

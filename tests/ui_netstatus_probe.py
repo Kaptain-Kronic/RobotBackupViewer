@@ -36,7 +36,7 @@ poll = poller(tries=20, delay=0.4)
 
 ADAPTER = {"name": "Ethernet 3", "ifindex": 1, "kind": "ethernet", "up": True,
            "ip": "192.0.2.37", "prefix": 24, "gateway": "192.0.2.1",
-           "mac": "AA:BB:CC:DD:EE:01", "speed": 0}
+           "mac": "AA:BB:CC:DD:EE:01", "speed": 1000000000}
 
 DEVICES = [
     {"ip": "192.0.2.1", "mac": "AA:BB:CC:DD:EE:99", "dot": "known", "reach_ms": 0,
@@ -138,6 +138,27 @@ def probe(window):
         js(window, "document.querySelector('#status-net .net-pill').click()")
         opened = poll(window, "!!document.querySelector('.bv-drop .net-panel')")
         check("panel.opens", bool(opened))
+
+        # "all of the connection info" - the box must answer the whole question
+        # without sending anyone to ipconfig, and every value is something the OS
+        # told us rather than something we inferred
+        facts = js(window, """(function () {
+            var o = {};
+            document.querySelectorAll('.bv-drop .net-fact').forEach(function (r) {
+                o[r.children[0].textContent] = r.children[1].textContent;
+            });
+            return JSON.stringify(o);
+        })()""")
+        facts = json.loads(facts or "{}")
+        for key, want in (("adapter", "Ethernet 3"), ("address", "192.0.2.37/24"),
+                          ("gateway", "192.0.2.1"), ("mac", "AA:BB:CC:DD:EE:01"),
+                          ("link", "1 Gbps")):
+            check("facts." + key, facts.get(key) == want,
+                  f"(got {facts.get(key)!r}, wanted {want!r})")
+        # a heuristic that shows its reasoning can be corrected; one that just
+        # asserts has to be trusted blindly
+        check("facts.says_why_this_adapter",
+              "library devices" in (facts.get("chosen") or ""), f"({facts})")
 
         rows = poll(window, """(function () {
             var r = [...document.querySelectorAll('.bv-drop .net-row')];
