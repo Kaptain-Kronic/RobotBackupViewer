@@ -23,7 +23,7 @@ batch lands, or with `--check` to hear about drift).
 > When per-subsystem docs land, they supersede this file for their own area. This
 > map's remaining job is breadth: what exists, and where.
 
-**Scope.** 276 files / ~81,233 lines. Covers everything in the working tree except: the
+**Scope.** 276 files / ~81,293 lines. Covers everything in the working tree except: the
 `.git` internals, build outputs (`dist/`, `build/`, `__pycache__/`), the private
 `SampleBackup/` fixture tree, the `.rmd` model corpus (61 binary robot-model blobs
 that are input data, not source), and the two local-only real-plant reference files
@@ -43,7 +43,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 |---|---|---|---|---|
 | `.gitignore` | 21 | ignore rules for pycache/build/dist plus the local-only sample backup, real ip list and diag folders | build/config | active |
 | `build_exe.log` | 106 | pyinstaller transcript of one successful onefile build on store python 3.13 with pyinstaller 6.20 *(untracked, local-only)* | build/config | generated |
-| `CHANGELOG.md` | 1305 | prose changelog newest-first: a large unreleased section over v1.4 back to v0.1, feature by feature | docs | active |
+| `CHANGELOG.md` | 1304 | prose changelog newest-first: a large unreleased section over v1.4 back to v0.1, feature by feature | docs | active |
 | `CLAUDE.md` | 273 | the build contract: locked stack, layer map, composition/honesty rules and the plant-identifier firewall | docs | active |
 | `CVX_FTP_LAYOUT.md` | 108 | field notes on the cv-x ftp tree and simulator workspace layout, and what env.dat cannot prove | docs | active |
 | `LICENSE` | 620 | verbatim gnu gpl v3 license text, the license the readme points at | docs | vendored |
@@ -164,7 +164,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/web/js/tabs/edit.js` | 2723 | the #edit multi-robot .ls workspace: split panes, working-set rail, find/replace, live pane diff, export | program editor | active |
 | `src/backupviewer/web/js/tabs/files.js` | 306 | raw file browser tab: virtualized list with ext filter, text/hex preview, and a camera-remote button | backup parsing | active |
 | `src/backupviewer/web/js/tabs/frames.js` | 250 | frames tab: pendant-style tool/uframe/jog/payload cards per motion group, with show-empty and vs mode | backup parsing | active |
-| `src/backupviewer/web/js/tabs/home.js` | 3049 | the #home library screen: plant/line/robot tree, per-row actions, batch ftp backup, discover, cam tiles | library | active |
+| `src/backupviewer/web/js/tabs/home.js` | 3084 | the #home library screen: plant/line/robot tree, per-row actions, batch ftp backup, discover, cam tiles | library | active |
 | `src/backupviewer/web/js/tabs/io.js` | 336 | io tab: pendant-style signal browser by category, in/out panes, rack/slot/port config view, vs mode | backup parsing | active |
 | `src/backupviewer/web/js/tabs/logic.js` | 316 | logic tab: a cv-x program's calculation scripts as code beside the names present in it, with what the format does not prove said on screen | cameras | active |
 | `src/backupviewer/web/js/tabs/macros.js` | 113 | macro table (name, program, assignment) rendered inside the programs tab, with side-by-side vs mode | backup parsing | active |
@@ -177,7 +177,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/web/js/tabs/search.js` | 158 | hidden #search route rendering backup-wide hits grouped by programs, io, registers, frames, macros, files | backup parsing | active |
 | `src/backupviewer/web/js/tabs/sysvars.js` | 193 | system vars tab: lazy collapsible $-variable tree with source-file tags; exports treeNode for other tabs | backup parsing | active |
 | `src/backupviewer/web/js/tabs/view3d.js` | 956 | 3d view tab: svg-projected dcs zones, orbit/pan/zoom + snap cube, posed fk arm, per-check side panel | 3D viewer | active |
-| `src/backupviewer/web/js/netstatus.js` | 418 | plant-link pill + drop panel: 4-state link chip, segment device list merged with the library, gentle arp recheck | backup capture | active |
+| `src/backupviewer/web/js/netstatus.js` | 419 | plant-link pill + drop panel: 4-state link chip, segment device list merged with the library, gentle arp recheck | backup capture | active |
 | `src/backupviewer/web/js/theme.js` | 310 | theme data + apply layer: maps 9 theme colors onto css vars, hex/contrast math, the custom-theme color editor | theming | active |
 | `src/backupviewer/web/js/theme_ui.js` | 269 | the theme picker row + drop panel: categories, credits, filter, hover-preview, edit/delete of custom themes | theming | active |
 | `src/backupviewer/web/js/update.js` | 135 | release-check UI: boot autocheck toast, statusbar update pill, about-box updates row with skip-version | shared/infra | active |
@@ -198,7 +198,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/cvx_sim.py` | 214 | a loopback fake cv-x controller speaking the 850x framing: ctx per service type, op1/op6 replies the replay blocks on, push_frame down the video channel, inputs() decode — a wire-shape fake, not an emulator | tests | active |
 | `tests/fixtureutil.py` | 70 | tracked half of the private-fixture plumbing: the require-or-error gate (missing fixture = error where the tree is expected, visible skip elsewhere) and runtime backup-root discovery | tests | active |
 | `tests/libraryimporter_probe.py` | 240 | end-to-end probe of the libraryimporter app: drop, checklist ranges, import, sidecars on disk | tests | active |
-| `tests/perf_probe.py` | 260 | plant-scale timing probe: 2400 stubbed rows with ms budgets for notes, stars, shift-range and picker — the library screen's only performance-cliff guard | tests | active |
+| `tests/perf_probe.py` | 278 | plant-scale timing probe: 2400 stubbed rows with ms budgets for notes, stars, shift-range and picker — the library screen's only performance-cliff guard | tests | active |
 | `tests/probeutil.py` | 87 | the probes' shared preamble: temp-APPDATA/watcher isolation before any app import, plus check/js/poll and the FAILURES list all nine used to carry their own copy of | tests | active |
 | `tests/test_alarms.py` | 41 | pytest for the alarm-history parser over the private fixture's ERRALL/ERRACT/ERRHIST/ERRMOT dumps *(untracked, local-only)* | tests | active |
 | `tests/test_backup_formats.py` | 192 | pytest for backup-format detection on synthetic trees: MD vs maintenance vs all-above, dupe-basename priority, per-format tabs, io-from-summary fallback (tracked successor to the retired real-corpus format tests) | tests | active |
@@ -274,7 +274,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/ui_fk_probe.py` | 135 | hidden-window probe holding BV.fk.chain equal to kinematics.chain_frames within 1e-6 across builtin chains plus the synthetic parallel-link arm | tests | active |
 | `tests/ui_import_probe.py` | 204 | hidden-window probe of the drop-import flow: simulated native drop, pre-ticked results, plant/line step, summary toast, landed tree byte-checked; --drop-probe keeps a visible window for a real drag | tests | active |
 | `tests/ui_logic_probe.py` | 227 | hidden-window probe of the camera logic tab: tab lights only on a script-bearing backup, calculation units lead the rail, the show-other toggle, script text renders whole | tests | active |
-| `tests/ui_netstatus_probe.py` | 374 | hidden-window probe of the plant-link pill: state→word table, panel open/close, and the honesty locks (absent is hollow, strangers are flagged, an unread probe dims) | tests | active |
+| `tests/ui_netstatus_probe.py` | 381 | hidden-window probe of the plant-link pill: state→word table, panel open/close, and the honesty locks (absent is hollow, strangers are flagged, an unread probe dims) | tests | active |
 | `tests/ui_probe.py` | 2108 | the original full-app probe: boots a real local backup and walks every tab, primitive and compare view *(untracked, local-only)* | tests | active |
 | `tests/ui_sim_export_probe.py` | 286 | hidden-window probe of the cv-x simulator-folder settings row and the load-cameras picker guard | tests | active |
 | `tests/ui_tabs_probe.py` | 275 | hidden-window probe of backup tabs: strip, per-backup memory, tear-off, and the solo pop-out window | tests | active |
@@ -297,23 +297,23 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 
 | subsystem | files | ~lines |
 |---|---:|---:|
-| tests | 85 | 23,876 |
+| tests | 85 | 23,901 |
 | shared/infra | 27 | 8,901 |
-| docs | 12 | 6,439 |
+| docs | 12 | 6,438 |
 | theming | 34 | 6,052 |
 | backup parsing | 31 | 6,031 |
-| library | 5 | 5,581 |
+| library | 5 | 5,616 |
 | program editor | 5 | 4,929 |
 | cameras | 15 | 4,524 |
 | 3D viewer | 16 | 3,836 |
-| backup capture | 6 | 2,810 |
+| backup capture | 6 | 2,811 |
 | flag scanning | 2 | 2,080 |
 | remote/mobile | 10 | 2,070 |
 | LibraryImporter | 11 | 1,395 |
 | compare engine | 5 | 1,355 |
 | tools/scripts | 5 | 1,087 |
 | build/config | 7 | 267 |
-| **total** | **276** | **81,233** |
+| **total** | **276** | **81,293** |
 
 > Counts are by *primary* subsystem only — a file appears once, so these add up to the
 > whole repo. The `tests` row is the largest because every probe and unit suite counts as
