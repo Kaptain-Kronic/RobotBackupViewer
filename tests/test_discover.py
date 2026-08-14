@@ -2,6 +2,7 @@
 FTP), so they touch neither the network nor a user's %APPDATA% and are safe in
 the public repo. Mirrors the ftp_factory injection style of test_ftpbackup.py."""
 import ftplib
+import ipaddress
 import json
 
 from backupviewer import discover, session
@@ -470,3 +471,164 @@ def test_list_adapters_empty_on_failure():
     assert discover.list_adapters(runner=boom) == []
     assert discover.list_adapters(runner=lambda *a, **k: _Proc("")) == []
     assert discover.list_adapters(runner=lambda *a, **k: _Proc("not json")) == []
+
+
+# -- plant link watch -----------------------------------------------------------
+# Every read is injected, so nothing here touches a network or spawns anything.
+
+def _ad(name, ip, *, up=True, kind="ethernet", gw="", prefix=24, mac="", ifindex=1):
+    return {"name": name, "ifindex": ifindex, "kind": kind, "up": up, "ip": ip,
+            "prefix": prefix, "gateway": gw, "mac": mac, "speed": 0}
+
+
+def _nb(ip, state, *, ifindex=1, mac="AA:BB:CC:00:00:01"):
+    return {"ip": ip, "mac": mac, "state": state, "ifindex": ifindex, "reach_ms": 0}
+
+
+DONGLE = _ad("Ethernet 3", "192.0.2.37", gw="192.0.2.1", mac="AA:BB:CC:DD:EE:01")
+WIFI = _ad("Wi-Fi", "198.51.100.10", kind="wifi", gw="198.51.100.1",
+           mac="AA:BB:CC:DD:EE:02", ifindex=2)
+TUNNEL = _ad("Tailscale", "203.0.113.5", kind="other", prefix=32,
+             mac="", ifindex=3)
+LIB = discover.pack_ips(["192.0.2.40", "192.0.2.41", "192.0.2.42"])
+
+
+def test_choose_adapter_prefers_the_subnet_holding_the_library():
+    a, why = discover.choose_adapter([WIFI, TUNNEL, DONGLE], [], library_ips=LIB)
+    assert a["name"] == DONGLE["name"] and why == "library"
+
+
+def test_choose_adapter_refuses_to_call_wifi_the_plant_link():
+    """The anti-lie test. A laptop on wi-fi with the dongle out still has a fine
+    internet connection; calling that "connected" answers a question nobody
+    asked. With no evidence we must say so instead of guessing."""
+    a, why = discover.choose_adapter([WIFI, TUNNEL], [], library_ips=())
+    assert a is None and why == "none"
+    assert discover.classify_state(a, why, [])[0] == "no-adapter"
+
+
+def test_choose_adapter_falls_back_to_where_the_devices_are():
+    # a fresh install has no library, so a busy ethernet segment is the evidence
+    seen = [_nb("192.0.2.%d" % n, "stale") for n in range(10, 16)]
+    a, why = discover.choose_adapter([WIFI, DONGLE], seen, library_ips=())
+    assert a["name"] == DONGLE["name"] and why == "neighbours"
+
+
+def test_choose_adapter_honours_a_pin_even_when_the_adapter_is_down():
+    down = dict(DONGLE, up=False)
+    a, why = discover.choose_adapter([WIFI, down], [], pin={"mac": DONGLE["mac"]},
+                                     library_ips=LIB)
+    assert a["name"] == DONGLE["name"] and why == "pinned"
+    # the point of pinning: an unplugged dongle reports no link rather than
+    # silently hopping to wi-fi and calling that success
+    assert discover.classify_state(a, why, [])[0] == "no-link"
+
+
+def test_pinned_adapter_that_vanished_reads_as_no_link():
+    """USB adapters usually disappear from the table when unplugged rather than
+    reporting down - the commonest real event must not show the most confusing
+    words."""
+    a, why = discover.choose_adapter([WIFI], [], pin={"mac": DONGLE["mac"]})
+    assert a is None and why == "pinned-missing"
+    state, detail = discover.classify_state(a, why, [])
+    assert state == "no-link" and "unplugged" in detail
+
+
+def test_classify_state_ladder():
+    gw_up = [_nb("192.0.2.1", "reachable")]
+    assert discover.classify_state(dict(DONGLE, up=False), "library", [])[0] == "no-link"
+    assert discover.classify_state(dict(DONGLE, ip=""), "library", [])[0] == "no-ip"
+    apipa = dict(DONGLE, ip="169.254.9.9")
+    assert discover.classify_state(apipa, "library", [])[0] == "no-ip"
+    assert discover.classify_state(dict(DONGLE, gateway=""), "library", [])[0] == "no-gateway"
+    assert discover.classify_state(DONGLE, "library", gw_up)[0] == "ok"
+
+
+def test_no_gateway_says_which_kind_of_no_gateway():
+    """Two different faults share this rung; they must not share a sentence."""
+    none_set = discover.classify_state(dict(DONGLE, gateway=""), "library", [])[1]
+    silent = discover.classify_state(DONGLE, "library", [_nb("192.0.2.1", "unreachable")])[1]
+    assert "no gateway is configured" in none_set
+    assert "not answering" in silent
+    assert none_set != silent
+
+
+def test_a_stale_gateway_is_still_connected():
+    """Windows parks a resolved MAC in `stale` once nothing needs it. A quiet
+    network is not a broken one - painting this red would be the feature's
+    first lie, and on a real plant segment most entries sit exactly here."""
+    state, detail = discover.classify_state(DONGLE, "library", [_nb("192.0.2.1", "stale")])
+    assert state == "ok" and "idle" in detail
+
+
+def test_segment_neighbours_drops_the_multicast_furniture():
+    rows = [
+        _nb("192.0.2.50", "reachable"),
+        _nb("224.0.0.22", "permanent", mac="01:00:5E:00:00:16"),
+        _nb("192.0.2.255", "permanent", mac="FF:FF:FF:FF:FF:FF"),
+        _nb("198.51.100.7", "reachable", ifindex=2),      # a different adapter
+    ]
+    got = [n["ip"] for n in discover.segment_neighbours(rows, DONGLE)]
+    assert got == ["192.0.2.50"]
+
+
+def test_a_downgrade_needs_two_agreeing_samples():
+    """One dropped read must not be able to flash a false alarm; good news needs
+    no such proof, because it cannot raise one."""
+    w = discover.LinkWatch()
+    up, down = [DONGLE], [dict(DONGLE, up=False)]
+    gw = [_nb("192.0.2.1", "reachable")]
+    assert w.sample(library_ips=LIB, now=0, adapters_fn=lambda: up,
+                    neighbours_fn=lambda: gw)["state"] == "ok"
+    assert w.sample(library_ips=LIB, now=2, adapters_fn=lambda: down,
+                    neighbours_fn=lambda: gw)["state"] == "ok"
+    assert w.sample(library_ips=LIB, now=4, adapters_fn=lambda: down,
+                    neighbours_fn=lambda: gw)["state"] == "no-link"
+    # and recovery is immediate
+    assert w.sample(library_ips=LIB, now=6, adapters_fn=lambda: up,
+                    neighbours_fn=lambda: gw)["state"] == "ok"
+
+
+def test_a_failed_read_is_not_evidence():
+    """A tool that turns red when IT breaks teaches people to ignore it, so an
+    unreadable table holds the last verdict and says the reading is unverified."""
+    w = discover.LinkWatch()
+    gw = [_nb("192.0.2.1", "reachable")]
+    w.sample(library_ips=LIB, now=0, adapters_fn=lambda: [DONGLE],
+             neighbours_fn=lambda: gw)
+    blind = w.sample(library_ips=LIB, now=2, adapters_fn=lambda: [])
+    assert blind["state"] == "ok" and blind["probe_ok"] is False
+    assert "couldn't read" in blind["detail"]
+
+
+def test_a_cold_failed_read_never_claims_a_verdict():
+    w = discover.LinkWatch()
+    first = w.sample(library_ips=LIB, now=0, adapters_fn=lambda: [])
+    assert first["state"] == "unknown" and first["probe_ok"] is False
+
+
+def test_losing_the_chosen_adapter_reads_as_no_link_without_a_pin():
+    """Nobody pins anything, the dongle falls out, and the honest answer is that
+    THIS adapter went away - not "nothing here looks like a plant link"."""
+    w = discover.LinkWatch()
+    gw = [_nb("192.0.2.1", "reachable")]
+    w.sample(library_ips=LIB, now=0, adapters_fn=lambda: [DONGLE, WIFI],
+             neighbours_fn=lambda: gw)
+    for t in (2, 4):
+        out = w.sample(library_ips=LIB, now=t, adapters_fn=lambda: [WIFI],
+                       neighbours_fn=lambda: [])
+    assert out["state"] == "no-link" and out["why"] == "gone"
+
+
+def test_pack_ips_skips_junk():
+    assert discover.pack_ips(["192.0.2.1", "", "nope", None or "x"]) == \
+        (int(ipaddress.ip_address("192.0.2.1")),)
+
+
+def test_link_adapter_choices_shows_its_reasoning():
+    rows = discover.link_adapter_choices(
+        LIB, adapters_fn=lambda: [WIFI, DONGLE],
+        neighbours_fn=lambda: [_nb("192.0.2.50", "reachable")])
+    top = rows[0]
+    assert top["name"] == DONGLE["name"] and top["library"] == len(LIB)
+    assert next(r for r in rows if r["name"] == "Wi-Fi")["library"] == 0

@@ -7,6 +7,7 @@ Every public method returns an envelope and never raises across the bridge:
 from __future__ import annotations
 
 import base64
+import concurrent.futures as futures
 import fnmatch
 import functools
 import hashlib
@@ -36,6 +37,7 @@ from . import keyencebackup
 from . import library
 from . import modeldb
 from . import mtxbackup
+from . import netlink
 from . import phoneview
 from . import qr
 from . import screengrab
@@ -359,6 +361,13 @@ class Api:
         self._sessions_lock = threading.Lock()  # registry mutations only
         self._jobs: dict[str, ftpbackup.BackupJob] = {}  # active/finished backup jobs
         self._scans: dict[str, discover._ScanJob] = {}  # folder + network scan jobs
+        self._link = discover.LinkWatch()  # the plant-link pill's state machine
+        self._link_ips: tuple[int, ...] = ()  # library addresses, packed + cached
+        self._link_by_ip: dict[str, dict] = {}  # ip -> the library entry claiming it
+        self._link_lib_at = 0.0
+        self._link_last_adapter: dict | None = None  # bounds net_check to our segment
+        self._net_check_at = 0.0
+        self._net_checking = False   # an ARP refresh is in flight (drives the button)
         self._lib_sig: str | None = None  # tree signature at the last scan (None = never)
         self._cvx: dict[str, cvx_remote.CvxRemoteSession] = {}  # live CV-X remote sessions
         self._cvx_server = None  # lazy MJPEG frame server (one for all sessions)
@@ -4135,6 +4144,160 @@ class Api:
             "adapters": discover.list_adapters(),
             "fallback": {"cidr": discover.default_cidr(), "ip": discover.local_ipv4()},
         }
+
+    # -- plant link watch -------------------------------------------------------
+    # Polled ~every 2s by web/js/netstatus.js. Reads only this laptop's own
+    # adapter/gateway/neighbour tables - the switch is never contacted.
+
+    _LINK_LIB_TTL = 30.0     # the library changes on human timescales, not tick ones
+
+    def _link_library(self):
+        """(packed ips, {ip: entry}) for the link watch, rebuilt at most every
+        _LINK_LIB_TTL seconds.
+
+        Deliberately library.load() and not list_robots(): the latter reconciles
+        stale flags by stat-ing every entry AND every historical backup, which on
+        a plant-scale library over a network drive is far too heavy to run on a
+        poll. Nothing here needs those flags.
+        """
+        now = time.monotonic()
+        if self._link_by_ip and now - self._link_lib_at < self._LINK_LIB_TTL:
+            return self._link_ips, self._link_by_ip
+        by_ip: dict[str, dict] = {}
+        for e in library.load().get("robots", []):
+            for ip in e.get("ips") or []:
+                if not ip:
+                    continue
+                # first claim wins; two entries on one address is a library
+                # problem to surface elsewhere, not something to guess about here
+                by_ip.setdefault(ip, {
+                    "robot": e.get("robot") or "",
+                    "device_type": e.get("device_type") or "robot",
+                    "line": e.get("line") or "",
+                })
+        self._link_by_ip = by_ip
+        self._link_ips = discover.pack_ips(by_ip)
+        self._link_lib_at = now
+        return self._link_ips, self._link_by_ip
+
+    def _link_devices(self, sample, by_ip):
+        """The segment's devices: everything the OS has seen, plus every library
+        device that belongs on this subnet, merged on IP.
+
+        A union, not an intersection. A camera the laptop simply hasn't spoken to
+        since the cable went in has no neighbour entry while running perfectly, so
+        it appears as `absent` - never as a fault. Evidence never vanishes.
+        """
+        cidr = sample.get("cidr") or ""
+        gateway = sample.get("gateway") or ""
+        seen = {n["ip"]: n for n in sample.get("neighbours") or []}
+
+        # What vendor owns an OUI is learned from the library's own devices rather
+        # than shipped as a table: a guessed vendor map would be exactly the kind
+        # of unverified claim the honesty rules forbid.
+        oui_kind: dict[str, str] = {}
+        for ip, n in seen.items():
+            entry = by_ip.get(ip)
+            if entry:
+                oui_kind.setdefault(netlink.oui(n.get("mac") or ""), entry["device_type"])
+
+        rows = []
+        for ip, n in seen.items():
+            entry = by_ip.get(ip)
+            state = n.get("state") or ""
+            rows.append({
+                "ip": ip, "mac": n.get("mac") or "",
+                "dot": ("live" if state == netlink.LIVE_STATE
+                        else "known" if state in netlink.KNOWN_STATES else "gone"),
+                "reach_ms": n.get("reach_ms") or 0,
+                "in_library": bool(entry),
+                "name": (entry or {}).get("robot") or "",
+                "device_type": (entry or {}).get("device_type") or "",
+                "line": (entry or {}).get("line") or "",
+                "vendor_kind": oui_kind.get(netlink.oui(n.get("mac") or ""), ""),
+                "gateway": ip == gateway,
+            })
+        for ip, entry in by_ip.items():
+            if ip in seen or not discover._in_network(ip, cidr):
+                continue
+            rows.append({
+                "ip": ip, "mac": "", "dot": "absent", "reach_ms": 0,
+                "in_library": True, "name": entry["robot"],
+                "device_type": entry["device_type"], "line": entry["line"],
+                "vendor_kind": "", "gateway": False,
+            })
+        # gateway first, then live before quiet, then by address
+        order = {"live": 0, "known": 1, "gone": 2, "absent": 3}
+        rows.sort(key=lambda r: (not r["gateway"], order.get(r["dot"], 9),
+                                 discover.pack_ips([r["ip"]]) or (0,)))
+        return rows
+
+    @_endpoint
+    def net_status(self, detail: bool = False):
+        """The plant link, read from THIS laptop only - never from the switch.
+
+        Passive: adapter, gateway and neighbour tables the OS already holds, at
+        zero added packets. `detail` adds the per-device list for the open panel.
+        Argument order is frozen - add new parameters AFTER `detail`.
+        """
+        packed, by_ip = self._link_library()
+        pin = settings.load().get("net_adapter") or None
+        sample = self._link.sample(pin=pin, library_ips=packed,
+                                   arp_fn=netlink.send_arp)
+        self._link_last_adapter = sample.get("adapter")   # net_check's segment guard
+        out = {k: v for k, v in sample.items() if k != "neighbours"}
+        out["states"] = list(discover.LINK_STATES)
+        out["seen"] = len(sample.get("neighbours") or [])
+        out["checking"] = self._net_checking
+        if detail:
+            out["devices"] = self._link_devices(sample, by_ip)
+            out["adapters"] = discover.link_adapter_choices(packed)
+        return out
+
+    #: an unanswered ARP blocks for about a second, so keep the fan-out small -
+    #: this is a status panel button, not the discover dialog's 48-wide sweep
+    _NET_CHECK_WORKERS = 8
+    _NET_CHECK_MAX = 256          # a full /24; the cap is reported, never silent
+    _NET_CHECK_EVERY = 10.0
+
+    @_endpoint
+    def net_check(self, ips: list):
+        """Refresh the neighbour evidence for these addresses, gently.
+
+        One ARP request each: layer 2 only, touching no service on the device -
+        strictly lighter than a TCP connect to a camera's FTP or SMB port, and
+        something every device on the wire answers constantly anyway.
+
+        There is no separate result channel on purpose. ARP *populates the very
+        table the panel already reads*, so the next poll shows the truth rather
+        than a second, possibly disagreeing, set of answers.
+        """
+        now = time.monotonic()
+        if now - getattr(self, "_net_check_at", 0.0) < self._NET_CHECK_EVERY:
+            return {"started": 0, "throttled": True}
+        cidr = discover.adapter_cidr(self._link_last_adapter or {})
+        wanted = [ip for ip in (ips or [])
+                  # off-segment addresses would resolve the GATEWAY's mac and read
+                  # as a confident answer about a device we never reached
+                  if isinstance(ip, str) and discover._in_network(ip, cidr)]
+        targets = wanted[: self._NET_CHECK_MAX]
+        if not targets:
+            return {"started": 0, "skipped": 0, "throttled": False}
+        self._net_check_at = now
+        self._net_checking = True
+
+        def run():
+            try:
+                with futures.ThreadPoolExecutor(
+                        max_workers=self._NET_CHECK_WORKERS) as ex:
+                    list(ex.map(netlink.send_arp, targets))
+            finally:
+                self._net_checking = False
+
+        threading.Thread(target=run, name="netcheck", daemon=True).start()
+        # skipped is surfaced so a bounded sweep never reads as "checked everything"
+        return {"started": len(targets), "skipped": len(wanted) - len(targets),
+                "throttled": False}
 
     @_endpoint
     def net_scan_start(self, spec: dict):
