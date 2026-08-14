@@ -208,6 +208,14 @@ def _tree_size(root) -> tuple:
     return files, total
 
 
+# How long a cam-lens tile session survives without the grid renewing its
+# lease (cvx_tile_sync) before the reaper hangs it up. Four beats of the
+# grid's 2 s tick: generous enough that a slow pass never kills a watched
+# tile, short enough that an unwatched wall frees every controller's single
+# remote slot in seconds.
+CVX_TILE_TTL = 8.0
+
+
 def _require_ip(spec: dict) -> str:
     """The validated camera IP out of a remote-connect spec, or ApiError."""
     ip = ((spec or {}).get("ip") or "").strip()
@@ -375,6 +383,14 @@ class Api:
         # The session MOVES (the overlay in the sending window closes), so a
         # controller's single remote slot is never asked for twice.
         self._cvx_windows: dict[str, object] = {}
+        # CV-X tile sessions (the cam lens): sid -> last-sync monotonic. A
+        # LEASE, not ownership - the grid renews it every tick it is actually
+        # watching, and the reaper hangs up anything unsynced past
+        # CVX_TILE_TTL, so an unwatched wall frees every controller's single
+        # remote slot on its own (lens flipped, window hidden, JS gone).
+        self._cvx_tiles: dict[str, float] = {}
+        self._cvx_tiles_lock = threading.Lock()
+        self._cvx_tile_reaper: threading.Thread | None = None
         # which windows are borderless-fullscreen right now, by window key
         # ("main" or a popped-out sid) - pywebview only toggles, it doesn't tell
         self._fullscreen: set[str] = set()
@@ -2749,6 +2765,10 @@ class Api:
         sess = self._cvx.get(session_id)
         if sess is None:
             raise ApiError("NO_SESSION", "unknown remote session")
+        if getattr(sess, "video_only", False):
+            # a cam-lens tile session mirrors, never drives - defense in depth
+            # behind the fact that no tile ever wires an input handler
+            raise ApiError("VIEW_ONLY", "tile sessions are view-only - open the remote to drive")
         if seq is None:
             sess.send_mouse(int(event_id), int(x), int(y))
         else:
@@ -2876,6 +2896,130 @@ class Api:
         if sess is not None:
             sess.stop()
         return True
+
+    # -- CV-X live tiles (the cam lens) -----------------------------------------------
+    # The multicam wall mirrors CV-X screens through the same bridge as the
+    # overlay, but a tile is strictly VIEW-ONLY and its session is a lease:
+    # the grid renews it on every tick it is actually showing the tile, and
+    # the reaper hangs up anything unsynced past CVX_TILE_TTL. That single
+    # mechanism covers every way a wall stops being watched - lens flipped,
+    # window hidden or closed, tile scrolled away, a modal or overlay up, or
+    # the JS side simply gone - and it is what frees the controllers' single
+    # remote slots for other terminals.
+
+    def _cvx_tile_shape(self, sid: str, sess) -> dict:
+        port = self._cvx_frame_server().server_address[1]
+        return {"session_id": sid, "stream_url": f"http://127.0.0.1:{port}/cvx/{sid}",
+                "screen": {"w": cvx_remote.SCREEN_W, "h": cvx_remote.SCREEN_H}}
+
+    def _reap_cvx_tiles(self, now: float):
+        """Stop tile sessions whose lease ran out. A plain method so tests can
+        drive it without sleeping. Sessions leave the registries under the
+        lock (so adopt can never lose the race and get its session reaped) and
+        are stopped after it (stop() closes sockets - not lock territory)."""
+        doomed = []
+        with self._cvx_tiles_lock:
+            for sid in [s for s, t in self._cvx_tiles.items() if now - t > CVX_TILE_TTL]:
+                self._cvx_tiles.pop(sid)
+                sess = self._cvx.pop(sid, None)
+                if sess is not None:
+                    doomed.append(sess)
+        for sess in doomed:
+            sess.stop()
+
+    def _cvx_tile_reap_loop(self):
+        while True:
+            time.sleep(2.0)
+            try:
+                self._reap_cvx_tiles(time.monotonic())
+            except Exception:  # noqa: BLE001 - the reaper must survive anything
+                log.exception("cvx tile reaper")
+
+    @_endpoint
+    def cvx_tile_start(self, spec: dict):
+        """Open (or return) the view-only tile session for the camera at
+        spec['ip']. Idempotent per ip: a page reload that lost the JS registry
+        heals onto the live session instead of asking the controller's single
+        remote slot twice. A NON-tile session (overlay / pop-out) to that ip
+        is BUSY, never joined - a tile must not piggyback a session the user
+        is driving."""
+        ip = _require_ip(spec)
+        with self._cvx_tiles_lock:
+            for sid in list(self._cvx_tiles):
+                sess = self._cvx.get(sid)
+                if sess is not None and sess.ip == ip and sess.alive:
+                    self._cvx_tiles[sid] = time.monotonic()
+                    return self._cvx_tile_shape(sid, sess)
+        for sid, sess in list(self._cvx.items()):
+            if sess.ip == ip and sess.alive and sid not in self._cvx_tiles:
+                raise ApiError("CVX_BUSY", "a remote session is already open to this camera")
+        sess = cvx_remote.CvxRemoteSession(ip)
+        sess.video_only = True
+        if not sess.start():
+            raise ApiError("CVX_CONNECT", sess.error or "could not connect to the camera")
+        sid = uuid.uuid4().hex
+        self._cvx[sid] = sess
+        with self._cvx_tiles_lock:
+            self._cvx_tiles[sid] = time.monotonic()
+            if self._cvx_tile_reaper is None:
+                self._cvx_tile_reaper = threading.Thread(
+                    target=self._cvx_tile_reap_loop, name="cvx-tile-reaper", daemon=True)
+                self._cvx_tile_reaper.start()
+        return self._cvx_tile_shape(sid, sess)
+
+    @_endpoint
+    def cvx_tile_sync(self, sids: list):
+        """Renew the lease on every tile the grid is actually showing; report
+        which are still alive. An unknown or dead sid answers alive: False and
+        the tile redials on its own backoff."""
+        out = {}
+        now = time.monotonic()
+        with self._cvx_tiles_lock:
+            for sid in sids or []:
+                sess = self._cvx.get(sid)
+                if sid in self._cvx_tiles and sess is not None and sess.alive:
+                    self._cvx_tiles[sid] = now
+                    out[sid] = {"alive": True, "frames": sess.frames}
+                else:
+                    out[sid] = {"alive": False}
+        return out
+
+    @_endpoint
+    def cvx_tile_stop(self, session_id: str):
+        """Prompt release when the lens flips away - the TTL is the net
+        underneath. Only ever stops a TILE session: an unknown or non-tile sid
+        is a quiet no-op, so this can never hang up an overlay."""
+        with self._cvx_tiles_lock:
+            if session_id not in self._cvx_tiles:
+                return True
+            self._cvx_tiles.pop(session_id)
+            sess = self._cvx.pop(session_id, None)
+        if sess is not None:
+            sess.stop()
+        return True
+
+    @_endpoint
+    def cvx_tile_adopt(self, session_id: str):
+        """Promote a tile session into a full remote: drop the lease (the
+        reaper keeps its hands off) and clear the view-only flag, then answer
+        the cvx_remote_info shape - the overlay adopts it exactly like a
+        pop-out window does, and the controller is never dialled twice."""
+        with self._cvx_tiles_lock:
+            leased = self._cvx_tiles.pop(session_id, None)
+            sess = self._cvx.get(session_id)
+            alive = leased is not None and sess is not None and sess.alive
+            if not alive and leased is not None:
+                # leased but dead: retire the corpse instead of stranding it
+                self._cvx.pop(session_id, None)
+        if not alive:
+            if leased is not None and sess is not None:
+                sess.stop()
+            raise ApiError("NO_SESSION", "that tile session is gone")
+        sess.video_only = False
+        port = self._cvx_frame_server().server_address[1]
+        return {"session_id": session_id, "ip": sess.ip,
+                "stream_url": f"http://127.0.0.1:{port}/cvx/{session_id}",
+                "screen": {"w": cvx_remote.SCREEN_W, "h": cvx_remote.SCREEN_H}}
 
     # -- Matrox live remote (the camera's own web UI) ---------------------------------
     # A Matrox camera is operated through the web page it serves on port 80, so

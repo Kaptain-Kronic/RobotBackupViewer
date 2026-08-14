@@ -1,6 +1,31 @@
 # Changelog
 
-## unreleased — the camera gets its 3d view, and the files tab extracts
+## unreleased — the camera gets its 3d view, the files tab extracts, and the statusbar finds the switch
+- **CV-X cameras join the camera wall.** The cam lens used to tile Matrox
+  only; Keyence controllers now tile beside them, each tile mirroring the
+  controller's live screen through the same remote-desktop bridge the overlay
+  uses — strictly view-only: no input path is ever wired to a tile, and the
+  mouse endpoint refuses a tile session outright. Tiles dial staggered under
+  the grid's existing per-beat cap, back off honestly when a camera is off or
+  another terminal holds its one remote slot (and say which of those it is),
+  and hold that slot only while actually being watched: sessions are leases
+  the grid renews each tick, and a reaper hangs up anything unwatched for
+  ~8 seconds — lens flipped, window hidden, tile scrolled away, an overlay or
+  modal up — so the slot frees itself for Keyence Terminal on another PC.
+  Clicking a tile opens the full remote by adopting the tile's live session;
+  the controller is never asked for its slot twice.
+- **The CV-X remote paints its final frame.** When the controller's screen
+  settled, the browser held the last frame of the burst un-painted until the
+  mouse moved — Chromium's multipart parser releases frame N only when frame
+  N+1's boundary arrives, and the CV-X pushes frames on change only, so the
+  stream simply went silent at exactly the wrong moment. The bridge now
+  re-sends the settled frame once after a 150 ms idle (the duplicate becomes
+  the held part, so what is on screen is always current), stops nagling the
+  loopback socket, and paces the writer on a per-frame condition instead of a
+  40 ms poll. Applies everywhere the mirror renders: the overlay, the pop-out
+  window, and the phone view behind it. The MJPEG writer also gains its first
+  tests — a real session handshakes against a loopback fake controller and a
+  raw HTTP client reads the stream a browser would.
 - **The statusbar says whether you are actually on the plant switch.** When a
   backup fails on the floor, the first question is whether it is you, the
   network, or the device, and until now the app had no opinion at all. A pill

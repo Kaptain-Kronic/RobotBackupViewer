@@ -4,12 +4,16 @@ generalized edit modal + libTree link picker, the photos-tab rework
 camera-backup backspace trap, the -/= tab hotkeys, and the multi-cam lens
 post-merge fix batch (manage reachable in cam mode, per-lens scroll memory,
 setCount blanking, linked-robot filter match, hidden-aware empty state,
-fold policy, keyboard tiles, home_view persistence across a remount).
+fold policy, keyboard tiles, home_view persistence across a remount) — plus
+the cvx-live-tiles lane: the CV-X tiles beside the matrox, streams from the
+localhost MJPEG bridge on a view-only lease, adopts into the full remote on
+click without a second dial, and redials fresh after the overlay closes.
 
 Fully synthetic and identifier-clean: builds its own library tree in a temp
 folder and redirects APPDATA there BEFORE importing the app, so the real
 settings/library are never touched — camera entries use unroutable TEST-NET
-(192.0.2.x) IPs only, so nothing real is ever probed.
+(192.0.2.x) IPs only, and CvxRemoteSession is swapped for FakeCvxSession, so
+nothing real is ever probed or dialled.
 Run: python tests/ui_batch_probe.py
 """
 import json
@@ -23,9 +27,47 @@ _TMP = isolate("bv_probe_")
 
 import webview  # noqa: E402
 
+from backupviewer import cvx_remote  # noqa: E402
 from backupviewer import settings as bv_settings  # noqa: E402
 from backupviewer.api import Api  # noqa: E402
 from backupviewer.app import resource_path  # noqa: E402
+from cvx_sim import _TINY_JPEG  # noqa: E402
+
+
+class FakeCvxSession:
+    """Stands in for CvxRemoteSession so the CV-X tile can dial, stream and be
+    adopted with no sockets. The REAL MJPEG server streams this fake (hence
+    latest_frame + wait_frame), and dials/stops are recorded class-side for
+    the probe's never-dial-twice assertions."""
+    dials = []
+    last = None
+
+    def __init__(self, ip, **kw):
+        self.ip = ip
+        self.alive = True
+        self.stopped = False
+        self.frames = 1
+        self.handshake_done = True
+        self.error = None
+        FakeCvxSession.last = self
+
+    def start(self):
+        FakeCvxSession.dials.append(self.ip)
+        return True
+
+    def stop(self):
+        self.stopped = True
+        self.alive = False
+
+    def latest_frame(self):
+        return _TINY_JPEG
+
+    def wait_frame(self, last, timeout):
+        time.sleep(min(timeout, 0.05))
+        return False
+
+
+cvx_remote.CvxRemoteSession = FakeCvxSession   # nothing in this probe ever dials real hardware
 
 
 # --- synthetic library tree (identifier-clean: RB/CELL fakes, TEST-NET IPs) ---
@@ -830,7 +872,8 @@ def probe(window):
         check("cam.lines_start_folded", fold.get("linesFolded") is True, f"({fold})")
         check("cam.folded_lines_show_counts", fold.get("counts") is True, f"({fold})")
 
-        # only camera-mtx entries tile (robots and the CV-X stay out by design)
+        # both vendors tile now (robots stay out): the matrox polls its HMI
+        # frame, the cv-x mirrors its screen through the remote bridge
         tiles = js(window, """JSON.stringify((function(){
             var t=[...document.querySelectorAll('.cam-tile')];
             return { n: t.length,
@@ -840,10 +883,75 @@ def probe(window):
                        return x.textContent.indexOf('CVX')>=0;}) };
         })())""")
         tiles = json.loads(tiles or "{}")
-        check("cam.only_mtx_tiles", tiles.get("n") == 1 and tiles.get("name") is True,
+        check("cam.both_vendors_tile", tiles.get("n") == 2 and tiles.get("name") is True,
               f"({tiles})")
-        check("cam.cvx_not_tiled", tiles.get("cvxTiled") is False, f"({tiles})")
+        check("cam.cvx_tiled", tiles.get("cvxTiled") is True, f"({tiles})")
         check("cam.tile_flags_no_ip", tiles.get("noip") is True, f"({tiles})")
+
+        # the cv-x tile dials THROUGH the bridge (a view-only lease) and points
+        # its img at the localhost MJPEG stream. document.hidden pauses the
+        # shared tick in a hidden window, so the probe drives _camLoad itself.
+        js(window, """window.__dial=null;
+            (function(){
+              var img=document.querySelector('img.cam-live[data-cvx]');
+              if(!img){ window.__dial='no-img'; return; }
+              img._camLoad();
+              window.__dial='kicked';
+            })()""")
+        check("cam.cvx_tile_kicks", poll(window, "window.__dial") == "kicked",
+              f"(got {js(window, 'window.__dial')!r})")
+        src = poll(window, """(function(){
+            var img=document.querySelector('img.cam-live[data-cvx]');
+            return img && img.src && img.src.indexOf('/cvx/')>=0 ? img.src : null;
+        })()""")
+        check("cam.cvx_tile_streams_from_bridge",
+              bool(src) and "127.0.0.1" in (src or ""), f"(got {src!r})")
+        check("cam.cvx_tile_dialled_once", FakeCvxSession.dials == ["192.0.2.162"],
+              f"(got {FakeCvxSession.dials})")
+        check("cam.cvx_tile_is_view_only",
+              getattr(FakeCvxSession.last, "video_only", None) is True)
+
+        # clicking the tile ADOPTS the live session into the full remote —
+        # promoted out of view-only, and the controller is never dialled twice
+        js(window, """(function(){
+            var t=[...document.querySelectorAll('.cam-tile')].find(function(x){
+                return x.textContent.indexOf('CVX')>=0;});
+            t.click();
+        })()""")
+        check("cam.cvx_tile_click_adopts", bool(poll(window,
+              "document.querySelector('.cvx-remote') ? 'y' : ''")))
+        check("cam.adopted_not_redialled", FakeCvxSession.dials == ["192.0.2.162"],
+              f"(got {FakeCvxSession.dials})")
+        check("cam.adopt_clears_view_only",
+              getattr(FakeCvxSession.last, "video_only", None) is False)
+        adopted = FakeCvxSession.last
+        js(window, """(function(){
+            var b=[...document.querySelectorAll('.cvx-remote .btn')].find(function(x){
+                return x.textContent.indexOf('close')>=0;});
+            b.click();
+        })()""")
+        check("cam.overlay_close_hangs_up", bool(poll(window,
+              "document.querySelector('.cvx-remote') ? '' : 'y'")))
+        _dl = time.time() + 5           # the stop rides an async bridge call
+        while time.time() < _dl and not adopted.stopped:
+            time.sleep(0.05)
+        check("cam.overlay_close_stopped_session", adopted.stopped)
+
+        # …and the next kick redials fresh, under a new session
+        js(window, """window.__redial=null;
+            (function(){
+              var img=document.querySelector('img.cam-live[data-cvx]');
+              img._camLoad();
+              window.__redial='kicked';
+            })()""")
+        poll(window, "window.__redial")
+        src2 = poll(window, """(function(){
+            var img=document.querySelector('img.cam-live[data-cvx]');
+            return img && img.src && img.src.indexOf('/cvx/')>=0 ? img.src : null;
+        })()""")
+        check("cam.tile_redials_after_close",
+              len(FakeCvxSession.dials) == 2 and bool(src2) and src2 != src,
+              f"(dials {FakeCvxSession.dials}, src {src2!r})")
 
         # fix 8: tiles are keyboard-reachable — focusable button role, and
         # Enter/Space take the click path (here: the honest no-IP refusal toast)
@@ -911,13 +1019,13 @@ def probe(window):
         # to ~1 s — poll for the applied state instead of sleeping
         match = poll(window, """(function(){
             var c=document.querySelector('#topbar-search .match-count').textContent;
-            if(c!=='1') return null;   /* debounce hasn't fired yet */
+            if(c!=='1/2') return null;   /* debounce hasn't fired yet */
             return JSON.stringify({ tiles: document.querySelectorAll('.cam-tile').length,
                                     count: c });
         })()""")
         match = json.loads(match or "{}")
         check("cam.filter_matches_linked_robot_name",
-              match.get("tiles") == 1 and match.get("count") == "1", f"({match})")
+              match.get("tiles") == 1 and match.get("count") == "1/2", f"({match})")
         js(window, """(function(){
             var inp=document.querySelector('#topbar-search .screen-search input');
             inp.value='zzz-no-such';
@@ -932,23 +1040,25 @@ def probe(window):
         nomatch = json.loads(nomatch or "{}")
         check("cam.no_match_says_cameras",
               "no cameras match" in (nomatch.get("note") or ""), f"({nomatch})")
-        check("cam.no_match_counter", nomatch.get("count") == "0/1", f"({nomatch})")
+        check("cam.no_match_counter", nomatch.get("count") == "0/2", f"({nomatch})")
         js(window, """(function(){
             var inp=document.querySelector('#topbar-search .screen-search input');
             inp.value='';
             inp.dispatchEvent(new Event('input',{bubbles:true}));
         })()""")
         check("cam.filter_clears", bool(poll(window,
-              "document.querySelectorAll('.cam-tile').length===1 ? 'y' : ''")))
+              "document.querySelectorAll('.cam-tile').length===2 ? 'y' : ''")))
 
-        # fix 5: hiding the only matrox cam (plus a robot, to prove the count
-        # is lens-scoped) — the empty grid says HIDDEN, never "none yet"
+        # fix 5: hiding BOTH cameras (plus a robot, to prove the count is
+        # lens-scoped) — the empty grid says HIDDEN, never "none yet"
         js(window, """window.__hid=null;
             BV.api.call('lib_list').then(function(d){
               var cam=d.robots.find(function(r){return r.robot==='CELL-01CAM01';});
+              var cvx=d.robots.find(function(r){return r.robot==='CELL-01CVX01';});
               var rb=d.robots.find(function(r){return r.robot==='RB139R01B01';});
               return Promise.all([
                 BV.api.call('lib_set_hidden', cam.id, true),
+                BV.api.call('lib_set_hidden', cvx.id, true),
                 BV.api.call('lib_set_hidden', rb.id, true),
               ]);
             }).then(function(){ window.__hid='ok'; })
@@ -965,29 +1075,29 @@ def probe(window):
         })()""")
         empty = json.loads(empty or "{}")
         check("cam.empty_state_says_hidden",
-              "1 matrox camera is hidden" in (empty.get("note") or ""), f"({empty})")
+              "2 cameras are hidden" in (empty.get("note") or ""), f"({empty})")
         check("cam.empty_state_never_undefined", empty.get("count") == "", f"({empty})")
         check("cam.hidden_count_is_lens_scoped",
-              empty.get("toggle") == "show hidden (1)", f"({empty})")
+              empty.get("toggle") == "show hidden (2)", f"({empty})")
 
-        # the backup lens counts BOTH hidden entries (1 robot + 1 camera)
+        # the backup lens counts ALL hidden entries (1 robot + 2 cameras)
         js(window, """(function(){
             document.getElementById('cube-lib').click();
         })()""")
         tog = poll(window, """(function(){
             var t=document.querySelector('.lib-show-hidden');
-            return t && t.textContent==='show hidden (2)' ? t.textContent : null;
+            return t && t.textContent==='show hidden (3)' ? t.textContent : null;
         })()""")
-        check("cam.backup_lens_counts_both", tog == "show hidden (2)", f"(got {tog!r})")
+        check("cam.backup_lens_counts_all", tog == "show hidden (3)", f"(got {tog!r})")
 
-        # show hidden in the cam lens reveals the tile again
+        # show hidden in the cam lens reveals the tiles again
         js(window, """(function(){
             document.getElementById('cube-cam').click();
         })()""")
         poll(window, "!!document.querySelector('.home-library.cam-mode')")
         js(window, "document.querySelector('.lib-show-hidden').click()")
         check("cam.show_hidden_reveals_tile", bool(poll(window,
-              "document.querySelectorAll('.cam-tile').length===1 ? 'y' : ''")))
+              "document.querySelectorAll('.cam-tile').length===2 ? 'y' : ''")))
         js(window, "document.querySelector('.lib-show-hidden').click()")   # back off
         js(window, """window.__unhid=null;
             BV.api.call('lib_list').then(function(d){
@@ -998,7 +1108,7 @@ def probe(window):
         check("cam.unhide_cleanup", poll(window, "window.__unhid") == "ok")
         js(window, "BV.state.emit('library-dirty')")
         check("cam.tile_back_after_unhide", bool(poll(window,
-              "document.querySelectorAll('.cam-tile').length===1 ? 'y' : ''")))
+              "document.querySelectorAll('.cam-tile').length===2 ? 'y' : ''")))
 
         # a TEST-NET IP on the tile: the live img wires up and a dead camera
         # is tolerated (nothing real is ever probed — 192.0.2.x is unroutable)

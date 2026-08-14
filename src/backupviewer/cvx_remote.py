@@ -192,6 +192,7 @@ class CvxRemoteSession:
         self._img_lock = threading.Lock()
         self._latest: bytes | None = None
         self.frames = 0
+        self._frame_cond = threading.Condition()  # signals every self.frames bump (and stop())
         self._ctrl_seq = itertools.count(0x51)   # mouse seq
         self._ack_seq = itertools.count(0x101)   # frame-ack seq
         self._mouse_next = 0                     # next client seq to put on the wire
@@ -246,10 +247,22 @@ class CvxRemoteSession:
     def latest_frame(self) -> bytes | None:
         return self._latest
 
+    def wait_frame(self, last: int, timeout: float) -> bool:
+        """Block until self.frames != last or timeout; True if a new frame arrived.
+        Comparing the counter (not an event flag) makes lost wakeups harmless and
+        lets any number of stream consumers wait on the same session."""
+        with self._frame_cond:
+            if self.frames != last:
+                return True
+            self._frame_cond.wait(timeout)
+        return self.frames != last
+
     def stop(self):
         self._stop.set()
         self._alive = False
         self._teardown()
+        with self._frame_cond:            # wake blocked stream consumers so they see dead
+            self._frame_cond.notify_all()
 
     def _teardown(self):
         for s in self._socks.values():
@@ -326,10 +339,15 @@ class CvxRemoteSession:
                     with self._img_lock:
                         self._imgbuf += buf[32 + _VIDEO_SUBHDR:total]
             del buf[:total]
+        got_frame = False
         with self._img_lock:
             for jpg in extract_jpegs(self._imgbuf):
                 self._latest = jpg
                 self.frames += 1
+                got_frame = True
+        if got_frame:
+            with self._frame_cond:
+                self._frame_cond.notify_all()
         if need_ack:
             self._send_frame_ack()
 
@@ -467,7 +485,19 @@ class CvxRemoteSession:
 # multipart/x-mixed-replace, so a plain <img src="http://127.0.0.1:PORT/cvx/<id>">
 # in the (file://, no-CSP) frontend renders the live screen with zero JS decoding.
 
+# Chromium's multipart/x-mixed-replace parser is boundary-driven: it hands part N
+# to the image decoder only when part N+1's delimiter arrives (Content-Length is
+# ignored). The CV-X pushes frames on change only, so a stream that goes
+# byte-silent after a burst never paints its final frame - the picture hangs
+# until something (historically, a mouse wiggle) makes the controller push
+# another one. After this idle window with no new frame, the settled JPEG is
+# re-sent once as a fresh part: the duplicate becomes the held part, and what's
+# on screen is always current. One dup per burst, loopback-only bandwidth.
+IDLE_RESEND_S = 0.15
+
 class _MjpegHandler(BaseHTTPRequestHandler):
+    disable_nagle_algorithm = True   # tail bytes of a part must not wait out delayed-ACK
+
     def do_GET(self):
         sid = self.path.rsplit("/", 1)[-1].split("?")[0]
         sess = self.server.registry.get(sid)  # type: ignore[attr-defined]
@@ -480,19 +510,27 @@ class _MjpegHandler(BaseHTTPRequestHandler):
         self.send_header("Connection", "close")
         self.end_headers()
         last = -1
+        jpg = None
+        pending = False        # a written part the client may still be holding
         try:
             while sess.alive:
                 if sess.frames != last:
                     last = sess.frames
                     jpg = sess.latest_frame()
                     if jpg:
-                        self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n"
-                                         b"Content-Length: " + str(len(jpg)).encode() + b"\r\n\r\n")
-                        self.wfile.write(jpg)
-                        self.wfile.write(b"\r\n")
-                time.sleep(0.04)
+                        self._part(jpg)
+                        pending = True
+                    continue
+                if not sess.wait_frame(last, IDLE_RESEND_S) and pending and jpg:
+                    self._part(jpg)          # flush the settled frame (see above)
+                    pending = False
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
+
+    def _part(self, jpg: bytes):
+        # one write per part: with Nagle off, three writes would be three packets
+        self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
+                         + str(len(jpg)).encode() + b"\r\n\r\n" + jpg + b"\r\n")
 
     def log_message(self, *a):  # silence per-request logging
         pass
