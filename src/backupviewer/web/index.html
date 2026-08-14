@@ -79,6 +79,9 @@
   <div id="jobstrip" class="hidden"></div>
   <footer id="statusbar">
     <span id="status-left"></span>
+    <!-- the plant-link pill owns this slot alone, so the router's constant
+         innerHTML rebuild of the two spans either side never detaches it -->
+    <span id="status-net"></span>
     <span id="status-right"></span>
   </footer>
   </div>
@@ -97,6 +100,7 @@
 <script src="js/manage_ui.js"></script>
 <script src="js/sim_export.js"></script>
 <script src="js/update.js"></script>
+<script src="js/netstatus.js"></script>
 <script src="js/workspace.js"></script>
 <script src="js/highlight_tp.js"></script>
 <script src="js/components/icons.js"></script>

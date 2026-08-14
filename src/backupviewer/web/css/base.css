@@ -425,11 +425,18 @@ body.chrome-fused #chrome-top::after { opacity: 0; }
 }
 .jobstrip-panel .js-cancel { flex: none; padding: 0 0.45em; }
 #jobstrip .jobstrip-busy { display: flex; align-items: center; gap: 0.5rem; flex: none; }
-#jobstrip .busy-pulse {
+/* shared: "work is in flight". Promoted off #jobstrip when the link pill needed
+   the same meaning for its own probe - one rule, so the two can never drift. */
+.busy-pulse {
   width: 0.55rem; height: 0.55rem; border-radius: 50%;
   background: var(--accent); animation: busypulse 1.1s ease-in-out infinite;
 }
 @keyframes busypulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+/* three children now (left · net · right): left absorbs the slack so the link
+   pill and the version stay packed against the right edge */
+#status-left { flex: 1 1 auto; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+#status-net { flex: none; display: flex; align-items: center; }
 #statusbar .sep { margin: 0 0.5em; opacity: 0.45; }
 #statusbar .accent { color: var(--accent); }
 #statusbar .credit { font-size: 0.88em; color: var(--sub-alt); margin-left: 0.6em; }
@@ -443,6 +450,17 @@ body.chrome-fused #chrome-top::after { opacity: 0; }
   color: var(--accent); border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
+/* the plant-link pill: same quiet-chip-until-hover treatment as the credit pill,
+   plus the button reset every pill-shaped button in the app uses */
+#statusbar .net-pill {
+  appearance: none; font: inherit; font-size: 0.72em; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 0.45em;
+  transition: color var(--trans), border-color var(--trans), background var(--trans);
+}
+#statusbar .net-pill:hover { border-color: var(--accent); }
+/* an unverified reading (the OS tables wouldn't read) must not look like a
+   verdict - dim the whole chip rather than picking a colour we can't justify */
+#statusbar .net-pill.unread { opacity: 0.55; }
 
 .hidden { display: none !important; }
 
@@ -528,4 +546,10 @@ kbd {
    motion; the CSS layers get the same treatment here */
 @media (prefers-reduced-motion: reduce) {
   #bgfx-css { animation: none !important; }
+  /* the link panel's blink CARRIES INFORMATION (that device just answered), so
+     it is replaced with a static mark for the same window, never dropped - the
+     JS timer owns removal either way, so this is one code path */
+  .net-dot.hit { animation: none;
+    box-shadow: 0 0 0 0.14rem color-mix(in srgb, var(--ok) 50%, transparent); }
+  .busy-pulse { animation: none; opacity: 0.85; }
 }

@@ -2294,3 +2294,56 @@ text.v3-ax-z { fill: var(--accent); }
 .bv-drop-body { overflow: auto; padding: 0.35rem 0.4rem 0.5rem; }
 .theme-pick-search { padding: 0.15rem 0.3rem 0.4rem; }
 .theme-pick-search .search-box { max-width: none; }
+
+/* ---- plant link panel (netstatus.js) ---- */
+/* the list scrolls inside .bv-drop-body, which is what keeps wireDismiss's
+   scroll-to-close from firing on our own scrolling */
+.net-head { padding: 0.25rem 0.35rem 0.5rem; border-bottom: 1px solid var(--edge-soft); }
+.net-head-top { display: flex; align-items: baseline; gap: 0.5rem; }
+.net-head-state { font-weight: 600; color: var(--text); }
+.net-head-where { color: var(--sub); margin-left: auto; font-size: 0.86em; }
+.net-head-detail { color: var(--sub); font-size: 0.86em; margin-top: 0.25rem;
+  overflow-wrap: break-word; }
+.net-sub { display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.35rem 0.35rem 0.2rem; color: var(--sub); font-size: 0.82em; }
+.net-sub .btn { margin-left: auto; padding: 0.1em 0.6em; font-size: 0.95em; }
+.net-sec { margin-top: 0.5rem; }
+.net-sec-head { display: flex; align-items: center; gap: 0.4rem;
+  color: var(--sub-alt); font-size: 0.78em; letter-spacing: 0.04em;
+  padding: 0.25rem 0.35rem; }
+.net-sec-note { color: var(--sub-alt); font-size: 0.78em; padding: 0 0.35rem 0.3rem; }
+.net-row { display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.16rem 0.35rem; border-radius: calc(var(--radius) / 2); }
+.net-row:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.net-name { flex: 1 1 auto; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.net-ip { flex: none; color: var(--sub); font-variant-numeric: tabular-nums; }
+.net-row .pill { flex: none; }
+
+/* the dot vocabulary. `absent` is a HOLLOW ring, never red: a device the laptop
+   simply hasn't spoken to since the cable went in has no neighbour entry while
+   running perfectly. Painting that as a fault would make the panel lie. */
+.net-dot { flex: none; width: 0.55rem; height: 0.55rem; border-radius: 50%;
+  background: var(--sub-alt); }
+.net-dot.live { background: var(--ok); }
+.net-dot.known { background: color-mix(in srgb, var(--ok) 45%, transparent); }
+.net-dot.gone { background: var(--error); }
+.net-dot.absent { background: transparent; box-shadow: inset 0 0 0 1px var(--sub-alt); }
+.net-dot.unknown { background: transparent; box-shadow: inset 0 0 0 1px var(--sub); }
+/* one 600ms pulse when a device's neighbour entry just went reachable - i.e.
+   frames really were exchanged. Nothing else in this panel ever animates. */
+.net-dot.hit { animation: netdothit 0.6s ease-out 1; }
+@keyframes netdothit {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 70%, transparent); }
+  100% { box-shadow: 0 0 0 0.4rem transparent; }
+}
+.net-foot { margin-top: 0.5rem; padding: 0.4rem 0.35rem 0.1rem;
+  border-top: 1px solid var(--edge-soft); color: var(--sub-alt); font-size: 0.78em; }
+.net-pick { padding: 0.1rem 0.35rem 0.3rem; }
+.net-pick-row { display: flex; align-items: center; gap: 0.5rem; width: 100%;
+  padding: 0.2rem 0.35rem; border-radius: calc(var(--radius) / 2);
+  background: none; border: 0; color: inherit; font: inherit; cursor: pointer;
+  text-align: left; }
+.net-pick-row:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.net-pick-row.on { color: var(--accent); }
+.net-pick-why { margin-left: auto; color: var(--sub-alt); font-size: 0.85em; }
