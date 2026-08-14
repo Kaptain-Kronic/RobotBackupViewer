@@ -23,7 +23,7 @@ batch lands, or with `--check` to hear about drift).
 > When per-subsystem docs land, they supersede this file for their own area. This
 > map's remaining job is breadth: what exists, and where.
 
-**Scope.** 265 files / ~76,586 lines. Covers everything in the working tree except: the
+**Scope.** 265 files / ~76,698 lines. Covers everything in the working tree except: the
 `.git` internals, build outputs (`dist/`, `build/`, `__pycache__/`), the private
 `SampleBackup/` fixture tree, the `.rmd` model corpus (61 binary robot-model blobs
 that are input data, not source), and the two local-only real-plant reference files
@@ -43,13 +43,13 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 |---|---|---|---|---|
 | `.gitignore` | 21 | ignore rules for pycache/build/dist plus the local-only sample backup, real ip list and diag folders | build/config | active |
 | `build_exe.log` | 106 | pyinstaller transcript of one successful onefile build on store python 3.13 with pyinstaller 6.20 *(untracked, local-only)* | build/config | generated |
-| `CHANGELOG.md` | 1225 | prose changelog newest-first: a large unreleased section over v1.4 back to v0.1, feature by feature | docs | active |
+| `CHANGELOG.md` | 1237 | prose changelog newest-first: a large unreleased section over v1.4 back to v0.1, feature by feature | docs | active |
 | `CLAUDE.md` | 273 | the build contract: locked stack, layer map, composition/honesty rules and the plant-identifier firewall | docs | active |
 | `CVX_FTP_LAYOUT.md` | 108 | field notes on the cv-x ftp tree and simulator workspace layout, and what env.dat cannot prove | docs | active |
 | `LICENSE` | 620 | verbatim gnu gpl v3 license text, the license the readme points at | docs | vendored |
 | `pyproject.toml` | 31 | project metadata (v1.4, pywebview), the pytest pythonpath=src a fresh clone needs to collect tests, and the `probe` marker + `addopts` that keep the default run fast | build/config | active |
 | `README.md` | 255 | public readme: feature tour, tab-to-source-file table, run/package/test commands, theme json shape | docs | active |
-| `ROADMAP.md` | 325 | lane-claiming roadmap: shipped/building/decided/open items per subsystem, plus the 2.0 editing principles | docs | active |
+| `ROADMAP.md` | 340 | lane-claiming roadmap: shipped/building/decided/open items per subsystem, plus the 2.0 editing principles | docs | active |
 | `run.py` | 10 | dev launcher and pyinstaller entry script: puts src on sys.path, calls backupviewer.app.main | build/config | active |
 | `run_libraryimporter.py` | 10 | dev launcher and pyinstaller entry script for the companion libraryimporter app | LibraryImporter | active |
 | `docs/INVENTORY.md` | 633 | this file: dated file-level map of the repo plus the findings from the phase-1 documentation pass, with resolved items marked inline | docs | active |
@@ -57,7 +57,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `docs/subsystems/3d-viewer.md` | 560 | subsystem doc #3 (the 3D viewer): the pendant-proven FK solve and its JS twin, the 228-type table's validated-vs-not honesty, flange residuals re-measured on the pins, the zone degradation ladder, and the unprobed-viewport gap said plainly | docs | active |
 | `docs/subsystems/backup-capture.md` | 656 | subsystem doc #2 (the backup/discovery jobs + shared plumbing): transport ground truth tagged live-run-vs-assumed, the gentle-with-equipment invariants, a dedicated failure-modes section, and the batch-flow coverage gap said plainly | docs | active |
 | `docs/subsystems/parsing.md` | 619 | subsystem doc #1 (parsers/ + session.py): ground truth marked verified-vs-assumed per fact, cross-file invariants, paid-for traps, honest coverage gaps — and the template later subsystem docs follow | docs | active |
-| `docs/subsystems/remote-mobile.md` | 615 | subsystem doc #4 (CV-X/Matrox remotes + phone view): the reverse-engineered CV-X wire protocol whose reference client is gone, the vendor-reflected mouse enum, the only listening socket's trust posture, and the app's one UAC elevation | docs | active |
+| `docs/subsystems/remote-mobile.md` | 648 | subsystem doc #4 (CV-X/Matrox remotes + phone view): the reverse-engineered CV-X wire protocol whose reference client is gone, the vendor-reflected mouse enum, the only listening socket's trust posture, and the app's one UAC elevation | docs | active |
 | `packaging/backupviewer.ico` | *75 KB* | multi-resolution app icon embedded in the exe and inherited by the pywebview window | build/config | active |
 | `packaging/backupviewer.spec` | 58 | pyinstaller onefile spec: bundles web/ and cvx_handshake/, edgechromium hidden imports, excludes paramiko | build/config | active |
 | `packaging/libraryimporter.spec` | 41 | pyinstaller onefile spec for libraryimporter.exe, bundling src/libraryimporter/web, no icon | build/config | active |
@@ -70,7 +70,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/cvx_handshake/chan8502_tx.bin` | *96 KB* | captured cv-x 8502 control-channel client handshake: 13 messages incl. six 16 kb blobs, replayed at connect | remote/mobile | active |
 | `src/backupviewer/cvx_handshake/chan8503_tx.bin` | *0.2 KB* | captured cv-x 8503 aux-channel handshake: a single channel-open message replayed to open the aux socket | remote/mobile | active |
 | `src/backupviewer/cvx_handshake/chan8504_tx.bin` | *0.2 KB* | captured cv-x 8504 video-channel handshake: channel-open, video-service open and the frame-ack prime message | remote/mobile | active |
-| `src/backupviewer/cvx_remote.py` | 508 | cv-x remote-desktop client: handshake replay on 3 sockets, jpeg frame harvest, mouse events, mjpeg server | remote/mobile | active |
+| `src/backupviewer/cvx_remote.py` | 546 | cv-x remote-desktop client: handshake replay on 3 sockets, jpeg frame harvest, mouse events, mjpeg server | remote/mobile | active |
 | `src/backupviewer/discover.py` | 669 | subnet scan job finding fanuc/keyence over ftp and matrox via ethernet/ip, plus adapter list and live name probe | backup capture | active |
 | `src/backupviewer/ftpbackup.py` | 627 | ftp backup engine: gentle md: pull, dated+latest tree, .part/complete-marker crash safety, shared job base | backup capture | active |
 | `src/backupviewer/healthscan.py` | 1185 | fleet health-scan engine: 17-check registry, lazy per-robot parse context, threaded job, fleet-wide verdict passes | flag scanning | active |
@@ -192,6 +192,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/libraryimporter/web/js/importer.js` | 281 | the importer page logic: renders python's whole state, owns selection, runs seeding and the result panel | LibraryImporter | active |
 | `src/libraryimporter/web/js/util.js` | 41 | importer's BV namespace with just esc, el and toast, trimmed from the main app's util.js | LibraryImporter | active |
 | `tests/conftest.py` | 73 | pytest session fixtures pinning four exact snapshots inside the private library tree (primary/prev/secondary/partial), each through the fixtureutil gate, plus a text reader *(untracked, local-only)* | tests | active |
+| `tests/cvx_sim.py` | 214 | a loopback fake cv-x controller speaking the 850x framing: ctx per service type, op1/op6 replies the replay blocks on, push_frame down the video channel, inputs() decode — a wire-shape fake, not an emulator | tests | active |
 | `tests/fixtureutil.py` | 70 | tracked half of the private-fixture plumbing: the require-or-error gate (missing fixture = error where the tree is expected, visible skip elsewhere) and runtime backup-root discovery | tests | active |
 | `tests/libraryimporter_probe.py` | 240 | end-to-end probe of the libraryimporter app: drop, checklist ranges, import, sidecars on disk | tests | active |
 | `tests/perf_probe.py` | 260 | plant-scale timing probe: 2400 stubbed rows with ms budgets for notes, stars, shift-range and picker — the library screen's only performance-cliff guard | tests | active |
@@ -208,7 +209,8 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/test_cvx_models.py` | 691 | pytest for the cv-x model decoder: containers, zlib-stl gate, calibration self-validation, and the models/export endpoints | tests | active |
 | `tests/test_cvx_program.py` | 498 | pytest for the cv-x inspection-program reader: st-magic gate, recovery-copy fold, name-table and script-grammar refusals, plus the logic tab requirement and the cvx_logic endpoint | tests | active |
 | `tests/test_cvx_remote.py` | 417 | pytest for the cv-x remote wire protocol: framing, ctx echo, jpeg harvest, frame-ack, mouse encode and reorder, plus the firewall assertion that the bundled handshake blobs carry only documentation addresses | tests | active |
-| `tests/test_cvx_window.py` | 266 | pytest for cv-x remote session lifecycle at the api: adopt, reload, pop-out window, host-window fullscreen | tests | active |
+| `tests/test_cvx_stream.py` | 125 | pytest for the mjpeg bridge's flush behavior: a real session against the loopback sim, a raw http client reading the stream — one frame in, the frame plus its idle flush out, and never a third | tests | active |
+| `tests/test_cvx_window.py` | 273 | pytest for cv-x remote session lifecycle at the api: adopt, reload, pop-out window, host-window fullscreen | tests | active |
 | `tests/test_dcs.py` | 173 | pytest for parse_dcs_report over real DCSVRFY/DCSCHGD dumps: sections, signatures, frames, user models *(untracked, local-only)* | tests | active |
 | `tests/test_dcszones.py` | 395 | pytest for dcszones: DCSPOS.VA geometry, DCSVRFY.DG merge, user models, and disabled/uninit honesty | tests | active |
 | `tests/test_discover.py` | 472 | pytest for backup-folder detection and the offline network scan: fanuc ftp, matrox ethernet/ip, adapters | tests | active |
@@ -239,7 +241,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/test_mtxbackup.py` | 383 | pytest for the Matrox SMB camera pull end-to-end against a temp camera home via an injected mount, incl. MAX_PATH copy/index and camera self-naming | tests | active |
 | `tests/test_payloads.py` | 43 | pytest for payload schedules out of $PLST_GRP: mass/cg/inertia plus uninit and -9999 sentinel flagging | tests | active |
 | `tests/test_phone_view.py` | 343 | pytest driving PhoneShare over real loopback HTTP with the camera fetch faked, plus address ranking and the phone_view_* endpoints and firewall helper | tests | active |
-| `tests/test_probes.py` | 100 | the wiring that makes pytest run the ten probes: one subprocess each, timeout, `probe` marker (deselected by default in pyproject) | tests | active |
+| `tests/test_probes.py` | 102 | the wiring that makes pytest run the ten probes: one subprocess each, timeout, `probe` marker (deselected by default in pyproject) | tests | active |
 | `tests/test_programs.py` | 82 | pytest for .ls header/body/position parsing, call hops, and KAREL .PC listing over the private fixture *(untracked, local-only)* | tests | active |
 | `tests/test_qr.py` | 218 | pytest pinning the hand-rolled QR encoder: Reed-Solomon syndromes, BCH format info, spec geometry, and a from-scratch reader that re-reads the payload | tests | active |
 | `tests/test_registers.py` | 48 | pytest for NUMREG/POSREG/STRREG parsing: counts, joint vs cartesian PRs, uninit slots *(untracked, local-only)* | tests | active |
@@ -259,7 +261,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/ui_batch_probe.py` | 1962 | hidden-window probe: library home rows, note editing, cam lens, program navigator, mh-valve reflow, tab keys | tests | active |
 | `tests/ui_bgfx_probe.py` | 454 | hidden-window probe of bgfx effects, the settings dialog's two tabs and the theme picker panel | tests | active |
 | `tests/ui_cvx3d_probe.py` | 219 | hidden-window probe of the camera overview and 3d view: tabs light/vanish, canvas paints, extract modal, enlarge overlay | tests | active |
-| `tests/ui_cvxremote_probe.py` | 200 | hidden-window probe of the cv-x remote bar, top-bar phone button and pop-out session adoption | tests | active |
+| `tests/ui_cvxremote_probe.py` | 205 | hidden-window probe of the cv-x remote bar, top-bar phone button and pop-out session adoption | tests | active |
 | `tests/ui_edit_probe.py` | 1753 | hidden-window probe of the #edit workspace: panes, tab strips, find/replace, pane diff, per-robot export | tests | active |
 | `tests/ui_files_extract_probe.py` | 234 | hidden-window probe of the files-tab extract flow: tick/range/header selection against the filter, the extract modal, and the landed tree's shape | tests | active |
 | `tests/ui_fk_probe.py` | 135 | hidden-window probe holding BV.fk.chain equal to kinematics.chain_frames within 1e-6 across builtin chains plus the synthetic parallel-link arm | tests | active |
@@ -286,9 +288,9 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 
 | subsystem | files | ~lines |
 |---|---:|---:|
-| tests | 77 | 22,039 |
+| tests | 77 | 22,053 |
 | shared/infra | 27 | 8,429 |
-| docs | 12 | 6,173 |
+| docs | 12 | 6,233 |
 | backup parsing | 31 | 6,031 |
 | theming | 34 | 5,934 |
 | program editor | 5 | 4,929 |
@@ -296,13 +298,13 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | cameras | 15 | 4,524 |
 | 3D viewer | 16 | 3,836 |
 | flag scanning | 2 | 2,080 |
-| remote/mobile | 10 | 2,032 |
+| remote/mobile | 10 | 2,070 |
 | backup capture | 4 | 1,739 |
 | LibraryImporter | 11 | 1,395 |
 | compare engine | 5 | 1,355 |
 | tools/scripts | 5 | 1,087 |
 | build/config | 7 | 267 |
-| **total** | **265** | **76,586** |
+| **total** | **265** | **76,698** |
 
 > Counts are by *primary* subsystem only — a file appears once, so these add up to the
 > whole repo. The `tests` row is the largest because every probe and unit suite counts as

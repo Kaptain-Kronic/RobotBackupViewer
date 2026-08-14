@@ -1,6 +1,18 @@
 # Changelog
 
 ## unreleased — the camera gets its 3d view, and the files tab extracts
+- **The CV-X remote paints its final frame.** When the controller's screen
+  settled, the browser held the last frame of the burst un-painted until the
+  mouse moved — Chromium's multipart parser releases frame N only when frame
+  N+1's boundary arrives, and the CV-X pushes frames on change only, so the
+  stream simply went silent at exactly the wrong moment. The bridge now
+  re-sends the settled frame once after a 150 ms idle (the duplicate becomes
+  the held part, so what is on screen is always current), stops nagling the
+  loopback socket, and paces the writer on a per-frame condition instead of a
+  40 ms poll. Applies everywhere the mirror renders: the overlay, the pop-out
+  window, and the phone view behind it. The MJPEG writer also gains its first
+  tests — a real session handshakes against a loopback fake controller and a
+  raw HTTP client reads the stream a browser would.
 - **The files tab extracts to USB.** Every row grew a checkbox — tick one,
   shift-click a range, or take the header box, which selects exactly what the
   filter shows (the `tp` chip plus one click is every TP file in the backup).

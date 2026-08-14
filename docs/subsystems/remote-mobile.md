@@ -3,8 +3,9 @@
 *Subsystem doc #4. Written 2026-08-03 against `main` @ `6609992`, clean tree
 (plus this pass's own two comment corrections in `cvx_remote.py` and
 `INVENTORY.md`, §9 item 1 — both 1-for-1 swaps, so cites into those files
-hold). Line-number cites are against that revision and drift with edits; the
-anchor commit is the reference.*
+hold). Updated 2026-08-14 by the stream-flush pass (branch off `main` @
+`b1ef1c9`): §4a rendering shortcut, §7 multipart trap, §8 counts. Line-number
+cites drift with edits; the anchor commit is the reference.*
 
 Covers: src/backupviewer/cvx_remote.py, src/backupviewer/phoneview.py,
 src/backupviewer/qr.py, src/backupviewer/screengrab.py,
@@ -233,6 +234,19 @@ plain `<img src="http://127.0.0.1:PORT/cvx/<sid>">` (`cvxremote.js:250`) — the
 live screen renders with zero JS decoding, in a `file://` page with no CSP to
 fight.
 
+The stream's writer is paced by the session, not a poll: `wait_frame(last,
+timeout)` blocks on a Condition the video parser notifies per frame (and
+`stop()` notifies too, so a dead session releases its handler threads instead
+of stranding them a timeout). Two hard-won rules live in that writer. First,
+the **idle re-send**: after `IDLE_RESEND_S` (0.15 s) with no new frame, the
+settled JPEG goes out once more as a fresh part — Chromium's multipart parser
+only hands part N to the decoder when part N+1's boundary arrives, and the
+CV-X pushes frames on change only, so without the re-send the last frame of
+every burst sat un-painted until the user wiggled the mouse (§7). Second, the
+handler sets `disable_nagle_algorithm = True` and writes each part as a single
+`wfile.write` — with three writes and Nagle on, a part's tail bytes could sit
+out a delayed-ACK window in the kernel.
+
 **Mouse, and the drag finding.** Mouse events are 60-byte messages on 8502
 (type 7 / op 5 / method 0x34), body `[7, h1, h2, eventId, X, Y, h3]` where
 `h1/h2/h3` are three client-side handle constants the controller just echoes
@@ -435,6 +449,18 @@ code does about it. "Test-enforced" = a unit test or the probe pins it;
   exactly the one `_replay` skips (`:363-365`) as the reactive frame-ack prime.
   The code's skip rule and the captured bytes agree.
 
+- **The last frame that hung until a mouse wiggle — Chromium's multipart parser
+  is boundary-driven.** A `multipart/x-mixed-replace` `<img>` paints part N only
+  when part N+1's delimiter arrives; `Content-Length` is ignored. The CV-X
+  pushes frames on change only, so when its screen settled the stream went
+  byte-silent and the final frame of the burst never painted — until mouse
+  traffic made the controller redraw its cursor and push one more. The fix is
+  the **idle re-send** in the MJPEG writer (`IDLE_RESEND_S`, §4a): after 0.15 s
+  with no new frame, the settled JPEG is sent once more, and the duplicate
+  becomes the held part. Do not "simplify" the duplicate away — it *is* the
+  paint. Guarded by `test_idle_resend_flushes_the_settled_frame`, which reads
+  the actual HTTP stream and fails at exactly one part.
+
 - **The drag that snapped at release — a wrong first theory.** Diagnosed first
   as promise-chain starvation in WebView2; that was disproved by reading
   pywebview 6.2.1's source, and the real cause was the controller ignoring
@@ -471,11 +497,12 @@ code does about it. "Test-enforced" = a unit test or the probe pins it;
 
 ## 8. Coverage
 
-Counted 2026-08-03. Full-suite anchor: `python -m pytest tests -m
-"probe or not probe"` → **701 passed, 0 skipped** (the number every subsystem
-doc re-runs; see the report at the end).
+Counted 2026-08-03; re-run 2026-08-14 by the stream-flush pass: `python -m
+pytest tests -m "probe or not probe"` → **761 passed, 4 skipped** (the four
+skips are environmental — the private sample tree absent, and the two
+screengrab captures in a locked session — each announcing itself, none silent).
 
-**145 unit tests across seven files** — verified by collection this pass, each
+**149 unit tests across eight files** — verified by collection this pass, each
 count checked individually:
 
 | file | tests |
@@ -487,6 +514,13 @@ count checked individually:
 | `tests/test_cvx_window.py` | 19 |
 | `tests/test_viewfinder.py` | 16 |
 | `tests/test_screengrab.py` | 7 |
+| `tests/test_cvx_stream.py` | 4 |
+
+`test_cvx_stream.py` (the stream-flush pass) is the first coverage of the MJPEG
+writer itself, and it exercises the real thing end to end: a genuine
+`CvxRemoteSession` handshakes against `tests/cvx_sim.py` (a loopback fake
+controller speaking the 850x framing) and a raw HTTP client reads the actual
+multipart stream a browser would.
 
 Plus `tests/ui_cvxremote_probe.py` (200 lines), which **is** in
 `test_probes.py`'s explicit `PROBES` list (`test_probes.py:54`), so it actually
