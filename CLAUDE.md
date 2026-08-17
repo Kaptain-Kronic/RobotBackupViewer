@@ -153,12 +153,12 @@ human-in-the-loop tier, and it lands last.
 
 ```powershell
 python -m pytest tests                            # unit only, ~45s — the default
-python -m pytest tests -m probe                   # the ten probes, ~3 min
+python -m pytest tests -m probe                   # the probes, ~3 min
 python -m pytest tests -m "probe or not probe"    # EVERYTHING, ~4 min
 ```
 
-The last one is **the** verify command: it boots the real app ten times in a
-hidden WebView2 and asserts on real DOM. Spelled that way rather than `-m ""`
+The last one is **the** verify command: it boots the real app once per probe
+in a hidden WebView2 and asserts on real DOM. Spelled that way rather than `-m ""`
 because PowerShell drops an empty argument before pytest ever sees it. The
 default stays fast on purpose — a suite slow enough to stop being run is worse
 than one that skips its slowest part.

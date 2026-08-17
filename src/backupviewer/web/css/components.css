@@ -413,6 +413,51 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .modal .contrast-hint .warn { color: var(--warn); }
 .modal .contrast-hint .note { opacity: 0.7; }
 
+/* the same color, typed: a pasteable code beside each picker */
+.modal .editor-row .editor-hex {
+  appearance: none; font: inherit; font-size: 0.78rem; text-align: center;
+  width: 5.4rem; flex: none; margin-left: auto;
+  background: var(--bg2); color: var(--text);
+  border: 1px solid var(--edge); border-radius: 6px; padding: 0.2rem 0.3rem;
+}
+.modal .editor-row .editor-hex:focus { outline: none; border-color: var(--accent); }
+.modal .editor-row .editor-hex.bad { border-color: var(--error); color: var(--error); }
+
+/* the row a palette swatch will paint (the last one touched) */
+.modal .editor-row.pal-target { box-shadow: inset 2px 0 0 var(--accent); }
+
+/* saved-palette strip: swatches wrap, ＋ stays last */
+.modal .pal-strip {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end;
+  gap: 0.35rem; margin-left: auto; min-width: 0;
+}
+.modal .pal-swatch {
+  position: relative; width: 1.35rem; height: 1.35rem; flex: none; padding: 0;
+  cursor: pointer; border: 1px solid var(--edge); border-radius: 4px;
+}
+.modal .pal-swatch .pal-x {
+  position: absolute; top: -0.45rem; right: -0.45rem;
+  width: 0.9rem; height: 0.9rem; line-height: 0.85rem; font-size: 0.7rem;
+  background: var(--bg2); color: var(--error);
+  border: 1px solid var(--edge); border-radius: 50%;
+  /* invisible must mean unclickable too — the × overhangs the swatch corner
+     and the strip gaps, so a hit-testable ghost would eat apply clicks as
+     silent, persisted deletes */
+  opacity: 0; pointer-events: none; transition: opacity var(--trans);
+}
+.modal .pal-swatch:hover .pal-x, .modal .pal-swatch:focus-visible .pal-x {
+  opacity: 1; pointer-events: auto;
+}
+.modal .pal-add {
+  width: 1.35rem; height: 1.35rem; flex: none; padding: 0; cursor: pointer;
+  font: inherit; font-size: 0.85rem; line-height: 1;
+  background: var(--bg2); color: var(--sub);
+  border: 1px dashed var(--edge); border-radius: 4px;
+  transition: border-color var(--trans), color var(--trans);
+}
+.modal .pal-add:hover { border-color: var(--accent); color: var(--accent); }
+.modal .pal-hint { font-size: 0.68rem; color: var(--sub); }
+
 /* unsaved-draft restore offer at the top of the theme editor */
 .modal .draft-bar {
   display: flex; align-items: center; gap: 0.5rem;

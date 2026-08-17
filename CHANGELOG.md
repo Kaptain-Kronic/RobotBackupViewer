@@ -1,6 +1,19 @@
 # Changelog
 
 ## unreleased — the camera gets its 3d view, and the files tab extracts
+- **The theme editor takes color codes, and keeps a palette.** Every color
+  row grew a hex field beside its picker — paste `#0d3b3e` and it applies
+  the moment the code is whole (a letter O reads as zero, because codes
+  hand-copied from chat and screenshots carry them), half-typed codes never
+  flash a wrong color, and junk marks the field instead of painting. Next to
+  the colors sits a saved palette: ＋ keeps the highlighted row's color,
+  clicking a swatch paints the highlighted row, × forgets one. The palette
+  is yours rather than any theme's — it lives in settings and follows you
+  across every theme you build. A draft restore now also repaints all nine
+  pickers (the four main ones used to keep their stale colors), and a quick
+  save no longer resurrects its own draft — the debounced draft write used
+  to fire after save had cleared it, so the next open grew a ghost
+  "unsaved edits" bar for a theme that saved fine.
 - **The files tab extracts to USB.** Every row grew a checkbox — tick one,
   shift-click a range, or take the header box, which selects exactly what the
   filter shows (the `tp` chip plus one click is every TP file in the backup).
