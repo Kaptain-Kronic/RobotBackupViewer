@@ -15,15 +15,30 @@
   /* ---- color math (only the custom-theme editor uses these) ----
      No color lib ships with the app; these are tiny pure helpers, zero deps. */
 
-  /* Coerce any hex into lowercase #rrggbb. <input type=color> silently snaps anything
-     that isn't exactly 6-digit lowercase to #000000, so normalize before binding. */
-  function normalizeHex(hex) {
-    var h = String(hex == null ? "" : hex).trim().toLowerCase();
+  /* the ONE parse core: optional #, 3/6/8 digits → lowercase #rrggbb, or null.
+     Every hex reader here goes through this — the file's own BV.hexRgb comment
+     below records what scattered copies of this regex cost once already. */
+  function parseHex(text) {
+    var h = String(text == null ? "" : text).trim().toLowerCase();
     var m = /^#?([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/.exec(h);
-    if (!m) return "#000000";
+    if (!m) return null;
     var v = m[1];
     if (v.length === 3) v = v[0] + v[0] + v[1] + v[1] + v[2] + v[2];
     return "#" + v.slice(0, 6); /* drop any alpha */
+  }
+
+  /* Coerce any hex into lowercase #rrggbb. <input type=color> silently snaps anything
+     that isn't exactly 6-digit lowercase to #000000, so normalize before binding. */
+  function normalizeHex(hex) { return parseHex(hex) || "#000000"; }
+
+  /* What a human pastes into the editor's hex field: same grammar, plus O/o
+     read as zero — O is not a hex digit, so the reading is unambiguous, and
+     codes hand-copied out of chat or screenshots carry it constantly. Null
+     when the text is not a color (yet) so the caller can wait instead of
+     inventing one. The replace runs before parseHex lowercases, so it must
+     catch uppercase O itself. */
+  function readHex(text) {
+    return parseHex(String(text == null ? "" : text).replace(/o/gi, "0"));
   }
 
   function hexToRgb(hex) {
@@ -153,7 +168,29 @@
       }
       var committed = false;
       var dirty = false;
-      var advInputs = {};
+      /* every row's controls, keyed by color: a draft restore or a bg-derive
+         must repaint ALL of them (the old advanced-only sync left the four
+         main color inputs showing stale values after a restore) */
+      var inputs = {};
+
+      /* The saved palette: app-level swatches (settings.json), NOT part of
+         the theme being edited — brand/plant colors you reuse across themes.
+         Adding or removing a swatch saves immediately and never dirties the
+         editor; APPLYING one edits the theme, so that path goes through
+         onPick like any other pick. */
+      var pal = (((BV.state.settings || {}).palette) || [])
+        .filter(function (h) { return BV.hexRgb(h); }).map(normalizeHex);
+      var palTarget = "bg";
+      function savePalette() {
+        if (BV.state.settings) BV.state.settings.palette = pal.slice();
+        BV.api.call("set_setting", "palette", pal.slice()).catch(function () {});
+      }
+      function setTarget(key) {
+        palTarget = key;
+        Object.keys(inputs).forEach(function (k) {
+          inputs[k].row.classList.toggle("pal-target", k === key);
+        });
+      }
 
       /* draft autosave: every edit persists a crash-proof draft to settings.json
          (debounced); cleared on save or when the user declines a restore. This
@@ -166,33 +203,68 @@
       }
       var draftWrite = BV.debounce(writeDraft, 500);
       function clearDraft() {
+        /* disarm any pending debounced write FIRST — a save inside the 500ms
+           window otherwise clears the draft and then the timer fires and
+           resurrects it, so every quick save grew a ghost "unsaved edits" bar */
+        draftWrite.cancel();
         if (BV.state.settings) BV.state.settings.theme_draft = null;
         BV.api.call("set_setting", "theme_draft", null).catch(function () {});
       }
 
       function applyWorking() { BV.theme.apply({ id: "__preview__", colors: working }); }
-      function syncAdvancedInputs() {
-        Object.keys(advInputs).forEach(function (k) { advInputs[k].value = normalizeHex(working[k]); });
+      function syncInputs() {
+        Object.keys(inputs).forEach(function (k) {
+          inputs[k].color.value = normalizeHex(working[k]);
+          /* never rewrite the hex field mid-typing — blur/Enter canonicalizes */
+          if (document.activeElement !== inputs[k].hex) {
+            inputs[k].hex.value = normalizeHex(working[k]);
+            inputs[k].hex.classList.remove("bad");
+          }
+        });
       }
       function onPick(key, val) {
         working[key] = normalizeHex(val);
         if (ADVANCED_SET[key]) overridden[key] = true;
         deriveAux(working, overridden);
         applyWorking();
-        syncAdvancedInputs();
+        syncInputs();
         updateContrast();
         dirty = true;
         draftWrite();
       }
-      function colorRow(def, isAdv) {
+      function colorRow(def) {
         var rowEl = BV.el("div", { class: "editor-row" });
         rowEl.appendChild(BV.el("span", { class: "name" }, BV.esc(def.label)));
+        var hex = BV.el("input", {
+          type: "text", class: "editor-hex", spellcheck: "false",
+          value: normalizeHex(working[def.key]),
+        });
+        /* live-apply only a full 6-digit code: a 3-digit code is valid the
+           moment you have typed half of a 6-digit one (#0d3 inside #0d3b3e),
+           so short codes wait for Enter/blur instead of flashing a wrong color */
+        hex.addEventListener("input", function () {
+          var v = readHex(hex.value);
+          /* red only when the text can no longer BECOME a code — every honest
+             prefix stays neutral; change/blur judges anything unfinished */
+          hex.classList.toggle("bad", !v && !/^#?[0-9a-fo]{0,8}$/i.test(hex.value.trim()));
+          if (v && hex.value.trim().replace(/^#/, "").length >= 6) onPick(def.key, v);
+        });
+        hex.addEventListener("change", function () {
+          var v = readHex(hex.value);
+          if (v) onPick(def.key, v);
+          hex.value = normalizeHex(working[def.key]);   /* canonical, or snap back */
+          hex.classList.remove("bad");
+        });
         var input = BV.el("input", {
           type: "color",
           value: normalizeHex(working[def.key]),
           oninput: function (e) { onPick(def.key, e.target.value); },
         });
-        if (isAdv) advInputs[def.key] = input;
+        inputs[def.key] = { color: input, hex: hex, row: rowEl };
+        /* touching a row makes it the palette's target */
+        rowEl.addEventListener("mousedown", function () { setTarget(def.key); });
+        rowEl.addEventListener("focusin", function () { setTarget(def.key); });
+        rowEl.appendChild(hex);
         rowEl.appendChild(input);
         return rowEl;
       }
@@ -242,7 +314,7 @@
           Object.keys(draft.overridden || {}).forEach(function (k) { overridden[k] = true; });
           nameInput.value = draft.name || nameInput.value;
           dirty = true;
-          applyWorking(); syncAdvancedInputs(); updateContrast();
+          applyWorking(); syncInputs(); updateContrast();
           draftBar.remove();
         });
         dropBtn.addEventListener("click", function () { clearDraft(); draftBar.remove(); });
@@ -251,17 +323,62 @@
         body.insertBefore(draftBar, body.firstChild);
       }
 
-      MAINS.forEach(function (d) { body.appendChild(colorRow(d, false)); });
+      MAINS.forEach(function (d) { body.appendChild(colorRow(d)); });
       body.appendChild(hint);
+
+      /* the saved-palette strip: click a swatch to paint the highlighted row,
+         ＋ keeps that row's current color, × forgets a swatch */
+      var palRow = BV.el("div", { class: "editor-row pal-row" });
+      palRow.appendChild(BV.el("span", { class: "name" }, "palette"));
+      var strip = BV.el("div", { class: "pal-strip" });
+      palRow.appendChild(strip);
+      function paintPalette() {
+        strip.innerHTML = "";
+        pal.forEach(function (hx, i) {
+          var sw = BV.el("button", { class: "pal-swatch", title: hx + " — apply to the highlighted row" });
+          sw.style.background = hx;
+          sw.addEventListener("click", function () { onPick(palTarget, hx); });
+          var x = BV.el("span", { class: "pal-x", title: "remove " + hx }, "×");
+          x.addEventListener("click", function (e) {
+            e.stopPropagation();
+            /* the repaint shifts the next swatch's × under the pointer, so the
+               second click of a double-click would delete the neighbor too */
+            if (e.detail > 1) return;
+            pal.splice(i, 1);
+            savePalette();
+            paintPalette();
+          });
+          sw.appendChild(x);
+          strip.appendChild(sw);
+        });
+        var add = BV.el("button", { class: "pal-add", title: "save the highlighted row's color to the palette" }, "＋");
+        add.addEventListener("click", function () {
+          var hx = normalizeHex(working[palTarget]);
+          if (pal.indexOf(hx) >= 0) { BV.toast("already in the palette"); return; }
+          pal.push(hx);
+          savePalette();
+          paintPalette();
+        });
+        strip.appendChild(add);
+        if (!pal.length) {
+          strip.appendChild(BV.el("span", { class: "pal-hint" }, "＋ saves the highlighted color"));
+        }
+      }
+      paintPalette();
+      body.appendChild(palRow);
 
       var advNode = BV.el("div");
       var advHead = BV.el("div", { class: "editor-adv-head" }, "advanced");
       var advBody = BV.el("div");
-      ADV.forEach(function (d) { advBody.appendChild(colorRow(d, true)); });
+      ADV.forEach(function (d) { advBody.appendChild(colorRow(d)); });
       advNode.appendChild(advHead);
       advNode.appendChild(advBody);
       body.appendChild(advNode);
-      BV.collapsible(advNode, advHead, advBody, { open: false });
+      BV.collapsible(advNode, advHead, advBody, { open: false, onToggle: function (open) {
+        /* a hidden row can't be the palette's target — the swatches would
+           paint a color nobody can see move */
+        if (!open && ADVANCED_SET[palTarget]) setTarget("bg");
+      } });
 
       function save() {
         var nm = (nameInput.value || "").trim();
@@ -294,15 +411,29 @@
       actions.appendChild(saveBtn);
       body.appendChild(actions);
 
+      var guard = BV.dirtyGuard(function () { return dirty && !committed; }, "theme edits");
       var modal = BV.modal(isNew ? "new custom theme" : "edit custom theme", body, {
-        beforeClose: BV.dirtyGuard(function () { return dirty && !committed; }, "theme edits"),
+        beforeClose: function () {
+          /* backdrop-mousedown and Esc both outrun the focused hex field's
+             blur→change, so a pending short code would vanish unguarded —
+             flush it first and the guard can see the edit */
+          var ae = document.activeElement;
+          Object.keys(inputs).forEach(function (k) {
+            if (inputs[k].hex === ae) {
+              var v = readHex(ae.value);
+              if (v && v !== normalizeHex(working[k])) onPick(k, v);
+            }
+          });
+          return guard();
+        },
         onClose: function () { if (!committed) BV.theme.applyById(restoreId, false); },
       });
 
       /* preview immediately. For a new theme deriveAux already ran; for an edit we keep the
          saved colors as-is (no derive) so nothing resets. */
       applyWorking();
-      syncAdvancedInputs();
+      syncInputs();
+      setTarget(palTarget);
       updateContrast();
       if (isNew) setTimeout(function () { try { nameInput.focus(); } catch (e) {} }, 0);
     },

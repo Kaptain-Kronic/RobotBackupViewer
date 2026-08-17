@@ -35,11 +35,16 @@ window.BV = {};
 
   BV.debounce = function (fn, ms) {
     var t = null;
-    return function () {
+    var out = function () {
       var args = arguments, self = this;
       clearTimeout(t);
       t = setTimeout(function () { fn.apply(self, args); }, ms);
     };
+    /* a trailing write that outlives its reason is a bug factory: a saved
+       theme's clearDraft must be able to disarm the pending draft write, or
+       the timer resurrects the draft it just cleared */
+    out.cancel = function () { clearTimeout(t); };
+    return out;
   };
 
   BV.fmt = {
