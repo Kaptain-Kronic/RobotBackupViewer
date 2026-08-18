@@ -168,3 +168,25 @@ def test_adopt_retires_a_leased_corpse(api):
     r = api.cvx_tile_adopt(sid)
     assert r["error"]["code"] == "NO_SESSION"
     assert sid not in api._cvx and sid not in api._cvx_tiles
+
+
+# -- the still url: a wall polls, it does not hold streams open ---------------------
+
+def test_start_offers_a_still_url_beside_the_stream(api):
+    """A tile POLLS a finite still. It cannot hold a stream open: every session
+    streams from the one 127.0.0.1:PORT origin, a multipart response never
+    completes, and the browser caps connections per origin at six - so on a
+    real line the seventh tile onward could never connect and sat dark."""
+    d = _tile(api)
+    sid = d["session_id"]
+    assert d["shot_url"].endswith(cvx_remote.SHOT_PATH + sid)
+    assert d["stream_url"].endswith(cvx_remote.STREAM_PATH + sid)
+    assert d["shot_url"] != d["stream_url"]
+
+
+def test_adopt_hands_the_overlay_a_stream(api):
+    """The tile polls, but the overlay it is adopted into is a single viewer -
+    that one still gets the live stream."""
+    sid = _tile(api)["session_id"]
+    d = api.cvx_tile_adopt(sid)["data"]
+    assert d["stream_url"].endswith(cvx_remote.STREAM_PATH + sid)

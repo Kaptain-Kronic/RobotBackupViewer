@@ -168,6 +168,22 @@ one click backs up the robot + all its cameras together.
   without that, a tile of a quiet camera would simply stay blank (live-proven:
   a real CV-X pushes exactly one frame at connect, then silence).
 
+  ✅ **Corrected on the plant floor 2026-08-18 — a tile polls, it does not
+  stream.** Eight cameras on one line and every CV-X tile read "no image — not
+  answering" while the same camera opened fine on click. Nothing was wrong with
+  the sessions (python logged a clean handshake for all eight): a
+  multipart response never completes, every tile streamed from the one
+  `127.0.0.1:PORT` origin, and the browser caps connections per origin at six —
+  so the seventh tile onward never connected, got no `load` **and no `error`**,
+  and the 8 s honesty timer wrote "not answering" over a camera that was
+  answering. A successful dial also parked `_camDue` at `Infinity`, so a tile
+  that lost the race was never re-kicked and the wall latched dark tile by tile.
+  Tiles now GET a finite still (`/cvxshot/<sid>`) on the grid's existing 2 s
+  beat — the socket comes straight back, so the wall scales past six — and the
+  stream stays for the overlay, which is one viewer. The lesson worth keeping:
+  every CV-X test used ONE camera, and this failure mode is invisible at one and
+  total at eight; `tests/ui_camwall_probe.py` is now the plural case.
+
 - ✅ **A CV-X backup opens in the simulator** — the pull lands under `SD1/`
   with the simulator's `workspace.xml` beside it, so the camera folder in a
   backup *is* a workspace (format read off 52 real files, reproduced

@@ -728,8 +728,8 @@ def probe(window):
         })()""")
         check("cam.setcount_undefined_blanks", sc == "", f"(got {sc!r})")
 
-        # a CV-X camera in the library: it lists in the backup lens but is
-        # deliberately NOT tiled in the cam lens (matrox-only by design)
+        # a CV-X camera in the library: it lists in the backup lens AND tiles
+        # in the cam lens beside the matrox ones (see cam.cvx_tiled below)
         js(window, """window.__cvx=null;
             BV.api.call('lib_add', {robot:'CELL-01CVX01', plant:'FakePlant',
               line:'LINE01', device_type:'camera-keyence', ips:['192.0.2.162'],
@@ -888,8 +888,10 @@ def probe(window):
         check("cam.cvx_tiled", tiles.get("cvxTiled") is True, f"({tiles})")
         check("cam.tile_flags_no_ip", tiles.get("noip") is True, f"({tiles})")
 
-        # the cv-x tile dials THROUGH the bridge (a view-only lease) and points
-        # its img at the localhost MJPEG stream. document.hidden pauses the
+        # the cv-x tile dials THROUGH the bridge (a view-only lease) and then
+        # POLLS a still frame from it - never a held-open stream, which is what
+        # starved a real wall on the browser's per-origin connection cap
+        # (ui_camwall_probe is the plural case). document.hidden pauses the
         # shared tick in a hidden window, so the probe drives _camLoad itself.
         js(window, """window.__dial=null;
             (function(){
@@ -902,9 +904,9 @@ def probe(window):
               f"(got {js(window, 'window.__dial')!r})")
         src = poll(window, """(function(){
             var img=document.querySelector('img.cam-live[data-cvx]');
-            return img && img.src && img.src.indexOf('/cvx/')>=0 ? img.src : null;
+            return img && img.src && img.src.indexOf('/cvxshot/')>=0 ? img.src : null;
         })()""")
-        check("cam.cvx_tile_streams_from_bridge",
+        check("cam.cvx_tile_polls_a_still_from_the_bridge",
               bool(src) and "127.0.0.1" in (src or ""), f"(got {src!r})")
         check("cam.cvx_tile_dialled_once", FakeCvxSession.dials == ["192.0.2.162"],
               f"(got {FakeCvxSession.dials})")
@@ -947,7 +949,7 @@ def probe(window):
         poll(window, "window.__redial")
         src2 = poll(window, """(function(){
             var img=document.querySelector('img.cam-live[data-cvx]');
-            return img && img.src && img.src.indexOf('/cvx/')>=0 ? img.src : null;
+            return img && img.src && img.src.indexOf('/cvxshot/')>=0 ? img.src : null;
         })()""")
         check("cam.tile_redials_after_close",
               len(FakeCvxSession.dials) == 2 and bool(src2) and src2 != src,

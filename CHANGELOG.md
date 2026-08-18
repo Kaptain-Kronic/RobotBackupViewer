@@ -1,6 +1,25 @@
 # Changelog
 
 ## unreleased — the camera gets its 3d view, backups drag in, and the statusbar finds the switch
+- **The camera wall lights up all the way down.** On a real line every CV-X
+  tile read "no image — not answering" while clicking that same camera opened
+  it instantly. The tiles were not wrong about anything they could see: each
+  one held its mirror open as a never-ending stream, all of them from the one
+  local bridge address, and a browser only allows six connections to an
+  address at a time — so from the seventh camera on the picture was never
+  refused, just never sent, and a tile that stayed dark once was never asked
+  again. A tile now asks for a single still frame on the same two-second beat
+  the Matrox tiles already used: the connection is handed straight back, the
+  wall scales to as many cameras as a line has, and a tile that misses a
+  picture simply tries again on the next beat instead of staying dark until
+  the app restarts. Live mirroring is unchanged where it belongs — the
+  full-screen remote and its pop-out window still stream. Tiles also learned a
+  third thing to say: a controller that is connected but has not sent a
+  picture yet now reads "connected — no picture yet" rather than claiming the
+  camera is not answering, and a tile that once reported a held slot no longer
+  keeps saying so after the slot comes free. Nine cameras on one wall is now a
+  test (every other camera test used one, which is exactly why this reached
+  the plant floor).
 - **The theme editor takes color codes, and keeps a palette.** Every color
   row grew a hex field beside its picker — paste `#0d3b3e` and it applies
   the moment the code is whole (a letter O reads as zero, because codes

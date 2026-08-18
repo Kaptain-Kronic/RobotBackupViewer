@@ -495,15 +495,59 @@ class CvxRemoteSession:
 # on screen is always current. One dup per burst, loopback-only bandwidth.
 IDLE_RESEND_S = 0.15
 
+# The two routes the frame server answers, and the reason there are two.
+#
+# A stream is right for ONE viewer (the remote overlay) and wrong for a wall.
+# A multipart/x-mixed-replace response never completes, so each streaming
+# <img> holds one of the browser's SIX-connections-per-origin open for as long
+# as it is on screen - and every session streams from this one host:port. Put
+# eight cameras on the cam lens and the seventh onward simply never connects:
+# no bytes, so no load event and not even an error event, just a tile that sits
+# dark forever. That cap is invisible with one camera and fatal with eight.
+#
+# So a tile asks for a STILL instead: a plain finite JPEG that releases its
+# socket the moment it lands, polled on the grid's own 2 s beat. The camera
+# pushes on change only, so a poll loses nothing a stream would have shown.
+STREAM_PATH = "/cvx/"        # the overlay: one live viewer, many frames
+SHOT_PATH = "/cvxshot/"      # a cam-lens tile: one frame, one finite response
+
+
 class _MjpegHandler(BaseHTTPRequestHandler):
     disable_nagle_algorithm = True   # tail bytes of a part must not wait out delayed-ACK
 
     def do_GET(self):
-        sid = self.path.rsplit("/", 1)[-1].split("?")[0]
+        path = self.path.split("?")[0]
+        sid = path.rsplit("/", 1)[-1]
         sess = self.server.registry.get(sid)  # type: ignore[attr-defined]
         if sess is None:
             self.send_error(404, "no such session")
             return
+        if path.startswith(SHOT_PATH):
+            self._shot(sess)
+        else:
+            self._stream(sess)
+
+    def _shot(self, sess):
+        """One frame, one finite response - a cam-lens tile's picture."""
+        jpg = sess.latest_frame()
+        if not jpg:
+            # Alive but nothing pushed yet. 404 rather than an empty 200: the
+            # tile turns this into "connected - no picture yet", which is a
+            # different and honester thing to say than "not answering".
+            self.send_error(404, "no frame yet")
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(jpg)))
+        self.send_header("Cache-Control", "no-cache, no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        try:
+            self.wfile.write(jpg)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+
+    def _stream(self, sess):
         self.send_response(200)
         self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
         self.send_header("Cache-Control", "no-cache, no-store")
