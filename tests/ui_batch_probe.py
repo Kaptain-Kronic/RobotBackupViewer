@@ -33,7 +33,6 @@ from backupviewer.api import Api  # noqa: E402
 from backupviewer.app import resource_path  # noqa: E402
 from cvx_sim import _TINY_JPEG  # noqa: E402
 
-
 class FakeCvxSession:
     """Stands in for CvxRemoteSession so the CV-X tile can dial, stream and be
     adopted with no sockets. The REAL MJPEG server streams this fake (hence
@@ -66,9 +65,7 @@ class FakeCvxSession:
         time.sleep(min(timeout, 0.05))
         return False
 
-
 cvx_remote.CvxRemoteSession = FakeCvxSession   # nothing in this probe ever dials real hardware
-
 
 # --- synthetic library tree (identifier-clean: RB/CELL fakes, TEST-NET IPs) ---
 
@@ -187,7 +184,6 @@ MHGRIPDT_VA = """[MHGRIP]MH_TOOL  Storage: CMOS  Access: RW  : ARRAY[4] OF TOOL_
   Field: CLAMP_TAB[1].SIGCLOSE_I Access: RW: INTEGER = 822
 """
 
-
 def build_tree(lib: Path) -> None:
     line = lib / "FakePlant" / "LINE01"
     # 42 robots total: enough rows that the library view genuinely overflows,
@@ -225,7 +221,6 @@ def build_tree(lib: Path) -> None:
         "device_type": "camera-mtx", "files": 7, "bytes": 200,
         "source": "smb", "complete": True,
     }), encoding="utf-8")
-
 
 def probe(window):
     try:
@@ -887,6 +882,53 @@ def probe(window):
               f"({tiles})")
         check("cam.cvx_tiled", tiles.get("cvxTiled") is True, f"({tiles})")
         check("cam.tile_flags_no_ip", tiles.get("noip") is True, f"({tiles})")
+
+        # the wall groups by vendor - a mode the backup lens has no notion of,
+        # so it is offered ONLY here and reads as "name" once the tiles are gone
+        def sort_pick(label):
+            """Open the sort menu and click one row. BV.menu swallows a reopen
+            of the same anchor within its dismiss window, so give it a beat."""
+            time.sleep(0.4)
+            return js(window, """(function(){
+                var b=document.querySelector('.lib-sort');
+                b.click();
+                var items=[].map.call(document.querySelectorAll('.ctx-menu .ctx-item'),
+                                      function(x){return x.textContent.trim();});
+                var hit=[].find.call(document.querySelectorAll('.ctx-menu .ctx-item'),
+                                     function(x){return x.textContent.indexOf(%s)>=0;});
+                if (hit) hit.click();
+                return JSON.stringify({ items: items, picked: !!hit,
+                                        label: b.textContent.trim() });
+            })()""" % json.dumps(label))
+
+        srt = json.loads(sort_pick("camera type") or "{}")
+
+        check("cam.sort_menu_offers_camera_type",
+              any("camera type" in i for i in srt.get("items", [])), f"({srt})")
+        check("cam.sort_button_says_camera_type",
+              "camera type" in (srt.get("label") or ""), f"({srt})")
+
+        # ...and the tiles actually group: one contiguous run per vendor present
+        grp = json.loads(poll(window, """(function(){
+            var t=[].map.call(document.querySelectorAll('.cam-tile'), function(x){
+              return x.querySelector('img.cam-live[data-cvx]') ? 'cvx' : 'mtx'; });
+            if (!t.length) return "";
+            var runs=t.filter(function(v,i){ return i===0 || v!==t[i-1]; });
+            return JSON.stringify({ order: t, runs: runs.length });
+        })()""") or "{}")
+        check("cam.sort_groups_the_vendors",
+              grp.get("runs") == len(set(grp.get("order") or [])), f"({grp})")
+
+        # the mode is cam-lens-only: back in the backup lens the SAME setting
+        # must read as plain "name", never a label for something not on screen
+        js(window, "document.getElementById('cube-lib').click()")
+        time.sleep(0.5)
+        lbl = js(window, "document.querySelector('.lib-sort').textContent.trim()")
+        check("cam.vendor_sort_reads_as_name_in_backup_lens", lbl == "sort: name",
+              f"(got {lbl!r})")
+        js(window, "document.getElementById('cube-cam').click()")
+        time.sleep(0.5)
+        sort_pick("name")          # leave the wall as the later checks expect
 
         # the cv-x tile dials THROUGH the bridge (a view-only lease) and then
         # POLLS a still frame from it - never a held-open stream, which is what
@@ -2050,7 +2092,6 @@ def probe(window):
     finally:
         window.destroy()
 
-
 def main():
     lib = _TMP / "lib"
     build_tree(lib)
@@ -2068,7 +2109,6 @@ def main():
     api.bind(window)
     webview.start(probe, window, gui="edgechromium")
     sys.exit(exit_code())
-
 
 if __name__ == "__main__":
     main()
