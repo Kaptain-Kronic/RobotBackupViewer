@@ -1,4 +1,6 @@
-"""The MJPEG bridge's flush behavior: a settled frame must paint without input.
+"""The frame bridge's two routes: the overlay's stream, and a tile's still.
+
+The MJPEG flush behavior: a settled frame must paint without input.
 
 Chromium's multipart/x-mixed-replace parser is boundary-driven - it hands part N
 to the image decoder only when part N+1's delimiter arrives - so a stream that
@@ -123,3 +125,95 @@ def test_mjpeg_handler_disables_nagle():
     # the literal is the point: with Nagle on, a part's tail bytes can sit out
     # a delayed-ACK window in the kernel - the stream must never nagle
     assert cx._MjpegHandler.disable_nagle_algorithm is True
+
+
+# -- the still route: what a cam-lens tile asks for ---------------------------------
+
+def _http_get(port, path, timeout=5.0):
+    """One request, read to EOF - exactly what an <img> does with a finite
+    response. Returns (status_line, headers_dict, body)."""
+    c = socket.create_connection(("127.0.0.1", port), timeout=timeout)
+    try:
+        c.sendall(("GET " + path + " HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n").encode())
+        buf = bytearray()
+        c.settimeout(timeout)
+        while True:
+            try:
+                data = c.recv(65536)
+            except socket.timeout:
+                break
+            if not data:
+                break            # the server closed: a FINITE response
+            buf += data
+    finally:
+        c.close()
+    head, _, body = bytes(buf).partition(b"\r\n\r\n")
+    lines = head.decode("latin-1").split("\r\n")
+    hdrs = {}
+    for ln in lines[1:]:
+        k, _, v = ln.partition(":")
+        hdrs[k.strip().lower()] = v.strip()
+    return lines[0], hdrs, body
+
+
+def test_shot_returns_one_finite_frame():
+    """A tile's still must END. A wall cannot be built out of streams: a
+    multipart response never completes, so each streaming tile holds one of the
+    browser's six-per-origin connections open and every tile past the sixth
+    never connects at all. This response closes, so the socket comes back."""
+    with CvxSim() as sim:
+        sess = cx.CvxRemoteSession("192.0.2.44", connect=sim.connect)
+        assert sess.start(), sess.error
+        try:
+            _settle(sess)
+            sim.push_frame()
+            t0 = time.monotonic()
+            while sess.frames == 0 and time.monotonic() - t0 < 5:
+                time.sleep(0.01)
+            assert sess.frames, "the sim's frame never reached the session"
+
+            srv = cx.start_frame_server({"t1": sess})
+            try:
+                port = srv.server_address[1]
+                status, hdrs, body = _http_get(port, cx.SHOT_PATH + "t1")
+                assert "200" in status, status
+                assert hdrs["content-type"] == "image/jpeg", hdrs
+                assert int(hdrs["content-length"]) == len(body), (hdrs, len(body))
+                assert body.startswith(b"\xff\xd8") and body.endswith(b"\xff\xd9")
+                assert body == sess.latest_frame()
+
+                # and the route is still addressed by session, like the stream
+                status, _, _ = _http_get(port, cx.SHOT_PATH + "nosuch")
+                assert "404" in status, status
+            finally:
+                srv.shutdown()
+        finally:
+            sess.stop()
+
+
+def test_shot_404s_before_the_first_frame():
+    """Alive but nothing pushed yet is NOT a dark camera. The 404 is what lets
+    the tile say "connected - no picture yet" instead of "not answering"."""
+    with CvxSim() as sim:
+        sess = cx.CvxRemoteSession("192.0.2.44", connect=sim.connect)
+        assert sess.start(), sess.error
+        try:
+            _settle(sess)
+            assert sess.frames == 0, "this test needs a camera that stayed quiet"
+            srv = cx.start_frame_server({"t1": sess})
+            try:
+                status, _, _ = _http_get(srv.server_address[1], cx.SHOT_PATH + "t1")
+                assert "404" in status, status
+            finally:
+                srv.shutdown()
+        finally:
+            sess.stop()
+
+
+def test_the_two_routes_do_not_collide():
+    """/cvxshot/<sid> must not be swallowed by the /cvx/<sid> prefix - they
+    differ only in the segment before the id."""
+    assert cx.SHOT_PATH.startswith("/cvx")
+    assert not cx.SHOT_PATH.startswith(cx.STREAM_PATH)
+    assert (cx.SHOT_PATH + "abc").rsplit("/", 1)[-1] == "abc"
+    assert (cx.STREAM_PATH + "abc").rsplit("/", 1)[-1] == "abc"

@@ -2900,7 +2900,14 @@ class Api:
 
     def _cvx_tile_shape(self, sid: str, sess) -> dict:
         port = self._cvx_frame_server().server_address[1]
-        return {"session_id": sid, "stream_url": f"http://127.0.0.1:{port}/cvx/{sid}",
+        base = f"http://127.0.0.1:{port}"
+        # A tile POLLS the still (a wall of never-ending streams starves on the
+        # browser's six-connections-per-origin cap - see cvx_remote.SHOT_PATH).
+        # The stream url rides along anyway so a tile clicked open into the
+        # overlay has it in hand without asking again.
+        return {"session_id": sid,
+                "shot_url": f"{base}{cvx_remote.SHOT_PATH}{sid}",
+                "stream_url": f"{base}{cvx_remote.STREAM_PATH}{sid}",
                 "screen": {"w": cvx_remote.SCREEN_W, "h": cvx_remote.SCREEN_H}}
 
     def _reap_cvx_tiles(self, now: float):
