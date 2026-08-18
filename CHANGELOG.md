@@ -1,6 +1,18 @@
 # Changelog
 
 ## unreleased — the camera gets its 3d view, backups drag in, and the statusbar finds the switch
+- **The camera wall sorts by camera type.** The sort button gains a fourth
+  option while you are on the wall — name, IP, last backup, and now **camera
+  type** — which groups the Keyence tiles together and the Matrox tiles
+  together inside each line instead of interleaving them. Worth having because
+  the two vendors are genuinely different animals: they mirror through
+  different paths and they fail in different ways, so working through one of
+  them means working through one of them. Picking the same option twice
+  reverses it, like every other sort. It is offered only on the wall, where it
+  means something, and reads as plain "name" back in the backup lens. Fixed
+  alongside: the sort button never updated its own label — it looked in the
+  wrong place for itself, so it kept showing whatever it started as no matter
+  how many times you changed the sort.
 - **A camera that is up no longer gets called dead.** Three Matrox tiles read
   "no image — not answering" about cameras that answer in a thirtieth of a
   second. The frame a tile polls, `SavedImages/HMIImage.jpg`, is not something

@@ -35,12 +35,14 @@
   var _camRobotNames = {};      /* robot id -> name, for the tiles' "↳ robot" note */
 
   var SORT_LABELS = { name: "name", ip: "IP", date: "last backup",
-                      saved: "saved", cams: "cams", status: "status" };
+                      saved: "saved", cams: "cams", status: "status",
+                      vendor: "camera type" };   /* cam lens only - see effectiveSortMode */
   /* each column's natural first direction: names/IPs read A-to-Z; dates read
      newest-first (that is what a tech means by "sort by last backup"); the
      magnitude columns read most-first; status reads worst-first (triage) */
   var SORT_DEFAULT_DIR = { name: "asc", ip: "asc", date: "desc",
-                           saved: "desc", cams: "desc", status: "desc" };
+                           saved: "desc", cams: "desc", status: "desc",
+                           vendor: "asc" };
   var _sortDir = "";            /* asc | desc; lazily read from settings (lib_sort_dir) */
   var CAM_REFRESH_MS = 2000;    /* live tile refresh — a beat gentler than the HMI's 1s */
   /* what a dark tile says. Three different darks, and a tech reads them very
@@ -65,9 +67,27 @@
     return _sortMode;
   }
 
+  /* "camera type" only means something where tiles are shown. The two lenses
+     have always shared one sort button, so rather than splitting the setting
+     (and making the two disagree), a vendor sort left over from the cam lens
+     simply reads as "name" in the backup lens - button label included. */
+  function effectiveSortMode() {
+    var m = sortMode();
+    return (m === "vendor" && viewMode() !== "multicam") ? "name" : m;
+  }
+
+  /* the sort button lives in the head's action row, which is NOT inside
+     _libWrap - the old `_libWrap.querySelector(".lib-sort")` therefore always
+     found null, and the label silently kept whatever mode it was built with
+     however many times you picked a different one. Query the document. */
+  function syncSortBtn() {
+    var b = document.querySelector(".lib-sort");
+    if (b) b.textContent = "sort: " + SORT_LABELS[effectiveSortMode()];
+  }
+
   function sortDir() {
     if (!_sortDir) {
-      _sortDir = ((BV.state.settings || {}).lib_sort_dir) || SORT_DEFAULT_DIR[sortMode()];
+      _sortDir = ((BV.state.settings || {}).lib_sort_dir) || SORT_DEFAULT_DIR[effectiveSortMode()];
       if (_sortDir !== "asc" && _sortDir !== "desc") _sortDir = "asc";
     }
     return _sortDir;
@@ -88,8 +108,7 @@
     }
     BV.api.call("set_setting", "lib_sort", _sortMode).catch(function () {});
     BV.api.call("set_setting", "lib_sort_dir", _sortDir).catch(function () {});
-    var b = _libWrap && _libWrap.querySelector(".lib-sort");
-    if (b) b.textContent = "sort: " + SORT_LABELS[_sortMode];   /* head persists across refreshes */
+    syncSortBtn();                        /* the head persists across refreshes */
     /* sorting is client-side ordering: re-render the cached listing. Hitting
        lib_list here forced a full rescan whenever the tree had changed — and
        DURING a mass backup the tree changes every second, so flipping the sort
@@ -127,6 +146,7 @@
     if (!_libWrap || !document.body.contains(_libWrap)) return;
     var cam = viewMode() === "multicam";
     _libWrap.classList.toggle("cam-mode", cam);
+    syncSortBtn();   /* "camera type" reads as "name" once the tiles are gone */
     /* (the selection count hides itself whenever the selection is empty -
        syncToolbar - which covers the cam lens for free: tiles can't select) */
     if (_filterBox) _filterBox.input.placeholder = cam ? "filter cameras…" : "filter robots…";
@@ -137,6 +157,19 @@
   }
 
   function nameCmp(a, b) { return (a.robot || "").localeCompare(b.robot || ""); }
+
+  /* what a camera IS, as a sortable key. The wall's two vendors mirror through
+     completely different paths - a Matrox serves its own HMI frame, a CV-X goes
+     through the remote bridge - and they fail in completely different ways, so
+     a tech working one of them wants them together rather than interleaved.
+     An unrecognised camera type sinks below both instead of being quietly
+     folded into one of them. */
+  function camVendorKey(r) {
+    var t = r.device_type || "";
+    if (t === "camera-keyence") return "1 cv-x";
+    if (t === "camera-mtx") return "2 matrox";
+    return "3 " + t;
+  }
 
   function ipNum(r) {
     var m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(((r.ips && r.ips[0]) || "").trim());
@@ -155,7 +188,7 @@
   }
 
   function robotComparator() {
-    var mode = sortMode();
+    var mode = effectiveSortMode();
     var dir = sortDir() === "desc" ? -1 : 1;
     var base = nameCmp;
     if (mode === "ip") {
@@ -171,6 +204,12 @@
            old single-direction behavior */
         var da = a.last_backup || "", db = b.last_backup || "";
         if (da !== db) return da < db ? -1 : 1;
+        return nameCmp(a, b);
+      };
+    } else if (mode === "vendor") {
+      base = function (a, b) {
+        var va = camVendorKey(a), vb = camVendorKey(b);
+        if (va !== vb) return va < vb ? -1 : 1;
         return nameCmp(a, b);
       };
     } else if (mode === "saved") {
@@ -479,9 +518,13 @@
       ]);
     });
     var sortBtn = BV.el("button", { class: "btn lib-sort", title: "library sort order" },
-      "sort: " + SORT_LABELS[sortMode()]);
+      "sort: " + SORT_LABELS[effectiveSortMode()]);
     sortBtn.addEventListener("click", function () {
-      BV.menu(sortBtn, ["name", "ip", "date"].map(function (mode) {
+      /* the cam lens offers one mode more than the backup lens: grouping the
+         wall by vendor, which is meaningless over robots */
+      var modes = ["name", "ip", "date"];
+      if (viewMode() === "multicam") modes.push("vendor");
+      BV.menu(sortBtn, modes.map(function (mode) {
         return { label: SORT_LABELS[mode], onClick: function () { setSortMode(mode); } };
       }));
     });
