@@ -227,23 +227,31 @@ def _require_ip(spec: dict) -> str:
     return ip
 
 
-def _probe_http(url: str, timeout: float = 4.0):
+def _probe_http(url: str, timeout: float = 4.0, read: int = 262144):
     """GET url; returns (status, headers, final_url, body_text). An HTTP error
     response (401/404/...) is still a live server and is returned, not raised;
-    only socket-level failures propagate (as OSError). Injectable for tests."""
+    only socket-level failures propagate (as OSError). Injectable for tests.
+
+    `read=0` asks for the status and headers only - for probing a URL whose
+    body is a picture, where decoding 256 kB of JPEG as utf-8 would be pure
+    waste. Headers come back lower-cased so callers never guess at casing."""
     import urllib.error
     import urllib.request
     req = urllib.request.Request(url, headers={"User-Agent": "BackupViewer"})
+
+    def _h(headers):
+        return {str(k).lower(): v for k, v in dict(headers or {}).items()}
+
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            body = r.read(262144).decode("utf-8", "replace")
-            return r.status, dict(r.headers), r.geturl(), body
+            body = r.read(read).decode("utf-8", "replace") if read else ""
+            return r.status, _h(r.headers), r.geturl(), body
     except urllib.error.HTTPError as e:
         try:
-            body = e.read(262144).decode("utf-8", "replace")
+            body = e.read(read).decode("utf-8", "replace") if read else ""
         except Exception:  # noqa: BLE001
             body = ""
-        return e.code, dict(e.headers or {}), url, body
+        return e.code, _h(e.headers), url, body
 
 
 # -- merge-identity evidence ------------------------------------------------------
@@ -3054,6 +3062,33 @@ class Api:
                 pass
         return {"url": final or url, "embeddable": embeddable, "status": status,
                 "pages": pages}
+
+    @_endpoint
+    def mtx_tile_probe(self, spec: dict):
+        """WHY is a cam-lens Matrox tile dark? One request separates the two
+        halves, because a camera that answers AT ALL - even with a 404 - is a
+        camera that is up.
+
+        `SavedImages/HMIImage.jpg` is not something a Design Assistant camera
+        serves natively: a project step writes it, and a project without that
+        step serves nothing at that path, forever. Field-measured on a real
+        line: 12 of 12 cameras answered in ~30 ms, 9 published the frame and 3
+        did not - so the tile was calling three perfectly healthy cameras "not
+        answering", which is the honesty rule backwards and sends a tech to
+        look at the wrong thing.
+
+        Called only when a tile has gone dark, never on the polling beat."""
+        ip = _require_ip(spec)
+        try:
+            status, headers, _final, _body = _probe_http(
+                f"http://{ip}/SavedImages/HMIImage.jpg", timeout=3.0, read=0)
+        except OSError:
+            return {"state": "down"}
+        if status == 200 and (headers.get("content-type") or "").lower().startswith("image/"):
+            return {"state": "ok"}
+        # the web server answered, so the camera is up; it just has no frame
+        # to publish at that path
+        return {"state": "no_image", "status": status}
 
     @_endpoint
     def mtx_remote_window(self, spec: dict):

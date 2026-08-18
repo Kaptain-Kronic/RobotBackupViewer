@@ -8,7 +8,8 @@ hold). Updated 2026-08-14 by the stream-flush pass (branch off `main` @
 cvx-live-tiles pass on top of it: §1 fifth surface, §5 invariants 5+9, §6
 ladder 13, §9 item 3 resolved. Updated 2026-08-18 by the tile-still pass
 (branch `cvx-live-tiles` @ `a106644`): §1 surface 5, §6 ladder 13, §7 the
-per-origin connection trap, §8 counts. Line-number cites drift with edits; the
+per-origin connection trap, §8 counts — and by the matrox-dark pass beside it:
+§6 ladder 14, §7 the HMIImage trap. Line-number cites drift with edits; the
 anchor commit is the reference.*
 
 Covers: src/backupviewer/cvx_remote.py, src/backupviewer/phoneview.py,
@@ -469,8 +470,32 @@ code does about it. "Test-enforced" = a unit test or the probe pins it;
     that camera's tile lands in the honest-busy state rather than silence —
     known, acceptable. Test-enforced at the api layer (`test_cvx_tiles.py`);
     the tile ladder is probe-covered for the dial/adopt/redial legs.
+14. **A Matrox tile is dark** → the `<img>` error says nothing useful (a 404
+    and an unplugged camera are identical from the DOM), so one `mtx_tile_probe`
+    separates them: a camera that answers **at all**, even with a 404, is up, so
+    its tile reads "no HMI image published"; only a socket-level failure reads
+    "no image — not answering". Asked once a minute at most, and only for a tile
+    that has already gone dark. This matters because `SavedImages/HMIImage.jpg`
+    is not a camera feature — see §7 — so the honest answer is usually the
+    first one. Test-enforced (`test_mtx_remote.py`).
 
 ## 7. Traps paid for
+
+- **`SavedImages/HMIImage.jpg` is a PROJECT artifact, not a camera endpoint.**
+  The Matrox tile polls that fixed path, and it only exists because a Design
+  Assistant project step writes it. A project without that step serves nothing
+  there, forever — and there is no generic live-image URL to fall back on: both
+  the portal home and the DA operator page are the design environment, with no
+  plain image behind them. Measured on a real line: **12 of 12 cameras up and
+  answering in ~30 ms, 9 publishing the frame, 3 not** — and the 3 that did
+  not were running a different Design Assistant project from the 9 that did,
+  which is the whole of the difference. The wall called three healthy
+  cameras "not answering", which is the honesty rule backwards and sends a tech
+  to check power on a camera that is fine. Nothing app-side can conjure the
+  frame; the only real fix is a project change on the camera, which is plant
+  equipment and not ours to make. So the app says the true thing instead
+  (ladder 14).
+
 
 - **A wall cannot be built out of streams — the six-connection cap.** Every
   CV-X tile streamed `multipart/x-mixed-replace` from the one
@@ -570,11 +595,11 @@ code does about it. "Test-enforced" = a unit test or the probe pins it;
 ## 8. Coverage
 
 Counted 2026-08-03; re-run 2026-08-14 by the stream-flush pass, and again
-2026-08-18 by the tile-still pass: `python -m pytest tests -m "probe or not
-probe"` → **780 passed, 2 skipped** (both skips environmental — the private
+2026-08-18 by the tile-still + matrox-dark passes: `python -m pytest tests -m
+"probe or not probe"` → **785 passed, 2 skipped** (both skips environmental — the private
 sample tree absent — each announcing itself, neither silent).
 
-**152 unit tests across eight files** — verified by collection this pass, each
+**157 unit tests across eight files** — verified by collection this pass, each
 count checked individually:
 
 | file | tests |
@@ -582,7 +607,7 @@ count checked individually:
 | `tests/test_qr.py` | 34 |
 | `tests/test_phone_view.py` | 25 |
 | `tests/test_cvx_remote.py` | 23 |
-| `tests/test_mtx_remote.py` | 21 |
+| `tests/test_mtx_remote.py` | 26 |
 | `tests/test_cvx_window.py` | 19 |
 | `tests/test_viewfinder.py` | 16 |
 | `tests/test_screengrab.py` | 7 |

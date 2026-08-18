@@ -1,6 +1,18 @@
 # Changelog
 
 ## unreleased — the camera gets its 3d view, and the files tab extracts
+- **A camera that is up no longer gets called dead.** Three Matrox tiles read
+  "no image — not answering" about cameras that answer in a thirtieth of a
+  second. The frame a tile polls, `SavedImages/HMIImage.jpg`, is not something
+  a Design Assistant camera serves on its own — a step inside the camera's
+  project writes it, and a project built without that step has nothing at that
+  address, ever. A dark tile now asks once (and at most once a minute) which
+  kind of dark it is: a camera that replies at all, even to say "no such file",
+  is up, so its tile reads **"no HMI image published"**; only a camera that
+  does not reply at all still reads "not answering". Nothing the viewer can do
+  will produce a picture for those cameras — that needs a change to the
+  camera's own project — but a tech reading the wall is now pointed at the
+  project instead of at a power cable.
 - **The camera wall lights up all the way down.** On a real line every CV-X
   tile read "no image — not answering" while clicking that same camera opened
   it instantly. The tiles were not wrong about anything they could see: each

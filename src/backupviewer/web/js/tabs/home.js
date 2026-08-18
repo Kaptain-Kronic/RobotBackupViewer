@@ -48,6 +48,7 @@
   var CAM_NOTE_DARK = "no image — not answering";
   var CAM_NOTE_BUSY = "in use — another terminal holds it";
   var CAM_NOTE_QUIET = "connected — no picture yet";
+  var CAM_NOTE_NO_HMI = "no HMI image published";
   /* live CV-X tile sessions, keyed by ip -> {sid, shotUrl, streamUrl}.
      Module-scoped so a re-render (filter keystroke, library refresh) reuses
      the live session instead of redialing the controller's single remote
@@ -1429,6 +1430,21 @@
       function dark() {
         note.textContent = img._camNote;
         tile.classList.add("cam-off");
+        if (!isCvx) probeMtxDark();
+      }
+      /* WHY a matrox tile is dark. The img's error event cannot tell us: a 404
+         and an unplugged camera look identical from here. One python probe
+         separates them — a camera that answers at all is up, and a Design
+         Assistant project either publishes SavedImages/HMIImage.jpg or it
+         never will — so the answer is stable and worth asking for at most
+         once a minute, and only for a tile that has already gone dark. */
+      function probeMtxDark() {
+        if (img._camProbeAt && Date.now() - img._camProbeAt < 60000) return;
+        img._camProbeAt = Date.now();
+        BV.api.call("mtx_tile_probe", { ip: ip }).then(function (r) {
+          if (r && r.state === "no_image") img._camSay(CAM_NOTE_NO_HMI);
+          else if (r && r.state === "down") img._camSay(CAM_NOTE_DARK);
+        }).catch(function () { /* the tile keeps whatever it already said */ });
       }
       /* ask for ONE picture, and arm the honesty timer around it: an ABORTED
          or hung load fires no error event, so still nothing after 8s -> say
@@ -1478,6 +1494,7 @@
         clearTimeout(slowTimer);
         tile.classList.remove("cam-off");
         img._camSay(CAM_NOTE_DARK);
+        img._camProbeAt = 0;      /* a camera that started publishing gets re-asked */
         /* every tile polls, so every tile has a next beat. Nothing parks at
            Infinity any more — that is what used to strand a tile whose picture
            never arrived: unreachable by the tick, and dark until a restart. */
