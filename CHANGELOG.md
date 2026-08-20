@@ -1,6 +1,51 @@
 # Changelog
 
 ## unreleased — the camera gets its 3d view, the files tab extracts, and the scan window tightens up
+- **Cleanup: the library learns to let go — without learning to delete.** The
+  manage-backups modal (was "last backup") splits into two tabs. **report** is
+  the taking side: the last run with retry-failed, the stale list, and the
+  never-backed-up robots finally *listed* behind a fold instead of only
+  counted. **cleanup** is the keeping side: one grouped checklist of every
+  snapshot the retention policy says is safe to lose — partial snapshots with
+  newer completed siblings (age-exempt: a pull that died is junk from day one,
+  so each row states its own age instead), and superseded backups older than
+  N days (default 90) beyond the newest-K completed per robot (default 2). Verdicts are
+  computed once, in Python (`lib_retention`), and the same engine re-judges
+  every pick inside `lib_stage` — the checkbox list is a request, not an
+  authority. Checked snapshots MOVE into `<library>/_staged`, a mirrored tree
+  the scanner treats as reserved (like `Latest`), every move logged to
+  `staged.log`; deleting that one folder in Explorer is the human's step, and
+  restoring is moving a folder back and rescanning — files are law. Protected
+  snapshots stay visibly locked with their reason — latest completed, within
+  keep-N, the robot's only backup or last trace, pinned, offline, undated —
+  and the old-but-latest case warns "take a fresh backup first" instead of
+  ever becoming deletable. A per-snapshot **pin** (kept on the library entry,
+  keyed by the snapshot's timestamp, so it survives rescans and relocates)
+  makes "keep forever" one click. Nothing anywhere in the app deletes backup
+  data; staging claims its own tree delta, so no rescan is ever paid for it.
+  Two preferences round it out: a **staging destination** (the library's
+  `_staged`, any folder *outside* the library — a second disk actually
+  reclaims this one — or the **Windows recycle bin**, which the shell can
+  restore from and Windows' own storage policy expires; local drives only,
+  because a network share or USB stick has no bin and "recycling" there would
+  silently hard-delete, so the app refuses), and **auto-stage partial
+  backups**, which sweeps dead pulls for you when the cleanup tab loads —
+  deliberately skipping any partial that is a robot's *newest* snapshot,
+  because that partial is the evidence the robot's current state was never
+  captured. Those robots get a **backup broken** button on the partial
+  section instead: back them up now, and the fresh completed backup is also
+  what frees their partial for the next sweep. Staging itself runs as a
+  **background job with live n/total progress** — same-volume staging is
+  instant renames, but a cross-volume destination is a real file-by-file copy
+  that takes minutes at plant scale, and the first field run proved the old
+  synchronous shape let the app imply "done" mid-move (an app exit followed;
+  the per-snapshot transaction kept every backup intact, but the lesson
+  stuck). Close and reopen the modal and it reattaches to the running move.
+  Cleanup lists fold plant → line → **robot**, so a robot with a dozen old
+  backups is one row with a count until opened, and the whole tab dropped its
+  sentence-length labels: categories are two words, protections are one
+  ("latest", "kept", "pinned" — the full why lives in each row's hover tip),
+  and byte totals finally know what a gigabyte is.
 - **The files tab extracts to USB.** Every row grew a checkbox — tick one,
   shift-click a range, or take the header box, which selects exactly what the
   filter shows (the `tp` chip plus one click is every TP file in the backup).
