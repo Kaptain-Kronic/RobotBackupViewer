@@ -2304,6 +2304,27 @@ text.v3-ax-z { fill: var(--accent); }
 /* the programs tab's jump-into-3d button, in the positions card header */
 .v3-jump { margin-left: auto; padding: 0.05rem 0.5rem; font-size: 0.72rem; }
 
+/* ---- the player bar ----
+   A real element inside .v3-vp (which is position:relative), NOT markup in
+   the overlay: the overlay is pointer-events:none by design, and a scrubber
+   you cannot grab is not a scrubber. */
+.v3-player {
+  position: absolute; left: 0.6rem; right: 0.6rem; bottom: 0.5rem;
+  display: flex; align-items: center; gap: 0.45rem;
+  padding: 0.3rem 0.5rem; border-radius: var(--radius);
+  background: var(--panel); border: 1px solid var(--edge);
+  backdrop-filter: blur(var(--glass-blur));
+}
+.v3-player[hidden] { display: none; }
+.v3-pb { flex: none; min-width: 2.2rem; padding: 0.1rem 0.4rem; }
+.v3-scrub { flex: 1 1 auto; min-width: 0; accent-color: var(--accent); }
+.v3-clock {
+  flex: none; font-family: var(--font-mono); font-size: 0.74rem;
+  color: var(--sub); min-width: 9ch; text-align: right;
+}
+/* the tool centre while it moves - the drawn path is this point's track */
+.v3-tcp-live { fill: var(--accent); stroke: var(--bg); stroke-width: 1.5; }
+
 /* ---- the ⚙ settings dialog (settings_ui.js) ---- */
 .modal.settings-win { width: min(43rem, 94vw); }
 .settings-win .set-tabs {

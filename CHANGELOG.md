@@ -1,6 +1,25 @@
 # Changelog
 
 ## unreleased — the camera gets its 3d view, and the files tab extracts
+- **Press play, and the robot runs the program.** The 3d view gained a player
+  bar: play, pause, back to the start, a scrubber, and a quarter/one/four-times
+  speed. The arm walks the taught path through the DCS zones, and clicking any
+  move in the list jumps it there.
+  Between two taught points it interpolates in joint space, which is exactly
+  what a FANUC joint move does — all axes starting and stopping together — so
+  a J move is not an approximation of anything. A linear or circular move is
+  walked in substeps along the drawn line, so the arm follows the path instead
+  of bowing off it.
+  Timing is the programmed speed wherever the listing proves it: a feedrate
+  over a computed distance, or a time-specified move. A percentage move is a
+  percentage of an axis speed no backup file anywhere records, so that one is
+  an assumption and is labelled one. There is no acceleration, no
+  deceleration, and no CNT blending, and the viewport says so the whole time
+  it is running: this is a path preview, not a cycle time.
+  It works with no `requestAnimationFrame` at all — the same fallback a plant
+  PC on the software-rendering rescue path may need — and the playhead runs
+  off the wall clock in both paths, so a throttled window advances by real
+  time rather than stalling.
 - **The arm goes where the program says.** Pick a step in the 3d view and the
   robot poses at that point. A joint-recorded point uses its own taught angles
   — exact, no solver involved, and labelled `exact` to say so. A cartesian

@@ -281,6 +281,84 @@ def probe(window):
                                          ".map(function(t){return t.textContent;})"
                                          ".join('|')")))
 
+        # ---------- playback ----------
+        # THE check this probe exists for on this slice: the hidden WebView2 a
+        # probe runs in has no requestAnimationFrame at all, so the loop's
+        # fallback path is the only one it can ever exercise - and a plant PC
+        # on the software-rendering rescue path is not far from that.
+        # Force the fallback: HAS_RAF is read once when the tab renders, so
+        # rAF has to be gone BEFORE the re-route, not after. A plant PC on the
+        # software-rendering rescue path is not far from this, and the probe's
+        # own hidden window may have no rAF at all.
+        js(window, "window.__raf = window.requestAnimationFrame;"
+                   "window.requestAnimationFrame = undefined;")
+        goto(window, "#overview")
+        goto(window, "#view3d/" + PROG)
+        poll(window, "document.querySelector('.v3-player') && "
+                     "!document.querySelector('.v3-player').hidden ? 'y' : ''")
+        check("play.no_raf_path",
+              js(window, "typeof window.requestAnimationFrame") != "function")
+        check("play.bar_shown",
+              js(window, "!document.querySelector('.v3-player').hidden"))
+        total = js(window, "document.querySelector('.v3-clock').textContent")
+        check("play.clock_has_a_total", "/" in str(total) and "0.0 s" != str(total),
+              f"({total})")
+
+        armA = js(window, "document.querySelector('.v3-skel').getAttribute('d')")
+        fit0 = js(window, "JSON.stringify(document.querySelector('.v3-svg')._fitBox)")
+        js(window, "document.querySelector('.v3-player .v3-pb').click()")   # play
+        moved = poll(window,
+                     "document.querySelector('.v3-skel').getAttribute('d') !== "
+                     + json.dumps(str(armA)) + " ? 'y' : ''", tries=40, delay=0.25)
+        check("play.advances_the_arm", moved == "y")
+        check("play.button_flips",
+              js(window, "document.querySelector('.v3-player .v3-pb').textContent") != "\u25b6")
+
+        # the fit must NOT breathe while the arm moves - it was sized for the
+        # whole run before the first frame
+        fit1 = js(window, "JSON.stringify(document.querySelector('.v3-svg')._fitBox)")
+        check("play.fit_does_not_breathe", fit0 == fit1, f"({fit0} -> {fit1})")
+
+        # pause holds where it is
+        js(window, "document.querySelector('.v3-player .v3-pb').click()")
+        time.sleep(0.5)
+        held = js(window, "document.querySelector('.v3-skel').getAttribute('d')")
+        time.sleep(1.2)
+        check("play.pause_holds",
+              js(window, "document.querySelector('.v3-skel').getAttribute('d')") == held)
+        check("play.button_back_to_play",
+              js(window, "document.querySelector('.v3-player .v3-pb').textContent")
+              == "\u25b6")
+
+        # the scrubber seeks, and the stop button rewinds
+        js(window, """(function(){
+            var r=document.querySelector('.v3-scrub');
+            r.value='900'; r.dispatchEvent(new Event('input',{bubbles:true}));
+        })()""")
+        time.sleep(0.5)
+        late = js(window, "document.querySelector('.v3-skel').getAttribute('d')")
+        check("play.scrubber_seeks", late != held)
+        js(window, "[...document.querySelectorAll('.v3-player .v3-pb')][1].click()")
+        time.sleep(0.5)
+        check("play.stop_rewinds", js(window, "BV.tabState('view3d').t") == 0)
+
+        # the live tcp marker rides the tool centre while the arm moves
+        check("play.live_tcp_marker",
+              js(window, "document.querySelectorAll('.v3-tcp-live').length") == 1)
+        check("play.preview_note",
+              "cycle-time" in str(js(window, "[...document.querySelectorAll('.v3-note')]"
+                                             ".map(function(t){return t.textContent;})"
+                                             ".join('|')")))
+
+        # hand requestAnimationFrame back before anything else runs
+        js(window, "window.requestAnimationFrame = window.__raf;")
+        goto(window, "#overview")
+        goto(window, "#view3d/" + PROG)
+        poll(window, "document.querySelectorAll('.v3-step').length")
+        poll(window, "[...document.querySelectorAll('.v3-step-tags')]"
+                     ".map(function(t){return t.textContent;}).join('|')"
+                     ".indexOf('solved') >= 0 ? 'y' : ''")
+
         # typing in the pose grid takes the arm back off the program
         js(window, """(function(){
             var rows=[...document.querySelectorAll('.v3-row-head')];
@@ -300,6 +378,8 @@ def probe(window):
                                          ".join('|')")))
         check("pose.path_survives_manual",
               js(window, "document.querySelectorAll('.v3-path').length") == 1)
+        check("pose.manual_hides_the_player",
+              js(window, "document.querySelector('.v3-player').hidden"))
         # back to the program
         goto(window, "#overview")
         goto(window, "#view3d/" + PROG)

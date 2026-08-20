@@ -404,11 +404,14 @@ def build_pose(path, kin=None, flange_dz: float = 0.0, q_seed=None) -> dict:
     scale = min(1.0, MAX_KNOTS / want) if want > MAX_KNOTS else 1.0
 
     q = list(q_seed) if q_seed else None
+    prev_q = list(q_seed) if q_seed else None
     prev_world = None
     knots_total = 0
     for st in path["steps"]:
         row = {"i": st["i"], "solved": False, "source": None, "q": None,
-               "knots": [], "residual": None, "why": None, "note": None}
+               "knots": [], "residual": None, "why": None, "note": None,
+               "dur_ms": st["dur_ms"], "dur_kind": st["dur_kind"],
+               "travel_deg": None}
         steps.append(row)
         if not st["ok"]:
             row["why"] = "no-target"
@@ -419,6 +422,8 @@ def build_pose(path, kin=None, flange_dz: float = 0.0, q_seed=None) -> dict:
             row.update(solved=True, source="joint", q=[round(v, 4) for v in st["joints"]],
                        knots=[[round(v, 4) for v in st["joints"]]])
             q = list(st["joints"])
+            _price(row, st, prev_q, q)
+            prev_q = list(q)
             prev_world = st["world"]
             knots_total += 1
             continue
@@ -459,12 +464,18 @@ def build_pose(path, kin=None, flange_dz: float = 0.0, q_seed=None) -> dict:
                    residual={"pos_mm": round(last["pos_mm"], 3),
                              "ori_deg": round(last["ori_deg"], 4),
                              "iters": last["iters"], "seed": last["seed"]})
+        _price(row, st, prev_q, last["q"])
+        prev_q = list(last["q"])
         knots_total += len(knots)
         prev_world = st["world"]
 
     posed = [r for r in steps if r["solved"]]
+    kinds = {}
+    for r in posed:
+        kinds[r["dur_kind"]] = kinds.get(r["dur_kind"], 0) + 1
     return {
         "steps": steps,
+        "timing": kinds,
         "counts": {"posed": len(posed), "refused": len(steps) - len(posed),
                    "exact": sum(1 for r in posed if r["source"] == "joint"),
                    "solved": sum(1 for r in posed if r["source"] == "ik")},
@@ -472,6 +483,25 @@ def build_pose(path, kin=None, flange_dz: float = 0.0, q_seed=None) -> dict:
         "budget": {"knots": knots_total, "scaled": scale < 1.0},
         "posable": True,
     }
+
+
+def _price(row, st, prev_q, q):
+    """Finish a move's duration now that its joint travel is known.
+
+    build_path can already derive a LINEAR move from its feedrate and the
+    distance. A joint move is a percentage of an axis speed no backup file
+    records, so it needs the travel in degrees and an assumption - which is
+    exactly what ls_motion.step_duration_ms tags "assumed".
+    """
+    if prev_q is None or not q:
+        row["dur_ms"], row["dur_kind"] = st["dur_ms"], st["dur_kind"]
+        return
+    travel = max((abs(q[i] - (prev_q[i] if i < len(prev_q) else 0.0))
+                  for i in range(len(q))), default=0.0)
+    row["travel_deg"] = round(travel, 3)
+    ms, kind = step_duration_ms(st, dist_mm=st["dist_mm"], travel_deg=travel)
+    if ms is not None:
+        row["dur_ms"], row["dur_kind"] = round(ms, 1), kind
 
 
 def flange_target_mat(tcp_mat, utool_xyzwpr):

@@ -55,6 +55,16 @@ placement. It gets a provenance paragraph in §2 and nothing more.
 
 ---
 
+> **2026-08-20c — playback.** The tab has an animation loop now, which makes
+> one sentence in §6 that stood since the doc was written **false**: it is no
+> longer true that "the tab renders statically per draw call". That row is
+> rewritten. The loop is time-driven off `Date.now()` through either
+> `requestAnimationFrame` or `setTimeout` — the probe environment has no rAF
+> at all and the fallback is the path it exercises, deliberately. Per frame it
+> rewrites exactly two nodes: the `v3-l-arm` group and a trailing
+> `v3-ovl-live` overlay group. Nothing recomputes the projector, the viewBox,
+> the fit or the painter's sort.
+
 > **2026-08-20b — the inverse solve.** `kinematics.py` gained a damped
 > least-squares solver (add-only; not one line above `measure_flange` moved,
 > so `ui_fk_probe` and `test_kinematics` hold by construction) and the arm now
@@ -303,6 +313,17 @@ note.
 | A joint-recorded point is posed by its **own taught angles** — no solver, no branch to choose, exact — and is labelled `exact` to distinguish it from `solved` | test- and probe-enforced |
 | **The branch is the one thing no runtime check can catch.** A solution on a mirrored elbow reaches the same TCP with a ~0 residual. Warm-starting from the previous step keeps the branch *continuous*, which is what a real motion does; it does not make it *the taught one*. Every solved posture is labelled and the viewport says so | `test_warm_start_recovers_the_branch_not_just_the_pose` pins recovery to 0.5° from a warm seed; beyond that it is labelled, not proven — see §9 |
 
+### Playback
+
+| Fact | Evidence |
+|---|---|
+| One interpolation rule: **lerp in joint space between consecutive knots**. A joint move satisfies it *exactly* — a FANUC joint move IS a joint-space lerp, all axes starting and stopping together — and a linear or circular move satisfies it to the density of the knots the solver walked along the drawn line. There is no per-motion-type branch in the render loop | `timeline`/`qAt` in `view3d.js`; the knots come from `program_path.build_pose` |
+| Substeps are `ceil(dist/25 mm) + ceil(ori/5°)`, capped at 40 per move and 4000 per program, and the cap is **reported** (`budget.scaled`) rather than silently applied | `program_path` |
+| A move's duration is **derived** where the listing proves it (a linear feedrate over the computed distance, or a time-specified move) and **assumed** where it does not (a percentage move, priced at `ASSUMED_JOINT_DEG_S` over the joint travel the solve revealed). A register-driven speed stays **unknown** and the viewport says the run is a path preview, not a cycle time | `ls_motion.step_duration_ms` + `program_path._price`; `timing` counts ride the payload |
+| No acceleration, no deceleration, no CNT blending. Said on screen, every time, next to the arm | the viewport note |
+| Selecting a move and the playhead are **one state**: picking a step seeks to that move's arrival, so a full redraw cannot leave the highlight and the clock disagreeing | `pick`/`endOfStep`; probe-enforced |
+| A playhead exactly on a boundary belongs to the segment that **ends** there — "arrived at this move", not "starting the next". The two segments agree on the joints at that instant, so nothing jumps | `segAt`; this was a real bug, found by the probe |
+
 ## 5. Invariants
 
 What must stay true, what enforces it, what breaks if it doesn't:
@@ -377,7 +398,12 @@ What must stay true, what enforces it, what breaks if it doesn't:
     join the world bounds at load, so the bounding sphere already covers
     every point the arm will visit. Growing the bounds per frame is the same
     trap the projected-bounding-box fit was (§7): the view pumps.
-13. **Nothing poses on a chain the backup contradicts, whatever the route
+13. **A frame rewrites two nodes and nothing else.** `drawArm` touches the
+    `v3-l-arm` group and the `v3-ovl-live` overlay group. The projector, the
+    viewBox, the fit, the painter's sort, the zone labels, the ruler, the
+    notes and the cube all stay as the last full draw left them — and a full
+    draw re-applies the playhead afterwards, so the two can never disagree.
+14. **Nothing poses on a chain the backup contradicts, whatever the route
     in.** `poseGate(robot)` in `view3d.js` is the single JS predicate and
     `robotFrames` is its only caller; `api._posable_chain` is the same rule on
     the Python side. Adding a new path to `BV.fk.chain` that skips the gate
@@ -460,8 +486,17 @@ the code this pass, held by nothing.
 16. **Probe environment** (and any headless WebView2): no
     `requestAnimationFrame`, synthetic pointers with no capturable id —
     `setPointerCapture` is wrapped in try/catch so a probe drag cannot
-    throw (`view3d.js:527-528`). The tab renders statically per draw call
-    (no animation loop), which is why it works at all in a hidden window.
+    throw. Everything except playback still renders statically per draw
+    call, which is why the tab works at all in a hidden window; playback
+    itself schedules through `requestAnimationFrame` **or** `setTimeout` and
+    advances the playhead off `Date.now()` in both paths — never off a frame
+    count, so a throttled hidden window advances by real time instead of
+    stalling, and `dt` is clamped to 1 s so one throttled tick cannot
+    silently finish the run. The loop self-terminates on
+    `!document.contains(svg)`, the same way `cvx3d.js` and `overview.js` do,
+    because the router empties the slot rather than calling a teardown.
+    Probe-verified with rAF removed **before** the tab renders — `HAS_RAF` is
+    read once, so deleting it afterwards would prove nothing.
 
 ## 7. Traps paid for
 
@@ -552,7 +587,7 @@ the rich pin; zero drawable zones honestly reported on the DG-only pins).
 
 **The viewport is under test now — 2026-08-20.** `tests/ui_view3d_probe.py`
 (registered in `test_probes.py`) boots the tab in a hidden WebView2 on two
-fabricated backups and asserts on real DOM: **26 checks**. The baseline this
+fabricated backups and asserts on real DOM: **49 checks**. The baseline this
 doc used to call untested — zones drawn, arm posed with real geometry, the
 five-group layer order, the cube snapping *and* refitting, elevation
 clamping to exactly 90 however it got out of range, and per-tab state

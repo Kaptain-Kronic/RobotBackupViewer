@@ -47,6 +47,11 @@
       s.step = 0;
       s.showPath = true;
       s.showPoints = true;
+      s.t = 0;           /* playhead, ms into the run */
+      s.speed = 1;
+      /* deliberately NOT stored: whether it was playing. Coming back to a tab
+         and finding the robot already moving is a jump scare, not a feature -
+         the scrub position restores, the motion does not resume itself. */
     }
     /* older sessions could park el past a pole - normalize back in range */
     s.el = Math.max(-90, Math.min(90, s.el));
@@ -205,6 +210,18 @@
     return out;
   }
 
+  /* the arm's polyline in world mm: the floor anchor, every joint origin,
+     the faceplate. Shared by the full draw and the per-frame redraw so the
+     body can never differ between a still frame and a moving one. */
+  function skeletonOf(robot, frames) {
+    var zr = robot.kin.zero || [0, 0, 0];
+    var out = [[-zr[0], -zr[1], -zr[2]]];
+    frames.joints.forEach(function (m) { out.push([m[0][3], m[1][3], m[2][3]]); });
+    var fp = frames.faceplate;
+    out.push([fp[0][3], fp[1][3], fp[2][3]]);
+    return out;
+  }
+
   /* the placed steps of the loaded program, in program order */
   function pathPoints(path) {
     if (!path) return [];
@@ -232,11 +249,7 @@
     var frames = robotFrames(s, robot, pose);
     var skel = null, elems = [];
     if (frames) {
-      var zr = (robot.kin.zero || [0, 0, 0]);
-      skel = [[-zr[0], -zr[1], -zr[2]]];  /* base floor point */
-      frames.joints.forEach(function (m) { skel.push([m[0][3], m[1][3], m[2][3]]); });
-      var fpm = frames.faceplate;
-      skel.push([fpm[0][3], fpm[1][3], fpm[2][3]]);
+      skel = skeletonOf(robot, frames);
       wpts = wpts.concat(skel);
       elems = posedElements(data, frames);
       elems.forEach(function (e) {
@@ -251,6 +264,13 @@
        bounding box made it breathe while orbiting. */
     var placed = pathPoints(path);
     placed.forEach(function (st) { wpts.push(st.world); });
+    /* and every pose the arm will take while playing, so the fit is sized for
+       the whole run before the first frame. Eight AABB corners, computed once
+       when the program loaded - growing the bounds per frame is the same trap
+       the projected-bounding-box fit was, and the view pumps. */
+    if (frames && pose && pose._reach) {
+      pose._reach.forEach(function (p) { wpts.push(p); });
+    }
 
     wpts.forEach(function (p) {
       for (var k = 0; k < 3; k++) {
@@ -387,6 +407,7 @@
     var sc = Math.min(rect.width / box.w, rect.height / box.h) || 1;
     var ox = (rect.width - box.w * sc) / 2, oy = (rect.height - box.h * sc) / 2;
     function toPx(p2) { return [(p2[0] - box.x) * sc + ox, (p2[1] - box.y) * sc + oy]; }
+    svg._toPx = toPx;   /* the per-frame redraw re-uses this exact mapping */
     ovl.setAttribute("viewBox", "0 0 " + rect.width + " " + rect.height);
     var ov = [];
 
@@ -473,6 +494,10 @@
       notes.push("arm posture solved from cartesian points — the taught CONFIG " +
         "is not decoded, so a pose may take a different branch than the robot did");
     }
+    if (pose && pose.counts.posed) {
+      notes.push("path preview — not a cycle-time simulation " +
+        "(no acceleration, no deceleration, no CNT blending)");
+    }
     if (pose && pose.counts.refused && path && path.counts.placed) {
       var unposed = pose.counts.refused - (path.counts.refused || 0);
       if (unposed > 0) {
@@ -521,7 +546,38 @@
     });
     ov.push('<g class="v3-cube">' + cube.join("") + "</g>");
 
+    /* everything that moves while playing lives in one trailing group, so a
+       frame rewrites that and leaves the labels, ruler, notes and cube - all
+       camera-dependent only - exactly where they are */
+    ov.push('<g class="v3-ovl-live"></g>');
     ovl.innerHTML = ov.join("");
+    svg._live = ovl.querySelector(".v3-ovl-live");
+  }
+
+  /* ---- the per-frame redraw ----
+     Rewrites the arm group and the live overlay and NOTHING else: the
+     projector, the viewBox, the painter's sort and every label stay as the
+     last full draw left them. */
+  function drawArm(svg, data, s, robot, q, tool) {
+    var proj = svg._proj;
+    if (!svg._L || !proj) return;
+    var frames = poseGate(robot) && q && q.length
+      ? BV.fk.chain(robot.kin, q, robot.flange_dz || 0) : null;
+    var skel = null, elems = [];
+    if (frames) {
+      skel = skeletonOf(robot, frames);
+      elems = posedElements(data, frames);
+    }
+    svg._L.arm.innerHTML = armLayer(proj, skel, elems).join("");
+    if (!svg._live || !svg._toPx) return;
+    var ov = [];
+    if (frames) {
+      /* the tool centre, not the faceplate - the drawn path is the tcp's */
+      var tcp = BV.fk.apply(frames.faceplate, (tool || [0, 0, 0]).slice(0, 3));
+      var q2 = svg._toPx(proj.project(tcp));
+      ov.push('<circle class="v3-tcp-live" cx="' + q2[0] + '" cy="' + q2[1] + '" r="5"/>');
+    }
+    svg._live.innerHTML = ov.join("");
   }
 
   /* cube geometry: 6 labeled faces + 12 edge and 8 corner snap targets.
@@ -577,6 +633,100 @@
     });
     return out;
   })();
+
+  /* ---- playback ----
+     One uniform rule: lerp in joint space between consecutive knots. A JOINT
+     move satisfies that exactly - a FANUC joint move IS a joint-space lerp,
+     all axes starting and stopping together - and a linear or circular move
+     satisfies it to the density of the knots the solver walked along the
+     drawn line. So there is no per-motion-type branch in the render loop. */
+
+  /* a move whose speed the backup cannot price still has to take SOME time on
+     screen; this is that time, and the viewport says which moves used it */
+  var UNTIMED_MS = 700;
+  var MIN_SEG_MS = 40;
+
+  function timeline(pose) {
+    if (!pose || !pose.steps) return null;
+    var segs = [], t = 0, prev = null, untimed = 0;
+    pose.steps.forEach(function (r) {
+      if (!r.solved || !r.knots.length) return;
+      var ms = r.dur_ms;
+      if (ms === null || ms === undefined) { ms = UNTIMED_MS; untimed++; }
+      ms = Math.max(ms, MIN_SEG_MS);
+      var from = prev || r.knots[0];
+      var per = ms / r.knots.length;
+      r.knots.forEach(function (k) {
+        segs.push({ t0: t, t1: t + per, a: from, b: k, step: r.i });
+        t += per;
+        from = k;
+      });
+      prev = r.knots[r.knots.length - 1];
+    });
+    return segs.length ? { segs: segs, total: t, untimed: untimed } : null;
+  }
+
+  /* the segment a playhead sits in. A time exactly ON a boundary belongs to
+     the segment that ENDS there, not the one that starts: seeking to a move
+     means "the robot has arrived at that move", and the two segments agree on
+     the joints at that instant anyway, so nothing jumps. */
+  function segAt(tl, t) {
+    var segs = tl.segs;
+    if (t <= segs[0].t0) return segs[0];
+    var lo = 0, hi = segs.length - 1;
+    while (lo < hi) {
+      var m = (lo + hi) >> 1;
+      if (segs[m].t1 < t) lo = m + 1; else hi = m;
+    }
+    return segs[lo];
+  }
+
+  /* the clock time at which a step ARRIVES. A linear move is several
+     segments; you want the last one, which is the taught point itself. */
+  function endOfStep(tl, i) {
+    for (var k = tl.segs.length - 1; k >= 0; k--) {
+      if (tl.segs[k].step === i) return tl.segs[k].t1;
+    }
+    return null;
+  }
+
+  function qAt(tl, t) {
+    var sg = segAt(tl, t);
+    var u = sg.t1 > sg.t0 ? Math.max(0, Math.min(1, (t - sg.t0) / (sg.t1 - sg.t0))) : 1;
+    return sg.a.map(function (v, i) { return v + (sg.b[i] - v) * u; });
+  }
+
+  function clock(ms, total) {
+    return (ms / 1000).toFixed(1) + " / " + (total / 1000).toFixed(1) + " s";
+  }
+
+  /* the eight corners of the box every pose in the run fits inside. Computed
+     once per loaded program: one fk per step, not per frame. */
+  function reachCorners(robot, pose) {
+    if (!poseGate(robot) || !pose || !pose.steps) return null;
+    var lo = null, hi = null;
+    pose.steps.forEach(function (r) {
+      if (!r.solved || !r.q) return;
+      skeletonOf(robot, BV.fk.chain(robot.kin, r.q, robot.flange_dz || 0))
+        .forEach(function (p) {
+          if (!lo) { lo = p.slice(); hi = p.slice(); return; }
+          for (var k = 0; k < 3; k++) {
+            if (p[k] < lo[k]) lo[k] = p[k];
+            if (p[k] > hi[k]) hi[k] = p[k];
+          }
+        });
+    });
+    if (!lo) return null;
+    var out = [];
+    [0, 1].forEach(function (a) {
+      [0, 1].forEach(function (b) {
+        [0, 1].forEach(function (c) {
+          out.push([a ? hi[0] : lo[0], b ? hi[1] : lo[1], c ? hi[2] : lo[2]]);
+        });
+      });
+    });
+    return out;
+  }
 
   /* ---- orbit / pan / zoom (stored in tab state) ---- */
 
@@ -1127,13 +1277,27 @@
       var path = null;      /* the loaded program's resolved path, or null */
       var pose = null;      /* and the joint angles that walk it */
 
-      function redraw() { draw(svg, data, s, colors, robot, path, pose); }
+      function redraw() {
+        draw(svg, data, s, colors, robot, path, pose);
+        /* a full draw rebuilds the overlay, which empties the live group and
+           poses the arm at the SELECTED step. Re-applying the playhead over
+           the fresh frame is what keeps orbiting, pausing and scrubbing from
+           snapping the arm somewhere the clock does not agree with. */
+        if (tl) showAt(s.t);
+      }
       function rebuildSide() {
         buildSide(side, data, s, colors, redraw, robot, reload, path, pick, clear,
                 pose, dropProgram);
       }
       function pick(i) {
+        /* selecting a move IS seeking to it: the playhead and the highlight
+           are one state, so a full redraw cannot put them at odds */
         s.step = i;
+        pauseQuietly();
+        if (tl) {
+          var t = endOfStep(tl, i);
+          if (t !== null) s.t = t;
+        }
         rebuildSide();
         redraw();
       }
@@ -1143,6 +1307,8 @@
            own idiom, which is why the explicit re-route is here) */
         s.prog = null;
         pose = null;
+        pauseQuietly();
+        tl = null;
         if (location.hash === "#view3d") BV.route();
         else location.hash = "#view3d";
       }
@@ -1150,7 +1316,10 @@
         /* the pose grid took the arm. The path stays drawn - it is still
            evidence about the program - but the program stops driving the
            skeleton, so the pose pill can honestly say "manual". */
+        pauseQuietly();
         pose = null;
+        tl = null;
+        syncPlayer();
       }
       function loadProgram(file) {
         return BV.api.call("get_program_path", file).then(function (r) {
@@ -1169,8 +1338,12 @@
           return BV.api.call("get_program_pose", file).then(function (pr) {
             if (s.prog !== file) return;    /* a later pick won the race */
             pose = pr;
+            pose._reach = reachCorners(robot, pose);
+            tl = timeline(pose);
+            s.t = 0;
             rebuildSide();
             redraw();
+            syncPlayer();
           }).catch(function () { /* the path still stands on its own */ });
         }).catch(function (e) {
           BV.toast("could not read " + file + " — " + e.message);
@@ -1295,6 +1468,151 @@
         ).el);
       }
 
+      /* ---- the player ----
+         A real DOM bar inside .v3-vp, not markup in the overlay: the overlay
+         is pointer-events:none by design, and a scrubber you cannot grab is
+         not a scrubber. */
+      var tl = null;                 /* the flattened timeline, or null */
+      var raf = null;                /* the pending frame handle */
+      var last = 0;                  /* wall clock of the previous frame */
+      var HAS_RAF = typeof window.requestAnimationFrame === "function";
+
+      var bar = BV.el("div", { class: "v3-player", hidden: true });
+      var playBtn = BV.el("button", { class: "btn v3-pb", title: "play / pause" }, "▶");
+      var stopBtn = BV.el("button", { class: "btn v3-pb", title: "back to the start" }, "■");
+      var scrub = BV.el("input", { type: "range", class: "v3-scrub",
+                                   min: "0", max: "1000", value: "0",
+                                   title: "scrub through the program" });
+      var clockEl = BV.el("span", { class: "v3-clock" }, "0.0 / 0.0 s");
+      bar.appendChild(playBtn);
+      bar.appendChild(stopBtn);
+      bar.appendChild(scrub);
+      bar.appendChild(clockEl);
+      var speedSeg = BV.segmented(
+        [{ id: "0.25", label: "¼×" }, { id: "1", label: "1×" }, { id: "4", label: "4×" }],
+        { value: String(s.speed), onChange: function (id) { s.speed = parseFloat(id); } });
+      bar.appendChild(speedSeg.el);
+      vp.appendChild(bar);
+
+      function schedule(fn) {
+        /* the probe's hidden WebView2 has no requestAnimationFrame at all, and
+           throttles timers to about a second. Both paths drive the playhead
+           off Date.now(), never off a frame COUNT - bgfx.js paid for that one
+           - so a throttled tick advances by real time instead of stalling. */
+        return HAS_RAF ? window.requestAnimationFrame(fn) : window.setTimeout(fn, 33);
+      }
+      function unschedule(h) {
+        if (h === null) return;
+        if (HAS_RAF) window.cancelAnimationFrame(h); else window.clearTimeout(h);
+      }
+
+      function syncPlayer() {
+        bar.hidden = !tl;
+        if (!tl) return;
+        scrub.value = String(Math.round(1000 * (s.t / (tl.total || 1))));
+        clockEl.textContent = clock(Math.min(s.t, tl.total), tl.total);
+        playBtn.textContent = raf === null ? "▶" : "❚❚";
+      }
+
+      function markStep(i) {
+        /* move the highlight without rebuilding three hundred rows a frame -
+           the selected step's evidence block refreshes when playback stops */
+        if (i === s.step) return;
+        s.step = i;
+        var rows = side.querySelectorAll(".v3-step");
+        for (var k = 0; k < rows.length; k++) rows[k].classList.toggle("sel", k === i);
+      }
+
+      function showAt(t) {
+        if (!tl) return;
+        var sg = segAt(tl, t);
+        var st = path && path.steps[sg.step];
+        drawArm(svg, data, s, robot, qAt(tl, t), st && st.tool);
+        markStep(sg.step);
+        syncPlayer();
+      }
+
+      function pause() {
+        if (raf === null) return;
+        unschedule(raf);
+        raf = null;
+        rebuildSide();      /* the evidence block catches up to where we are */
+        redraw();
+        syncPlayer();
+      }
+
+      function tick() {
+        /* the router empties this slot on the next route, leaving us holding a
+           detached svg. Every loop in this app self-terminates the same way
+           (cvx3d.js, overview.js) rather than registering a teardown. */
+        if (!document.contains(svg)) { raf = null; return; }
+        var now = Date.now();
+        /* clamp: one throttled tick in a hidden window must not silently
+           finish the whole run */
+        var dt = Math.min(now - last, 1000);
+        last = now;
+        s.t += dt * s.speed;
+        if (s.t >= tl.total) {
+          s.t = tl.total;
+          showAt(s.t);
+          pause();
+          return;
+        }
+        showAt(s.t);
+        raf = schedule(tick);
+      }
+
+      function play() {
+        if (!tl || raf !== null) return;
+        if (s.t >= tl.total) s.t = 0;
+        last = Date.now();
+        raf = schedule(tick);
+        syncPlayer();
+      }
+
+      playBtn.addEventListener("click", function () {
+        if (raf === null) play(); else pause();
+      });
+      stopBtn.addEventListener("click", function () {
+        pause();
+        s.t = 0;
+        showAt(0);
+        rebuildSide();
+        redraw();
+      });
+      scrub.addEventListener("input", function () {
+        if (!tl) return;
+        pauseQuietly();
+        s.t = tl.total * (parseFloat(scrub.value) / 1000);
+        showAt(s.t);
+      });
+      scrub.addEventListener("change", function () { rebuildSide(); redraw(); });
+      function pauseQuietly() {
+        if (raf === null) return;
+        unschedule(raf);
+        raf = null;
+        syncPlayer();
+      }
+
+      /* space and the arrows, scoped to the viewport's own focus. Not the
+         global key map: keys.js's typing() guard does not exclude a focused
+         button or checkbox, and this tab is full of both - a global space
+         would fight the toolbar and scroll the page besides. */
+      svg.setAttribute("tabindex", "0");
+      svg.addEventListener("keydown", function (e) {
+        if (!tl) return;
+        if (e.key === " ") {
+          e.preventDefault();
+          if (raf === null) play(); else pause();
+        } else if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+          e.preventDefault();
+          pauseQuietly();
+          var i = Math.max(0, Math.min(path.steps.length - 1,
+            s.step + (e.key === "ArrowRight" ? 1 : -1)));
+          if (endOfStep(tl, i) !== null) pick(i);
+        }
+      });
+
       /* clicking a point in the viewport selects its step */
       ovl.addEventListener("click", function (e) {
         var t = e.target && e.target.closest ? e.target.closest("[data-step]") : null;
@@ -1303,6 +1621,7 @@
 
       rebuildSide();
       redraw();
+      syncPlayer();
       wireViewport(svg, s, redraw);
 
       /* #view3d/<FILE.LS> deep-links a program; with no fragment the tab

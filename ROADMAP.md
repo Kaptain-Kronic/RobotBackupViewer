@@ -104,12 +104,25 @@ Each of these is deliberately scoped to land on its own. Good places to start.
   kinematics for the cartesian half. The slice also landed the viewport's
   first tracked probe (`ui_view3d_probe.py`), which is why 3d-viewer.md §8
   no longer opens with "the viewport renders under no test at all".
-- 🔨 **Play the path** — the arm now poses at whichever program step you pick:
-  joint-recorded points by their own taught angles (exact, no solver),
-  cartesian points through a damped-least-squares solve whose answer is
-  accepted only when the forward chain reproduces the taught pose. The
-  interpolation knots between steps are computed with it, so what is left is
-  the player bar and the loop.
+- ✅ **Play the path** — pick a program, press play, and the arm walks it
+  through the zones. Joint-recorded points pose by their own taught angles
+  (exact, no solver); cartesian points go through a damped-least-squares
+  solve accepted only when the forward chain reproduces the taught pose.
+  Linear and circular moves are walked in substeps along the drawn line so
+  the arm follows the path rather than bowing off it, and playback is one
+  uniform rule — lerp in joint space between knots — which a joint move
+  satisfies exactly. Timing is the programmed feedrate where the listing
+  proves it and a stated assumption where it cannot; the viewport says "path
+  preview — not a cycle-time simulation" throughout.
+- 📋 **Cycle time for real** — acceleration and deceleration ramps, CNT
+  blending between moves, and the per-model maximum joint rates a percentage
+  move is actually a percentage OF. The first two are motion-planner work; the
+  third is data no FANUC backup file carries, so it would have to come from a
+  table like the kinematics one, with the same validated/unvalidated honesty.
+- 📋 **Runtime offsets and INC** — a move carrying `Offset,PR[n]`,
+  `Tool_Offset,PR[n]` or `INC` is drawn at its taught point today and labelled
+  as such. Composing the register would place them properly, when the register
+  is one the backup can actually prove (an initialised PR nothing writes).
 - 📋 **Decode the taught CONFIG, and select the IK branch with it** — the
   config string (`N U T, 0, 0, 0`) names the wrist flip, elbow up/down,
   front/back and the J1/J4/J6 turn counts, and nothing in this repo has
