@@ -183,7 +183,8 @@ def test_sid_sits_immediately_before_side_everywhere():
     side_endpoints = [
         "get_frames", "get_io", "get_registers", "get_programs",
         "get_program_variables", "get_macros", "get_dcs_files", "get_dcs",
-        "get_dcs_zones", "get_robot_pose", "get_sysvar_records", "get_sysvar",
+        "get_dcs_zones", "get_robot_pose", "get_program_path",
+        "get_sysvar_records", "get_sysvar",
         "get_mhvalves", "get_magnet", "get_payloads", "search_backup",
     ]
     for name in side_endpoints:

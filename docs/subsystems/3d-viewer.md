@@ -8,10 +8,11 @@ edits; the anchor commit is the reference.*
 
 Covers: src/backupviewer/kinematics_builtin.py, src/backupviewer/modeldb.py,
 src/backupviewer/parsers/curpos.py, src/backupviewer/parsers/dcszones.py,
-src/backupviewer/parsers/kinematics.py, src/backupviewer/parsers/roboguidedef.py,
+src/backupviewer/parsers/kinematics.py, src/backupviewer/parsers/program_path.py,
+src/backupviewer/parsers/roboguidedef.py,
 src/backupviewer/web/js/components/fk.js, src/backupviewer/web/js/components/proj3d.js,
 src/backupviewer/web/js/tabs/dcs.js, src/backupviewer/web/js/tabs/view3d.js
-(10 files)
+(11 files)
 
 Not covered, from the inventory's 16-file "3D viewer" group: `robot
 modelas/_re/RMD-FORMAT.md`, `robot modelas/_re/rmd.py`, `robot
@@ -53,6 +54,16 @@ placement. It gets a provenance paragraph in §2 and nothing more.
 > 2026-08-01 — it has zero there. All prior coverage lives in parsing.md.)
 
 ---
+
+> **2026-08-20 — the program-path slice.** The tab gained a second thing to
+> draw: a program's taught points and the path between them, resolved by
+> `parsers/program_path.py` behind `get_program_path`. §2, §3, §4, §5, §6 and
+> §8 carry it. Two structural facts worth reading before touching the file:
+> the scene layer is now **five ordered `<g>` groups** rather than one
+> `innerHTML` blob (same paint order, so translucent zones still wash over the
+> arm), and the arm emitter moved into `armLayer()` so a per-frame redraw can
+> rewrite that one group. **§8's headline changed**: the viewport is no longer
+> untested — `tests/ui_view3d_probe.py` exists, and §9 item 2 is closed.
 
 > **2026-08-10:** `view3d.js` `render()` now opens with a four-line branch:
 > a backup whose `backup_type` contains `camera` hands the whole tab to
@@ -98,12 +109,12 @@ session → parser → viewport.
 ## 2. The files
 
 Per-file descriptions live in the [INVENTORY map](../INVENTORY.md). The
-inventory's "3D viewer" group is 16 files; this doc claims the 10 that
+inventory's "3D viewer" group is 17 files; this doc claims the 11 that
 ship (header). Within them:
 
 | layer | files |
 |---|---|
-| pure parsers | `parsers/roboguidedef.py` (.def XML → chain), `parsers/kinematics.py` (the FK chain + `measure_flange`), `parsers/curpos.py` (CURPOS.DG pose + FRAME.DG tools), `parsers/dcszones.py` (zone payload) |
+| pure parsers | `parsers/roboguidedef.py` (.def XML → chain), `parsers/kinematics.py` (the FK chain + `measure_flange`), `parsers/curpos.py` (CURPOS.DG pose + FRAME.DG tools), `parsers/dcszones.py` (zone payload), `parsers/program_path.py` (taught points → world mm) |
 | data + registry | `kinematics_builtin.py` (the 228-type table — data, not parser, hence `src/backupviewer/` not `parsers/`), `modeldb.py` (built-ins under `%APPDATA%` imports, strict matching) |
 | JS math | `components/fk.js` (the chain's JS twin), `components/proj3d.js` (turntable, frame transform, prism) |
 | tabs | `tabs/view3d.js` (viewport + side panel), `tabs/dcs.js` (report pages; exports `BV.dcsDetail` / `BV.dcsStatusPill`) |
@@ -146,6 +157,24 @@ FRAME.DG ─── parse_tool_frames (active #) ──┘ uncached (api.py:1420-
                                                 ok → flange_dz applied
                                                 not ok → calib rides along, view refuses
 ```
+
+A second, independent flow feeds the same viewport once a program is picked:
+
+```
+<PROG>.LS ─ ls_program.parse_ls_program ─┐
+          └ ls_motion.parse_motions ─────┤
+SYSFRAME.VA ─ frames.build_frames_model ─┼─ program_path.build_path ── get_program_path
+POSREG.VA ── registers.parse_posreg ─────┤   (pure; kin optional)      cached per
+CURPOS/DCSVRFY ── _robot_pose ───────────┘                             (file, chain identity)
+                  └ _posable_chain: the SAME never-pose-on-contradiction
+                    gate robotFrames applies, so a chain the backup's own
+                    report contradicts places no joint-recorded point either
+```
+
+The chain identity rides the cache key (`progpath:FILE:TYPE:FLANGE_DZ`)
+because `import_kinematics` changes what `modeldb.match` answers while a
+session lives on — without it the old chain's placement would be served
+forever.
 
 The tab lights when the backup has `DCSPOS.VA` *or* `DCSVRFY.DG`
 (`TAB_REQUIREMENTS`, `parsers/__init__.py:21-23`) — the arm is a bonus
@@ -238,6 +267,20 @@ note.
 | Elements carrying a `utool_num` are excluded from drawing entirely — their positions are relative to a taught tool frame the draw path does not compose (**assumed** semantics; the exclusion is the honest choice under either reading) | `view3d.js:121`, field meaning per `dcszones.py:439` ("Tool frame") |
 | Spheres project as circles, capsules as round-cap strokes, **in world mm** — model geometry scales with the scene like everything else. The arm body itself is deliberately schematic: capsule limbs sized from reach (girth = clamp(reach·0.045, 30, 110), tapering pedestal→wrist), "just enough girth to read as a robot", never claiming to be the DCS robot model or a mesh | `view3d.js:237-262`; the labeling ruling is ROADMAP's ("hand, not the DCS model") |
 
+### The program path
+
+| Fact | Evidence |
+|---|---|
+| A taught cartesian point is a pose **in its user frame, measured to the tool**: `T_tcp = frame(uframe)·frame(point)`, and the faceplate the solver would target is `T_tcp·inv_rigid(frame(utool))` — the **inverse of the composition `measure_flange` already proves** against a controller's own report (`kinematics.py:137`) | reused, not re-derived; test-enforced by a round-trip that recovers the original faceplate to 1e-9 (`test_program_path.py`) |
+| A joint-recorded point needs no frame composition — forward kinematics places it exactly, through the same pendant-proven chain the arm poses on. That is the honest tier: pill `exact`, no solver anywhere in it | test-enforced (`test_joint_point_places_exactly_through_forward_kinematics`), probe-enforced (`prog.joint_point_exact`) |
+| `UF: 0` / `UT: 0` are the world frame and the faceplate. They resolve to identity **with no `SYSFRAME.VA` at all** and are not flagged missing — same reading `dcszones.py:350-351` already takes for `ufrm_num == 0` | test-enforced (`test_uframe_zero_is_world_and_needs_no_frames_file`) |
+| `uf`/`ut` stay **strings** end to end. `"F"` (use whatever is current) is legal, and `parseInt("F")` is `NaN` → frame 0 → a point that looks right and is wrong. `"F"` resolves through the backup's own active number and is reported as an **assumption**, because "current" is a run-time fact | `ls_edit.py:330` validates `\d+|F`; test-enforced |
+| The destination of a move is the reference **immediately after the motion letter**, never the first `P[..]` in the line — options carry their own (`Offset,PR[7]`, `Skip,LBL[3]`) | parsing.md §2 owns the grammar; 13 parametrised cases in `test_ls_motions.py` |
+| Durations are **derived** (a linear feedrate over a computed distance, or a time-specified move), **assumed** (a percentage move, priced at `ls_motion.ASSUMED_JOINT_DEG_S`, because no backup file records per-model maximum joint rates), or **unknown** (a register-driven speed) — and each step says which | test-enforced (`test_ls_motions.py` duration group) |
+| Every move that cannot be placed is **listed with its own reason**, never dropped: no `/POS` entry · anonymous `P[...]` · indirect `P[R[n]]` · masked · uninitialized `PR` · a `PR` a running program writes · a missing or uninitialized frame · `UF: F` with nothing active · the wrong motion group | test-enforced per reason; probe-enforced that the row and its note reach the DOM (`prog.refused_listed`) |
+| A position taught only for motion group 2 never supplies numbers for the group-1 arm | test-enforced (`test_group_two_numbers_are_never_used_for_the_group_one_arm`) |
+| `CONFIG` is carried **verbatim and never decoded**. Its letters (flip/up/front) and turn numbers have not been pendant-paired in this repo, so no meaning is claimed for them | the raw string rides every step's detail block |
+
 ## 5. Invariants
 
 What must stay true, what enforces it, what breaks if it doesn't:
@@ -296,7 +339,23 @@ What must stay true, what enforces it, what breaks if it doesn't:
    in the pixel overlay re-projected per draw — zoom and orbit move the
    world, never the text size (`view3d.js:209-212,310-320`). The gesture
    math and the overlay share the one uniform meet-scale (§7).
-10. **Everything the viewport claims is in mm, to scale.** The grid step,
+10. **One contradiction gate, two consumers.** `robotFrames`
+    (`view3d.js`) and `api._posable_chain` both refuse the chain when
+    `calib && !calib.ok`. The program path passes through the second, so a
+    backup whose kinematics contradict its own position report gets **no
+    arm and no FK-placed point** — it still gets its cartesian path, because
+    that composition never touched the chain. Probe-enforced
+    (`gate.no_arm`, `gate.joint_point_refused`, `gate.path_still_drawn`).
+11. **The scene is five ordered groups, and the order is the paint order.**
+    `v3-l-base` → `v3-l-path` → `v3-l-arm` → `v3-l-zone` → `v3-l-wire`.
+    Zones are translucent and deliberately wash over the arm; reordering
+    these silently changes what the screen says about containment.
+    Probe-enforced (`view3d.layer_order`).
+12. **The fit is sized for the whole run, once.** A program's placed points
+    join the world bounds at load, so the bounding sphere already covers
+    every point the arm will visit. Growing the bounds per frame is the same
+    trap the projected-bounding-box fit was (§7): the view pumps.
+13. **Everything the viewport claims is in mm, to scale.** The grid step,
     the axes (one grid-step long), the ruler, model radii, zone extents —
     all world mm through the same projector. No screen-space fudge factors
     on geometry; that is what "drawn to scale" means here
@@ -357,7 +416,16 @@ the code this pass, held by nothing.
     pills. The parser side is the `coerce_scalar` repair (parsing.md §6's
     trap, `c0c0968`) and stays test-enforced (`test_dcszones.py`
     disabled/uninit honesty trio).
-11. **Probe environment** (and any headless WebView2): no
+12. **A program whose moves cannot be placed** → each move is listed in the
+    program section, dimmed, with the sentence that says why; the viewport
+    prints "⚠ N of M steps not placed — see “program” on the right". The
+    placed ones still draw. Verified (`ui_view3d_probe`, `prog.refused_*`).
+13. **A program picked on a backup with no matched chain** → cartesian
+    points and the path still draw (their composition never needed the
+    chain); joint-recorded points refuse with "a joint-recorded point needs
+    the robot's kinematics to place". Verified (`test_program_path`), and
+    the contradiction case is probe-verified end to end.
+14. **Probe environment** (and any headless WebView2): no
     `requestAnimationFrame`, synthetic pointers with no capturable id —
     `setPointerCapture` is wrapped in try/catch so a probe drag cannot
     throw (`view3d.js:527-528`). The tab renders statically per draw call
@@ -413,9 +481,11 @@ the code this pass, held by nothing.
 
 ## 8. Coverage
 
-Counted 2026-08-01. Full-suite anchor: `python -m pytest tests -m
-"probe or not probe"` → **701 passed, 0 skipped** (parsing.md §7's
-number, re-run for this pass — see the report at the end).
+Counted 2026-08-01, re-counted 2026-08-20. Full-suite anchor: `python -m
+pytest tests -m "probe or not probe"` → **865 passed, 2 skipped** on
+2026-08-20 (the two skips are the private-fixture gate reporting itself
+absent on a clean clone, which is the behaviour it exists to have). The
+2026-08-01 anchor was 701 passed / 0 skipped.
 
 **Tracked, direct — 27 unit tests + the probe across 4 files.**
 `test_kinematics` (11: `.def` parse incl. the dress/envelope exclusions,
@@ -442,20 +512,25 @@ only, printed as numbers): the full pose pipeline on two snapshots
 zone payload census (32 CPC slots / 2 enabled / 16 models / TCP present on
 the rich pin; zero drawable zones honestly reported on the DG-only pins).
 
-**The uncomfortable part — the viewport renders under no test at all.**
-`ui_fk_probe` pins the *math*; nothing pins the *pixels or the panel*. The
-untracked full-app probe (`ui_probe.py`, hand-run only — `test_probes.py`
-deliberately runs an explicit list that excludes it) covers the **dcs
-tab**'s DOM (dashboard, signatures, section menu) but contains **no
-`#view3d` navigation and not one `.v3-*` assertion** (grep-verified
-2026-08-01). The build-day probes that verified the posed skeleton, the
-EOAT capsules, the mismatch-refusal note, the el-clamp under mega-drags
-and the first-run import flow (recorded 2026-07-18) were session scratch
-that never landed in a file. So today: zones-drawn, arm-posed,
-refuse-note-shown, cube-snaps, orbit state restore — all held by nothing
-but the fk math pin and care. A tracked view3d probe needs no real backup:
-synthetic DCSPOS text + a builtin chain would exercise the whole draw path
-(§9 item 2).
+**The viewport is under test now — 2026-08-20.** `tests/ui_view3d_probe.py`
+(registered in `test_probes.py`) boots the tab in a hidden WebView2 on two
+fabricated backups and asserts on real DOM: **26 checks**. The baseline this
+doc used to call untested — zones drawn, arm posed with real geometry, the
+five-group layer order, the cube snapping *and* refitting, elevation
+clamping to exactly 90 however it got out of range, and per-tab state
+surviving a round trip — plus the program path (steps listed, path drawn,
+markers matching the placed count as an *invariant* rather than a literal,
+the refused move listed with its note, the viewport note, step selection in
+list and viewport, the picker filtering, the toggles) and the contradiction
+gate end to end (no arm, no FK-placed point, cartesian path still drawn,
+the residual note printed). No private tree: fabricated `DCSPOS.VA`,
+`DCSVRFY.DG` naming a shipped builtin type, `CURPOS.DG`, a `.LS` with both
+point representations, `RB…` names under `FakePlant`.
+
+What that does **not** yet pin: the EOAT capsule rendering, the first-run
+kinematics-import flow, and the `.def` import dialog — still traced only.
+The untracked full-app probe (`ui_probe.py`, hand-run) remains free of any
+`.v3-*` assertion; the tracked probe is the one that counts now.
 
 **Also uncovered:** `proj3d.js` — zero direct tests anywhere (turntable
 basis, perspective wrap, unproject, prism topology; its `frameTransform`
@@ -481,11 +556,20 @@ changes). Evidence attached.
    vintage phrasing ("data-only in the panel until kinematics can place
    link-attached shapes") — accurate as a historical record, read it with
    the date in mind.
-2. **The viewport probe gap** (§8). Cheapest honest fix: a tracked
-   hidden-window probe driving `#view3d` on a synthetic backup (fabricated
-   DCSPOS.VA + DCSVRFY.DG, a builtin type string) asserting zones drawn,
-   arm posed, the three warning notes, the el clamp, and state restore —
-   no private tree required. Until then §6's rows 5–9 rest on traced code.
+2. **CLOSED 2026-08-20 — the viewport probe gap** (§8). `tests/
+   ui_view3d_probe.py` does exactly what this item asked for: a tracked
+   hidden-window probe on a fabricated backup, zones drawn, arm posed, the
+   el clamp, state restore, plus the program path and the contradiction
+   gate. §6's rows 5–9 are still partly traced (no-type and no-CURPOS
+   ladders are not fixtured yet) — the *gap* is closed, the *ladder* is
+   next.
+   **New, in its place:** the taught `CONFIG` string is carried but never
+   decoded, so nothing yet checks a placed point's branch against what the
+   robot actually did. That only starts to matter when the inverse solve
+   lands (ROADMAP: the OPW + CONFIG lane); `CURPOS.DG` prints joints AND the
+   config string the controller computed for them, which is the free
+   ground-truth pair when someone takes it — `parse_curpos` reads the six
+   world floats today and drops that string.
 3. **Two F100iA entries carry a rotational ZeroOffset the world shift
    ignores.** `chain_frames` subtracts only `zero[0..2]` (documented,
    `kinematics.py:11`), but `F100IA104`/`F100IA104L` ship

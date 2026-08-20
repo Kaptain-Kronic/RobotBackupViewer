@@ -37,6 +37,16 @@
       s.group = 0;       /* 0 = all groups */
       s.box = null;      /* single pan/zoom override (null = auto-fit) */
       s.persp = false;   /* orthographic by default */
+      /* program playback: prog is a .LS file name, step the selected move.
+         s.prog and s.pose are MUTUALLY EXCLUSIVE - both drive the arm, so
+         loading a program clears a hand-edited pose and editing a joint
+         drops the program. Without that the pose grid and the step list
+         fight over the skeleton and the "manual" pill lies about which
+         one you are looking at. */
+      s.prog = null;
+      s.step = 0;
+      s.showPath = true;
+      s.showPoints = true;
     }
     /* older sessions could park el past a pole - normalize back in range */
     s.el = Math.max(-90, Math.min(90, s.el));
@@ -133,7 +143,60 @@
     return out;
   }
 
-  function draw(svg, data, s, colors, robot) {
+  /* the posed arm as scene-layer strings: joint-to-joint capsule limbs (a
+     schematic body, sized from the arm's reach and tapering to the wrist -
+     deliberately NOT the DCS robot model or a mesh, just enough girth to
+     read as a robot) + the DCS user-model elements at their true frames.
+     Spheres project as circles, capsules as round-cap strokes, all in world
+     mm so they scale with the scene. Its own function because playback
+     rebuilds THIS layer every frame and nothing else. */
+  function armLayer(proj, skel, elems) {
+    var out = [];
+    if (!skel) return out;
+    var sp = skel.map(function (p) { return proj.project(p); });
+    var reach = 0;
+    skel.forEach(function (p) { reach = Math.max(reach, Math.hypot(p[0], p[1], p[2])); });
+    var girth = Math.max(30, Math.min(110, reach * 0.045));
+    var segN = sp.length - 1;
+    for (var si = 0; si < segN; si++) {
+      var taper = 1.25 - 0.75 * (si / (segN - 1)); /* pedestal thick, wrist slim */
+      out.push('<line class="v3-body" x1="' + sp[si][0] + '" y1="' + sp[si][1] +
+        '" x2="' + sp[si + 1][0] + '" y2="' + sp[si + 1][1] +
+        '" stroke-width="' + (2 * girth * taper) + '"/>');
+    }
+    var sd = "";
+    sp.forEach(function (p, i) { sd += (i ? "L" : "M") + p[0] + " " + p[1]; });
+    out.push('<path class="v3-skel" d="' + sd + '"/>');
+    sp.forEach(function (p, i) {
+      if (i === 0) return; /* floor anchor gets no joint dot */
+      out.push('<circle class="v3-skel-j" cx="' + p[0] + '" cy="' + p[1] + '" r="' +
+        (girth * 0.42) + '"/>');
+    });
+    elems.forEach(function (e) {
+      var a = proj.project(e.p1);
+      var dash = e.approx ? ' stroke-dasharray="10 7"' : "";
+      if (!e.p2) {
+        out.push('<circle class="v3-elem" cx="' + a[0] + '" cy="' + a[1] +
+          '" r="' + e.el.size + '"' + dash + "/>");
+        return;
+      }
+      var b = proj.project(e.p2);
+      out.push('<line class="v3-elem-cap" x1="' + a[0] + '" y1="' + a[1] +
+        '" x2="' + b[0] + '" y2="' + b[1] +
+        '" stroke-width="' + (2 * e.el.size) + '"' + dash + "/>");
+      out.push('<line class="v3-elem-axis" x1="' + a[0] + '" y1="' + a[1] +
+        '" x2="' + b[0] + '" y2="' + b[1] + '"/>');
+    });
+    return out;
+  }
+
+  /* the placed steps of the loaded program, in program order */
+  function pathPoints(path) {
+    if (!path) return [];
+    return path.steps.filter(function (st) { return st.ok; });
+  }
+
+  function draw(svg, data, s, colors, robot, path) {
     var zones = visibleZones(data, s);
 
     /* world geometry per zone + world bounds (grid and fit both use them) */
@@ -166,6 +229,14 @@
         if (e.p2) wpts.push(e.p2);
       });
     }
+    /* the loaded program's whole extent joins the bounds ONCE, so the fit
+       sphere already covers every point the arm will visit. Playback moves
+       the arm inside a view that was sized for the entire run - otherwise
+       the auto-fit pumps on every frame, the same way fitting the projected
+       bounding box made it breathe while orbiting. */
+    var placed = pathPoints(path);
+    placed.forEach(function (st) { wpts.push(st.world); });
+
     wpts.forEach(function (p) {
       for (var k = 0; k < 3; k++) {
         if (p[k] < wmin[k]) wmin[k] = p[k];
@@ -206,8 +277,12 @@
     var box = s.box || fit;
     svg.setAttribute("viewBox", box.x + " " + box.y + " " + box.w + " " + box.h);
 
-    /* ---- scene layer (viewBox space): geometry only, never text ---- */
-    var out = [];
+    /* ---- scene layer (viewBox space): geometry only, never text ----
+       Five ordered groups rather than one blob, in exactly the paint order
+       the single blob had (translucent zones still wash over the arm). The
+       arm sits in its own group because playback rewrites that one alone. */
+    var out = [];        /* base: grid + axes */
+    var wires = [];
 
     /* floor grid (world Z=0): side views collapse it to the floor line */
     var step = niceStep(Math.max(wmax[0] - wmin[0], wmax[1] - wmin[1]) / 10);
@@ -234,49 +309,6 @@
         '" x2="' + tips[ax][0] + '" y2="' + tips[ax][1] + '"/>');
     });
 
-    /* the posed arm: joint-to-joint capsule limbs (a schematic body, sized
-       from the arm's reach and tapering to the wrist - deliberately NOT
-       the DCS robot model or a mesh, just enough girth to read as a
-       robot) + the DCS user-model elements at their true frames. Spheres
-       project as circles, capsules as round-cap strokes, all in world mm
-       so they scale with the scene. */
-    if (skel) {
-      var sp = skel.map(function (p) { return proj.project(p); });
-      var reach = 0;
-      skel.forEach(function (p) { reach = Math.max(reach, Math.hypot(p[0], p[1], p[2])); });
-      var girth = Math.max(30, Math.min(110, reach * 0.045));
-      var segN = sp.length - 1;
-      for (var si = 0; si < segN; si++) {
-        var taper = 1.25 - 0.75 * (si / (segN - 1)); /* pedestal thick, wrist slim */
-        out.push('<line class="v3-body" x1="' + sp[si][0] + '" y1="' + sp[si][1] +
-          '" x2="' + sp[si + 1][0] + '" y2="' + sp[si + 1][1] +
-          '" stroke-width="' + (2 * girth * taper) + '"/>');
-      }
-      var sd = "";
-      sp.forEach(function (p, i) { sd += (i ? "L" : "M") + p[0] + " " + p[1]; });
-      out.push('<path class="v3-skel" d="' + sd + '"/>');
-      sp.forEach(function (p, i) {
-        if (i === 0) return; /* floor anchor gets no joint dot */
-        out.push('<circle class="v3-skel-j" cx="' + p[0] + '" cy="' + p[1] + '" r="' +
-          (girth * 0.42) + '"/>');
-      });
-      elems.forEach(function (e) {
-        var a = proj.project(e.p1);
-        var dash = e.approx ? ' stroke-dasharray="10 7"' : "";
-        if (!e.p2) {
-          out.push('<circle class="v3-elem" cx="' + a[0] + '" cy="' + a[1] +
-            '" r="' + e.el.size + '"' + dash + "/>");
-          return;
-        }
-        var b = proj.project(e.p2);
-        out.push('<line class="v3-elem-cap" x1="' + a[0] + '" y1="' + a[1] +
-          '" x2="' + b[0] + '" y2="' + b[1] +
-          '" stroke-width="' + (2 * e.el.size) + '"' + dash + "/>");
-        out.push('<line class="v3-elem-axis" x1="' + a[0] + '" y1="' + a[1] +
-          '" x2="' + b[0] + '" y2="' + b[1] + '"/>');
-      });
-    }
-
     /* zone faces, painter-sorted across ALL zones so overlaps stack right */
     var faces = [];
     scr.forEach(function (sz) {
@@ -290,7 +322,6 @@
       });
     });
     faces.sort(function (p, q) { return p.d - q.d; });
-    faces.forEach(function (f) { out.push(f.html); });
 
     /* wireframe per zone (keep-in = dashed envelope) */
     scr.forEach(function (sz) {
@@ -300,10 +331,34 @@
         d += "M" + sz.spts[e[0]][0] + " " + sz.spts[e[0]][1] +
           "L" + sz.spts[e[1]][0] + " " + sz.spts[e[1]][1];
       });
-      out.push('<path class="v3-edge" d="' + d + '" stroke="' + colors[sz.z.n] + '"' + dash + "/>");
+      wires.push('<path class="v3-edge" d="' + d + '" stroke="' + colors[sz.z.n] + '"' + dash + "/>");
     });
 
-    svg.innerHTML = out.join("");
+    /* the taught path: one polyline through the placed points, in world mm.
+       Joint-recorded and cartesian points join the same line - it is where
+       the tool centre goes, whichever way the point was written down. */
+    var pathOut = [];
+    if (s.showPath && placed.length > 1) {
+      var pd = "";
+      placed.forEach(function (st, i) {
+        var q = proj.project(st.world);
+        pd += (i ? "L" : "M") + q[0] + " " + q[1];
+      });
+      pathOut.push('<path class="v3-path" d="' + pd + '"/>');
+    }
+
+    svg.innerHTML =
+      '<g class="v3-l-base">' + out.join("") + "</g>" +
+      '<g class="v3-l-path">' + pathOut.join("") + "</g>" +
+      '<g class="v3-l-arm">' + armLayer(proj, skel, elems).join("") + "</g>" +
+      '<g class="v3-l-zone">' + faces.map(function (f) { return f.html; }).join("") + "</g>" +
+      '<g class="v3-l-wire">' + wires.join("") + "</g>";
+    /* handles so a per-frame redraw can rewrite one layer and leave the
+       projector, the viewBox and the painter sort exactly as they are */
+    svg._L = {
+      base: svg.children[0], path: svg.children[1], arm: svg.children[2],
+      zone: svg.children[3], wire: svg.children[4],
+    };
 
     /* ---- overlay layer (PIXEL space): every label and furniture piece
        at constant screen size. Zoom/orbit move the geometry, never the
@@ -346,6 +401,23 @@
         '<text x="' + (tp[0] + 13) + '" y="' + (tp[1] - 7) + '" font-size="11">tcp</text></g>');
     }
 
+    /* taught points: constant-size markers in pixel space like the tcp
+       crosshair, so they stay clickable at any zoom. The selected step wears
+       its own class and carries its P id. */
+    if (s.showPoints) {
+      placed.forEach(function (st) {
+        var q = toPx(proj.project(st.world));
+        var sel = st.i === s.step ? " sel" : "";
+        ov.push('<circle class="v3-pt' + sel + '" cx="' + q[0] + '" cy="' + q[1] +
+          '" r="' + (sel ? 5.5 : 3.5) + '" data-step="' + st.i + '"><title>' +
+          BV.esc(st.target.raw + "  " + st.text) + "</title></circle>");
+        if (sel) {
+          ov.push('<text class="v3-pt-lab" x="' + (q[0] + 9) + '" y="' + (q[1] - 7) +
+            '" font-size="11">' + BV.esc(st.target.raw) + "</text>");
+        }
+      });
+    }
+
     /* scale ruler: largest nice mm length that stays ~1/4 viewport wide */
     var RULER = [10, 25, 50].concat(NICE);
     var mm = RULER[0];
@@ -369,6 +441,18 @@
     }
     if (elems.some(function (e) { return e.approx; })) {
       notes.push("⚠ link-attached elements: link-frame convention unverified");
+    }
+    if (path) {
+      var refused = path.counts.refused;
+      if (refused) {
+        notes.push("⚠ " + refused + " of " + path.counts.steps +
+          " steps not placed — see “program” on the right");
+      }
+      if (!path.robot.posable && path.counts.joint === 0 &&
+          path.steps.some(function (st) { return st.why === "no-kinematics"; })) {
+        notes.push("no kinematics for this type — cartesian points shown, " +
+          "joint-recorded ones cannot be placed");
+      }
     }
     if (!zones.length) {
       notes.push(data.cpc.length ? "no zones shown — check some on the right" +
@@ -611,7 +695,88 @@
     return b;
   }
 
-  function buildSide(side, data, s, colors, redraw, robot, reload) {
+  /* one step row: the line number, the verbatim instruction, and its
+     honesty pills. Flat, not a collapsible - a program runs to hundreds of
+     moves, and the evidence for the SELECTED one shows once, below the list. */
+  function stepRow(st, s, onPick) {
+    var tags = "";
+    tags += st.ok
+      ? (st.rep === "joint" ? BV.pill("exact", "ok-soft") : BV.pill("taught", "ghost"))
+      : BV.pill("not placed", "err");
+    if (st.offset || st.tool_offset) tags += BV.pill("offset", "warn");
+    if (st.incremental) tags += BV.pill("inc", "warn");
+    if (st.via) tags += BV.pill("via", "ghost");
+    var row = BV.el("div", {
+      class: "v3-step" + (st.i === s.step ? " sel" : "") + (st.ok ? "" : " dim"),
+      title: st.note || st.text,
+    });
+    row.innerHTML = '<span class="v3-step-n">' + st.line + "</span>" +
+      '<span class="v3-step-t">' + BV.esc(st.text) + "</span>" +
+      '<span class="v3-step-tags">' + tags + "</span>";
+    row.addEventListener("click", function () { onPick(st.i); });
+    return row;
+  }
+
+  function programSection(side, s, path, pick, clear) {
+    var c = path.counts;
+    side.appendChild(catHead("program", c.placed, c.steps, [
+      miniBtn("clear", "stop showing this program", clear),
+    ]));
+    var head = BV.el("div", { class: "v3-prog-head" });
+    head.innerHTML = '<span class="v3-prog-name">' + BV.esc(path.name) + "</span>" +
+      (path.comment ? '<span class="v3-prog-cmt">' + BV.esc(path.comment) + "</span>" : "");
+    side.appendChild(head);
+
+    /* every assumption this drawing rests on, stated once, before the steps */
+    var notes = (path.assumptions || []).map(function (a) { return a.text; });
+    if (c.refused) {
+      notes.push(c.refused + " of " + c.steps + " moves could not be placed — " +
+        "each one says why in the list below");
+    }
+    if (notes.length) {
+      var nb = BV.el("div", { class: "v3-prog-notes" });
+      nb.innerHTML = notes.map(function (t) { return "<div>" + BV.esc(t) + "</div>"; }).join("");
+      side.appendChild(nb);
+    }
+
+    var list = BV.el("div", { class: "v3-steps" });
+    path.steps.forEach(function (st) { list.appendChild(stepRow(st, s, pick)); });
+    side.appendChild(list);
+
+    /* the selected move's evidence, in the pendant-style block the rest of
+       this panel uses */
+    var st = path.steps[s.step];
+    if (!st) return;
+    var kv = [
+      { key: "Line", value: String(st.line) },
+      { key: "Instruction", value: st.text },
+      { key: "Target", value: st.target.raw +
+        (st.target.comment ? "  " + st.target.comment : "") },
+    ];
+    if (st.via) kv.push({ key: "Via", value: st.via.raw });
+    if (st.uf !== null) kv.push({ key: "UF / UT", value: st.uf + " / " + st.ut });
+    if (st.config) kv.push({ key: "CONFIG", value: st.config });
+    function nums(a, dp) {
+      return a.map(function (v) { return v.toFixed(dp); }).join("  ");
+    }
+    if (st.xyzwpr) kv.push({ key: "Taught (in uframe)", value: nums(st.xyzwpr, 1) });
+    if (st.joints) kv.push({ key: "Taught joints", value: nums(st.joints, 2) });
+    if (st.world) kv.push({ key: "World tcp", value: nums(st.world, 1) });
+    if (st.speed) kv.push({ key: "Speed", value: st.speed.raw });
+    if (st.term) kv.push({ key: "Termination", value: st.term.raw });
+    if (st.options.length) kv.push({ key: "Options", value: st.options.join("  ") });
+    if (st.dist_mm !== null) kv.push({ key: "Distance", value: st.dist_mm.toFixed(1) + " mm" });
+    if (st.dur_ms !== null) {
+      kv.push({ key: "Duration",
+                value: (st.dur_ms / 1000).toFixed(2) + " s (" + st.dur_kind + ")" });
+    }
+    if (st.note) kv.push({ key: "Not placed", value: st.note });
+    var det = BV.el("div", { class: "v3-prog-detail" });
+    det.appendChild(BV.dcsDetail(kv));
+    side.appendChild(det);
+  }
+
+  function buildSide(side, data, s, colors, redraw, robot, reload, path, pick, clear) {
     side.innerHTML = "";
     var listed = function (arr) {
       return arr.filter(function (e) {
@@ -733,7 +898,7 @@
             var rst = BV.el("button", { class: "btn v3-mini", title: "back to the backup’s own pose" }, "reset pose");
             rst.addEventListener("click", function () {
               s.pose = null;
-              buildSide(side, data, s, colors, redraw, robot, reload);
+              buildSide(side, data, s, colors, redraw, robot, reload, path, pick, clear);
               redraw();
             });
             body.appendChild(rst);
@@ -743,6 +908,11 @@
       }
     }
 
+    /* the loaded program: its moves and the evidence for the selected one.
+       Under the robot rows because it is about the arm; above the zones
+       because it is what you came here to watch. */
+    if (path) programSection(side, s, path, pick, clear);
+
     /* cartesian zones - the drawable category, checkbox + swatch */
     var zs = listed(data.cpc);
     if (data.cpc.length) {
@@ -750,11 +920,11 @@
       side.appendChild(catHead("cartesian position", en, data.cpc.length, [
         miniBtn("all", "show every listed zone", function () {
           zs.forEach(function (z) { delete s.hidden[z.n]; });
-          buildSide(side, data, s, colors, redraw, robot, reload); redraw();
+          buildSide(side, data, s, colors, redraw, robot, reload, path, pick, clear); redraw();
         }),
         miniBtn("none", "hide every listed zone", function () {
           zs.forEach(function (z) { s.hidden[z.n] = true; });
-          buildSide(side, data, s, colors, redraw, robot, reload); redraw();
+          buildSide(side, data, s, colors, redraw, robot, reload, path, pick, clear); redraw();
         }),
       ]));
       zs.forEach(function (z) {
@@ -881,8 +1051,40 @@
       view.appendChild(vp);
       view.appendChild(side);
 
-      function redraw() { draw(svg, data, s, colors, robot); }
-      function rebuildSide() { buildSide(side, data, s, colors, redraw, robot, reload); }
+      var path = null;      /* the loaded program's resolved path, or null */
+
+      function redraw() { draw(svg, data, s, colors, robot, path); }
+      function rebuildSide() {
+        buildSide(side, data, s, colors, redraw, robot, reload, path, pick, clear);
+      }
+      function pick(i) {
+        s.step = i;
+        rebuildSide();
+        redraw();
+      }
+      function clear() {
+        /* back out through the router, the way esc does elsewhere - the hash
+           IS the state, and a same-hash set fires no hashchange (router.js's
+           own idiom, which is why the explicit re-route is here) */
+        s.prog = null;
+        if (location.hash === "#view3d") BV.route();
+        else location.hash = "#view3d";
+      }
+      function loadProgram(file) {
+        return BV.api.call("get_program_path", file).then(function (r) {
+          s.prog = file;
+          s.step = 0;
+          s.pose = null;      /* the program owns the arm now - see st() */
+          path = r;
+          s.box = null;       /* refit: a path usually reaches past the zones */
+          progBtn.textContent = r.name + " ▾";
+          syncTools();
+          rebuildSide();
+          redraw();
+        }).catch(function (e) {
+          BV.toast("could not read " + file + " — " + e.message);
+        });
+      }
       function reload() {
         BV.api.call("get_robot_pose").catch(function () { return null; })
           .then(function (r) {
@@ -904,7 +1106,67 @@
         redraw();
       });
 
-      /* toolbar: fit · perspective · show-disabled · group filter */
+      /* toolbar: program · path · points · fit · perspective · show-disabled
+         · group filter. The picker is a dropPanel rather than a menu because
+         a controller carries hundreds of programs and you need to type at
+         them - "a filter + a list" is what dropPanel exists for. */
+      var progBtn = BV.el("button", {
+        class: "btn", title: "draw a program's taught path among the zones",
+      }, "program ▾");
+      progBtn.addEventListener("click", function () {
+        var wrap = BV.el("div", { class: "v3-pick" });
+        var filter = BV.el("input", { type: "search", placeholder: "filter programs…" });
+        var list = BV.el("div", { class: "v3-pick-list" });
+        wrap.appendChild(filter);
+        wrap.appendChild(list);
+        var handle = BV.dropPanel(progBtn, wrap);
+        if (!handle) return;
+        BV.api.call("get_programs").then(function (rows) {
+          var progs = rows.filter(function (r) { return !r.binary; });
+          function paint() {
+            var q = filter.value.trim().toUpperCase();
+            list.innerHTML = "";
+            progs.filter(function (r) {
+              return !q || (r.name + " " + (r.comment || "")).toUpperCase().indexOf(q) >= 0;
+            }).forEach(function (r) {
+              var b = BV.el("button", { class: "v3-pick-item", title: r.comment || "" });
+              b.innerHTML = BV.esc(r.name) +
+                (r.comment ? '<span class="dim"> ' + BV.esc(r.comment) + "</span>" : "");
+              b.addEventListener("click", function () {
+                handle.close();
+                location.hash = "#view3d/" + encodeURIComponent(r.file);
+              });
+              list.appendChild(b);
+            });
+            if (!list.children.length) {
+              list.innerHTML = '<div class="dim" style="padding:.4rem">no match</div>';
+            }
+          }
+          filter.addEventListener("input", paint);
+          paint();
+          filter.focus();
+        });
+      });
+      toolbar.appendChild(progBtn);
+      /* these two only mean anything while a program is loaded, so they are
+         absent until then rather than sitting there greyed */
+      function toggleBtn(key, label, title) {
+        var b = BV.el("button", {
+          class: "btn" + (s[key] ? " primary" : ""), title: title,
+        }, label);
+        b.addEventListener("click", function () {
+          s[key] = !s[key];
+          b.classList.toggle("primary", s[key]);
+          redraw();
+        });
+        toolbar.appendChild(b);
+        return b;
+      }
+      var pathBtn = toggleBtn("showPath", "path",
+        "draw the line between the program's taught points");
+      var ptsBtn = toggleBtn("showPoints", "points", "mark each taught point");
+      function syncTools() { pathBtn.hidden = ptsBtn.hidden = !path; }
+      syncTools();
       var fitBtn = BV.el("button", { class: "btn", title: "reset pan/zoom (double-click does too)" }, "fit");
       fitBtn.addEventListener("click", function () { s.box = null; redraw(); });
       toolbar.appendChild(fitBtn);
@@ -942,9 +1204,20 @@
         ).el);
       }
 
+      /* clicking a point in the viewport selects its step */
+      ovl.addEventListener("click", function (e) {
+        var t = e.target && e.target.closest ? e.target.closest("[data-step]") : null;
+        if (t) pick(parseInt(t.getAttribute("data-step"), 10));
+      });
+
       rebuildSide();
       redraw();
       wireViewport(svg, s, redraw);
+
+      /* #view3d/<FILE.LS> deep-links a program; with no fragment the tab
+         restores whatever it was showing when you left it */
+      var want = params && params[0] ? decodeURIComponent(params[0]) : s.prog;
+      if (want) loadProgram(want);
     }).catch(function (e) {
       view.innerHTML = '<div class="empty-state"><div class="big">no DCS zone data</div>' +
         '<div class="hint">' + BV.esc(e.message) + "</div></div>";

@@ -2248,6 +2248,60 @@ text.v3-ax-z { fill: var(--accent); }
 .v3-check { width: 15px; height: 15px; accent-color: var(--accent); flex: none; }
 .v3-swatch { width: 11px; height: 11px; border-radius: 3px; flex: none; }
 
+/* ---- a program's path in the viewport (tabs/view3d.js) ----
+   The scene groups carry no visual properties of their own - they exist so a
+   per-frame redraw can rewrite one layer and leave the painter sort alone. */
+.v3-path {
+  fill: none; stroke: var(--accent); stroke-width: 2.2;
+  stroke-linejoin: round; stroke-linecap: round;
+  vector-effect: non-scaling-stroke; opacity: 0.85;
+}
+/* taught points ride the pixel overlay like the tcp crosshair, so they stay
+   the same size (and the same click target) at every zoom */
+.v3-pt { fill: var(--bg); stroke: var(--accent); stroke-width: 1.6; cursor: pointer; pointer-events: auto; }
+.v3-pt:hover { fill: var(--accent); }
+.v3-pt.sel { fill: var(--accent); stroke: var(--text); stroke-width: 1.8; }
+.v3-pt-lab { fill: var(--accent); pointer-events: none; }
+
+/* ---- the program section of the side panel ---- */
+.v3-prog-head { display: flex; align-items: baseline; gap: 0.4rem; padding: 0 0 0.35rem; min-width: 0; }
+.v3-prog-name { font-size: 0.86rem; }
+.v3-prog-cmt { font-size: 0.74rem; color: var(--sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v3-prog-notes {
+  font-size: 0.72rem; color: var(--sub); line-height: 1.45;
+  border-left: 2px solid var(--warn); padding: 0.1rem 0 0.1rem 0.5rem;
+  margin: 0 0 0.4rem; overflow-wrap: break-word;
+}
+.v3-prog-notes div + div { margin-top: 0.2rem; }
+.v3-steps {
+  max-height: 40vh; overflow-y: auto; border: 1px solid var(--edge);
+  border-radius: var(--radius); background: var(--panel); margin-bottom: 0.4rem;
+}
+.v3-step {
+  display: flex; align-items: center; gap: 0.4rem; cursor: pointer;
+  padding: 0.2rem 0.45rem; font-size: 0.76rem; min-width: 0;
+}
+.v3-step + .v3-step { border-top: 1px solid var(--edge-soft); }
+.v3-step:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.v3-step.sel { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.v3-step-n { flex: none; min-width: 2.5ch; text-align: right; color: var(--sub-alt); font-family: var(--font-mono); }
+.v3-step-t { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
+.v3-step-tags { display: flex; gap: 0.2rem; flex: none; align-items: center; }
+.v3-prog-detail { margin-bottom: 0.4rem; }
+
+/* ---- the program picker (a dropPanel: a filter over a long list) ---- */
+.v3-pick { display: flex; flex-direction: column; gap: 0.35rem; width: min(22rem, 80vw); }
+.v3-pick input[type="search"] { width: 100%; padding: 0.25rem 0.4rem; font-size: 0.82rem; }
+.v3-pick-list { max-height: 52vh; overflow-y: auto; display: flex; flex-direction: column; }
+.v3-pick-item {
+  text-align: left; background: none; border: 0; color: inherit;
+  padding: 0.25rem 0.4rem; font-size: 0.82rem; border-radius: var(--radius);
+  cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.v3-pick-item:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+/* the programs tab's jump-into-3d button, in the positions card header */
+.v3-jump { margin-left: auto; padding: 0.05rem 0.5rem; font-size: 0.72rem; }
+
 /* ---- the ⚙ settings dialog (settings_ui.js) ---- */
 .modal.settings-win { width: min(43rem, 94vw); }
 .settings-win .set-tabs {

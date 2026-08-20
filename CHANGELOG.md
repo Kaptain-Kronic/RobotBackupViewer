@@ -1,6 +1,39 @@
 # Changelog
 
 ## unreleased — the camera gets its 3d view, and the files tab extracts
+- **A program's path, drawn where it actually is.** The 3d view gained a
+  program picker in its toolbar (and a "view in 3d" button on the programs
+  tab's positions card): pick a program and its taught points draw among the
+  DCS zones, in the same millimetres, with the line between them. The side
+  panel lists every move — line number, the instruction verbatim, and what we
+  could make of it — and the selected one opens its evidence: the raw CONFIG
+  string, the taught numbers, the uf/ut as written, the world position we
+  computed, the distance and how long the move takes.
+  A cartesian point is a pose *in its user frame, measured to the tool*, so
+  neither number means anything alone; the composition is the inverse of the
+  one the flange measurement already proves against a controller's own report,
+  reused rather than re-derived. A joint-recorded point needs no frames at all
+  — forward kinematics places it exactly, through the same chain the arm poses
+  on, and it is labelled `exact` to say so.
+  Nothing is placed that cannot be proven, and nothing that cannot be placed
+  is dropped. A move whose position the program never recorded, an anonymous
+  `P[...]`, an indirect `P[R[4]]`, a masked value, an uninitialized position
+  register or one a running program overwrites, a missing or uninitialized
+  frame, `uf: F` resolved to whatever was current, a point taught for a
+  different motion group — each stays in the list, dimmed, saying which of
+  those it is. The viewport prints how many.
+  The contradiction gate extends to it: a backup whose kinematics disagree
+  with its own position report already refuses to draw the arm, and now
+  refuses to place joint-recorded points too — while its cartesian path still
+  draws, because that composition never touched the kinematics.
+- **The 3d view has a test at last.** Its own subsystem doc called the
+  unprobed viewport "the uncomfortable part" — the forward-kinematics probe
+  pinned the *math* while nothing pinned the pixels. `ui_view3d_probe.py` now
+  boots the tab hidden on two fabricated backups and asserts on real DOM: the
+  zones draw, the arm poses, the scene layers stay in paint order, the view
+  cube snaps and refits, elevation stops exactly at the pole, per-tab state
+  survives leaving and coming back, and the whole program-path surface behaves
+  — including the contradiction case, end to end.
 - **A program's moves are read as structure, not text.** A new parser
   (`parsers/ls_motion.py`) turns the `/MN` instruction stream into moves: type
   (J/L/C/A), destination, speed with its unit, termination (FINE, CNT, or a

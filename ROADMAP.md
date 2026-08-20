@@ -96,9 +96,35 @@ Each of these is deliberately scoped to land on its own. Good places to start.
   usable it is here: it is ONE fused mesh at its saved pose, not per-link
   parts, so it cannot be posed by joint angles without a split — fine as a
   static body, not a substitute for per-link geometry.
-- 📋 **Program points in 3D** — plot a program's Cartesian positions among
-  the zones (compose their UFRAME); joint-rep points can now use the same
-  forward kinematics the posed arm runs on.
+- ✅ **Program points in 3D** — pick a program in the 3D view (toolbar picker,
+  or "view in 3d" from the programs tab) and its taught path draws among the
+  zones: cartesian points composed through their own UFRAME, joint-recorded
+  ones placed by the same pendant-proven forward kinematics the arm poses on,
+  and every move that cannot be placed listed with the reason. Needs no
+  kinematics for the cartesian half. The slice also landed the viewport's
+  first tracked probe (`ui_view3d_probe.py`), which is why 3d-viewer.md §8
+  no longer opens with "the viewport renders under no test at all".
+- 🔨 **Play the path** — pose the arm at a chosen step and animate it along the
+  program. Cartesian points need an inverse solve, which is the next slice.
+- 📋 **Decode the taught CONFIG, and select the IK branch with it** — the
+  config string (`N U T, 0, 0, 0`) names the wrist flip, elbow up/down,
+  front/back and the J1/J4/J6 turn counts, and nothing in this repo has
+  pendant-paired any of it, so today it is carried verbatim and never read.
+  Until it is, a cartesian point poses at a **solver-chosen** branch: same
+  TCP, possibly a mirrored elbow, and the residual is ~0 so no runtime check
+  can catch it. Two things make this cheap when someone takes it. `CURPOS.DG`
+  prints joint angles **and** the config string the controller computed for
+  them, so every backup carries one free ground-truth pair (`parse_curpos`
+  reads the six world floats today and drops the string — a two-line change).
+  And with the letters proven, the closed-form **OPW** solution
+  (Brandstötter/Angerer/Hofbaur, the one the vendor's own SDK dispatches to)
+  enumerates all 8 branches so the taught one can be *chosen* rather than
+  labelled. Measured against the shipped table: 121 of 228 chains reduce to
+  OPW as written — 167 are 6-joint, 152 of those have a spherical wrist (the
+  15 misses are exactly the CRX family, which the vendor also solves
+  separately), and 36 more fail only because a side-slung or undersling mount
+  rotates the base. So OPW would need a numerical fallback either way, which
+  is why the numerical solver goes in first.
 - 📋 **Rail + mount variants** — the pose validator exposed them: rail
   robots miss by exactly their carriage travel (pure translation, perfect
   orientation) and some mounts by a constant rotation. Both refuse to pose

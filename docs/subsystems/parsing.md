@@ -74,9 +74,9 @@ counted but never decoded — only text formats are parsed, by design.
 
 Per-file descriptions live in the [INVENTORY map](../INVENTORY.md); this is
 the structure the flat listing hides. The folder is *not* one subsystem — the
-inventory assigns its 31 files to four: **backup parsing** (20: the engine
-plus the robot-file leaves), **3D viewer** (4: `curpos`, `dcszones`,
-`kinematics`, `roboguidedef`), **cameras** (6: `cvx_image`, `cvx_inspect`,
+inventory assigns its 32 files to four: **backup parsing** (20: the engine
+plus the robot-file leaves), **3D viewer** (5: `curpos`, `dcszones`,
+`kinematics`, `program_path`, `roboguidedef`), **cameras** (6: `cvx_image`, `cvx_inspect`,
 `cvx_models`, `cvx_program`, `mtx_portal`, `mtx_saved_image`), **program
 editor** (1: `ls_edit`).
 `session.py` is backup parsing (also cameras). Use those assignments; don't

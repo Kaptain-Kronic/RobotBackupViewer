@@ -43,9 +43,10 @@ from . import search as search_mod
 from . import settings
 from .parsers import (alarms, callgraph, curpos, cvx_image, cvx_inspect,
                       cvx_models, cvx_program, dcs, dcszones, frames, gmwizlog, io_dg,
-                      kinematics, ls_edit, ls_program, macros, magnet,
-                      mastering, mhvalves, mtx_portal, mtx_saved_image,
-                      payloads, registers, styles, summary_dg, sysvars)
+                      kinematics, ls_edit, ls_motion, ls_program, macros,
+                      magnet, mastering, mhvalves, mtx_portal, mtx_saved_image,
+                      payloads, program_path, registers, styles, summary_dg,
+                      sysvars)
 from .parsers.common import is_binary, read_text
 from .session import BackupSession, looks_like_backup
 
@@ -1597,8 +1598,12 @@ class Api:
         CURPOS.DG pose snapshot, and the flange correction measured from
         this backup's own numbers (see kinematics.measure_flange). All
         fields degrade to None - the view falls back honestly."""
-        s = self._side_session(side, sid)
+        return self._robot_pose(self._side_session(side, sid))
 
+    def _robot_pose(self, s: BackupSession) -> dict:
+        """The pose ladder itself. Private so the program-path builder can
+        reuse the same matched chain, the same measured flange and the same
+        contradiction gate rather than growing a second copy of them."""
         robot_type = ""
         if s.find("DCSVRFY.DG"):
             rep = self._dcs_report(s, "DCSVRFY.DG")
@@ -1654,11 +1659,75 @@ class Api:
             "kin": entry["kin"] if entry else None,
             "counts": modeldb.counts(),
             "q": q, "q_source": "curpos" if q else None,
+            "world": world, "tool": tool,
             "pose_date": pose_date,
             "flange_dz": flange_dz,
             "calib": calib,
             "suggested_library": "" if entry else modeldb.default_library(),
         }
+
+    def _posable_chain(self, robot: dict):
+        """The chain only when it is honest to pose on it.
+
+        Mirrors view3d's robotFrames gate (never pose on contradiction): a
+        backup whose own position report contradicts the kinematics gets no
+        arm, and must get no FK-placed program points either.
+        """
+        if not robot.get("kin"):
+            return None, 0.0
+        calib = robot.get("calib")
+        if calib and not calib["ok"]:
+            return None, 0.0
+        return robot["kin"], robot.get("flange_dz") or 0.0
+
+    def _program_path(self, s: BackupSession, file_name: str) -> dict:
+        p = s.find(file_name)
+        if p is None or p not in s.program_files:
+            raise ApiError("NOT_FOUND", f"Program not found: {file_name}")
+        robot = self._robot_pose(s)
+        kin, flange_dz = self._posable_chain(robot)
+        # the chain identity rides the cache key: importing kinematics changes
+        # what modeldb.match answers while this session lives on, and a joint
+        # point placed by the OLD chain would be served forever otherwise
+        key = "progpath:%s:%s:%s" % (p.name.upper(),
+                                     robot["type_name"] if kin else "",
+                                     flange_dz)
+
+        def build():
+            text = read_text(p)
+            prog = ls_program.parse_ls_program(text)
+            motions = ls_motion.parse_motions(text)
+            try:
+                fm = self._build_frames(s)
+            except ApiError:
+                fm = None                      # no SYSFRAME.VA - said honestly per step
+            posreg_text = s.text("POSREG.VA")
+            posreg = registers.parse_posreg(posreg_text) if posreg_text else []
+            out = program_path.build_path(
+                prog, motions, fm, posreg,
+                pr_written=program_path.pr_writers(self._program_texts(s)),
+                group=1, kin=kin, flange_dz=flange_dz,
+                start_world=robot.get("world"))
+            out["file"] = p.name
+            out["name"] = prog["name"] or p.stem
+            out["comment"] = prog["attrs"].get("comment", "")
+            out["robot"] = {
+                "matched": bool(robot["kin"]), "posable": bool(kin),
+                "type_name": robot["type_name"], "flange_dz": flange_dz,
+                "calib_ok": None if not robot["calib"] else robot["calib"]["ok"],
+            }
+            return out
+
+        return s.cached(key, build)
+
+    @_endpoint
+    def get_program_path(self, file_name: str, sid: str | None = None,
+                         side: str = "a"):
+        """A program's taught points resolved to world millimetres - the path
+        the 3D view draws. Needs no kinematics: cartesian points compose
+        through their own user frame. Joint-recorded points do need the chain,
+        and say so when there isn't one."""
+        return self._program_path(self._side_session(side, sid), file_name)
 
     # -- system vars ----------------------------------------------------------
 
