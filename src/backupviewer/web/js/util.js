@@ -283,7 +283,7 @@ window.BV = {};
   }
 
   /* small anchored context menu (right-click-style popup). items is a list of
-     {label, onClick, danger?}. Returns {close}.
+     {label, onClick, danger?}, or {sep:true} for a divider. Returns {close}.
 
      Esc is captured on WINDOW (see wireDismiss): a menu opened from inside a
      dialog — the ⚙ effect picker — used to lose the key to the dialog's own
@@ -296,6 +296,10 @@ window.BV = {};
     var handle = null;
     var menu = BV.el("div", { class: "ctx-menu" });
     items.forEach(function (it) {
+      /* {sep:true}: a hairline, for a menu that carries two kinds of action —
+         a backup tab offers the ROBOT's actions and the tab's own, and the
+         rule keeps "close" from reading as one more thing to do to the robot */
+      if (it.sep) { menu.appendChild(BV.el("div", { class: "ctx-sep" })); return; }
       /* it.action = {label,title,onClick}: a small trailing pill on the row with
          its own click (e.g. the date-picker's "vs" -> compare with that date) */
       var b = BV.el("button", { class: "ctx-item" + (it.danger ? " danger" : "") +

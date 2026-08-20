@@ -1,6 +1,32 @@
 # Changelog
 
 ## unreleased — the camera gets its 3d view, and the files tab extracts
+- **Every robot's actions ride its backup tab.** Right-clicking an open
+  backup's tab offered exactly two things — pop out and close — so acting on
+  the robot you were already looking at meant going back to the library first:
+  the listing is off the screen while a backup is open, and with it went every
+  way to edit that robot, note it, open its folder, or send its programs to the
+  editor. A tab's right-click now carries the robot's own menu above a divider,
+  with pop out and close still beneath it. It is not a copy of the library
+  row's menu, it IS that menu — one builder serves the row, the row's ⋯ and the
+  tab, so an action added to one appears on all three (the probe asserts the
+  two match rather than a frozen list, which is the part that keeps it true).
+  A backup with no library entry behind it still gets the plain two-item menu
+  rather than actions that would do nothing. Adding a note from a tab uses the
+  row's own inline editor when the listing is on screen — scrolled to first, so
+  the cursor never lands somewhere you can't see — and the edit window's notes
+  box when it isn't.
+- **"Add all programs to edit workspace" takes the whole selection.** Ticking
+  four robots and clicking it on one of them added one robot's programs and
+  quietly ignored the other three ticks. It now acts on every selected robot,
+  and the label says which — "add all programs from 4 selected robots to edit
+  workspace" — so the menu can never act on rows you had forgotten were lit;
+  right-clicking a row that is NOT ticked still means that row alone, and a
+  tab's menu, which has no selection behind it, always means its one robot.
+  One robot that can't be read no longer sinks the batch: everything readable
+  is added and the rest are named in the toast, the way the other batch flows
+  report. A backup that simply holds no TP programs now says so, instead of
+  claiming they were "already in the workspace".
 - **The files tab extracts to USB.** Every row grew a checkbox — tick one,
   shift-click a range, or take the header box, which selects exactly what the
   filter shows (the `tp` chip plus one click is every TP file in the backup).
