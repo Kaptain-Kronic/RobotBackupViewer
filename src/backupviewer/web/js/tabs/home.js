@@ -2387,7 +2387,8 @@
   }
 
   /* poll one scan job every 500ms; onTick each poll, onDone at a terminal state.
-     returns a stop() that halts polling (the modal calls it + cancel_scan on close) */
+     returns a stop() that halts WATCHING only - the sweep itself keeps running
+     under the job strip when the dialog closes */
   function pollScan(jobId, onTick, onDone) {
     var iv = setInterval(function () {
       BV.api.call("scan_progress", jobId).then(function (p) {
@@ -2405,6 +2406,30 @@
   }
 
   /* ---- discover robots on the network ---- */
+
+  /* the sweep the OPEN dialog is watching (null when closed / idle) - the
+     detached-finish toast below stays quiet while the dialog itself is
+     painting that same job's finish */
+  var _discAttached = null;
+
+  /* a sweep that finishes DETACHED announces itself; its results stay on the
+     job server-side, so reopening discover re-attaches and lists them */
+  BV.state.on("scan-jobs", function (ev) {
+    (ev.newlyDone || []).forEach(function (id) {
+      var p = (ev.jobs || {})[id];
+      if (!p || p.kind !== "network" || id === _discAttached) return;
+      if (p.status === "done") {
+        BV.toast("network sweep finished · " + (p.found || 0) +
+          " found — reopen discover to add", 5000);
+      } else if (p.status === "cancelled") {
+        BV.toast("network sweep cancelled");
+      } else if (p.status === "error") {
+        BV.toast("network sweep failed: " + (p.error || "?"));
+      }
+    });
+  });
+
+  BV.discover = discoverFlow;   /* the job strip's "open" re-enters here */
 
   function discoverFlow() {
     var body = BV.el("div", { class: "lib-form disc-body" });
@@ -2488,12 +2513,18 @@
     var picks = BV.checklist({ onChange: updateAddBtn });  /* keyed by host IP */
     var m;
     var modalOpts = {
-      /* selected scan results are work too — don't lose them to a stray click;
-         closing (second press) still cancels a running scan via onClose */
+      /* selected scan results are work too — don't lose them to a stray click */
       beforeClose: BV.dirtyGuard(function () {
         return found.some(function (h) { return picks.has(h.host); });
       }, "discovery picks"),
-      onClose: function () { if (stop) stop(); if (jobId) BV.api.call("cancel_scan", jobId).catch(function () {}); },
+      /* closing DETACHES a running sweep — it keeps going under the job strip
+         (its ✕ there cancels, its "open" comes back here). A stray backdrop
+         click used to kill the whole sweep. */
+      onClose: function () {
+        if (stop) stop();
+        _discAttached = null;
+        if (scanning) BV.toast("sweep continues in the background — the strip has it");
+      },
     };
     /* the scan modal can be re-shown after "back" from the add step: BV.modal
        only detaches `body`, so the results list and its listeners survive */
@@ -2582,6 +2613,25 @@
       return visible().map(function (h) { return h.host; });
     });
 
+    /* watch one sweep into this dialog — a fresh start and a re-attach are
+       the same thing from here on */
+    function watch(id) {
+      jobId = id;
+      _discAttached = id;
+      scanning = true; scanBtn.textContent = "stop";
+      stop = pollScan(id, function (p) {
+        renderScanBar(bar, p);
+        if ((p.results || []).length !== found.length) { found = p.results || []; renderList(); }
+      }, function (p) {
+        renderScanBar(bar, p);
+        found = p.results || []; renderList();
+        scanning = false; scanBtn.textContent = "scan";
+        jobId = null;
+        _discAttached = null;
+        if (p.status === "done" && !found.length) BV.toast("no robots or cameras found");
+      });
+    }
+
     scanBtn.addEventListener("click", function () {
       if (scanning) { if (jobId) BV.api.call("cancel_scan", jobId).catch(function () {}); return; }
       var cidr = advOpen ? fSubnet.value.trim() : (chosenCidr || fSubnet.value.trim());
@@ -2589,18 +2639,23 @@
       found = []; picks.clear(); renderList();
       scanning = true; scanBtn.textContent = "stop"; addBtn.disabled = true;
       BV.api.call("net_scan_start", { cidr: cidr, port: port }).then(function (res) {
-        jobId = res.job_id;
-        stop = pollScan(jobId, function (p) {
-          renderScanBar(bar, p);
-          if ((p.results || []).length !== found.length) { found = p.results || []; renderList(); }
-        }, function (p) {
-          renderScanBar(bar, p);
-          found = p.results || []; renderList();
-          scanning = false; scanBtn.textContent = "scan";
-          if (p.status === "done" && !found.length) BV.toast("no robots or cameras found");
-        });
+        BV.jobs.trackScan(res.job_id, "network");   /* the strip watches from tick one */
+        watch(res.job_id);
       }).catch(function (e) { BV.toast(e.message); scanning = false; scanBtn.textContent = "scan"; });
     });
+
+    /* re-attach: a sweep already in flight (or the newest finished one — its
+       results are still on the job) paints straight into the reopened dialog */
+    var att = BV.jobs.activeScan("network") || BV.jobs.newestScan("network");
+    if (att) {
+      BV.api.call("scan_progress", att.id).then(function (p) {
+        if (!document.body.contains(bar)) return;    /* closed while fetching */
+        found = p.results || [];
+        renderList();
+        renderScanBar(bar, p);
+        if (!BV.jobs.isTerminal(p)) watch(att.id);
+      }).catch(function () {});
+    }
 
     /* step 2: NOW ask where they go — the plant/line question sits right next
        to its confirm button instead of above a 38vh results list */

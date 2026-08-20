@@ -514,6 +514,13 @@ def test_job_cancel(tmp_path):
     job.cancel()
     job.run()
     assert job.snapshot()["status"] == "cancelled"
+    assert job.snapshot()["finished"]              # terminal transitions stamp
+
+
+def test_job_label_for_the_strip(tmp_path):
+    r1 = _entry(tmp_path, "RB101R01B01")
+    job = HealthScanJob([r1], ["adv_dcs"], session_factory=lambda p: FakeSession({}))
+    assert job.snapshot()["label"] == "fleet scan"
 
 
 def test_job_no_clones_when_counts_differ(tmp_path):

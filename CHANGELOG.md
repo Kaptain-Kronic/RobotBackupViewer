@@ -1,6 +1,20 @@
 # Changelog
 
-## unreleased — the camera gets its 3d view, the files tab extracts, and the scan window tightens up
+## unreleased — the camera gets its 3d view, the files tab extracts, the scan window tightens up, and long scans go background
+- **Scans become background jobs — closing a window no longer cancels minutes
+  of work.** The fleet health scan and the network discover used to live and
+  die with their dialog: an Esc mid-scan (or, for discover, one stray click
+  outside the window) silently killed the job and every minute it had already
+  run. Now closing only *detaches*: the scan keeps running, and the same
+  global progress strip the backups use grows one compact row per live scan —
+  its label and live n/total, an **open** that re-attaches the window right
+  where it was, and a ✕ that is now the only close-shaped gesture that
+  cancels anything. A fleet scan that finishes while detached still saves its
+  report (reopening the scan window goes straight to it), a finished network
+  sweep re-lists its results when discover reopens, and the whole app stays
+  usable — backups included — while scans grind. Closing the app itself now
+  asks about a running scan the same way it always asked about running
+  backups.
 - **Cleanup: the library learns to let go — without learning to delete.** The
   manage-backups modal (was "last backup") splits into two tabs. **report** is
   the taking side: the last run with retry-failed, the stale list, and the

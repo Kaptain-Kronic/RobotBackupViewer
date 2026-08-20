@@ -45,6 +45,15 @@ Each of these is deliberately scoped to land on its own. Good places to start.
 - ~~📋 **Workspace splash screen**~~ — superseded by the library overhaul:
   boot now serves the last-known library instantly and verifies behind it,
   so there is no library wait left for a splash to hide.
+- ✅ **Scans as background jobs** — shipped 2026-08-20: the fleet health scan
+  and network discover detach on window close instead of cancelling; the
+  backup progress strip carries one row per live scan (open re-attaches, ✕
+  cancels), detached finishes still save their report, and app close asks
+  about running scans. The strip's bulk poll is a light snapshot
+  (`list_scan_jobs`, results stripped). `ws_find_programs` (the workspace's
+  cross-library program finder) is still a synchronous call — promoting it to
+  the same job shape is the natural next slice if plant-scale searches start
+  to hurt.
 - 📋 **More scan checks** — simulated-IO-left-on, general override < 100%,
   alarm-frequency summary, controller clock drift, uninitialized PRs
   referenced by programs.

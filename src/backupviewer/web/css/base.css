@@ -377,6 +377,7 @@ body.chrome-fused #chrome-top::after { opacity: 0; }
 #jobstrip {
   position: relative;   /* the details panel anchors to the strip, no coordinate math */
   display: flex; align-items: center; gap: 0.9em;
+  flex-wrap: wrap;      /* a backup run + scans share the row, wrapping when tight */
   flex: none; padding: 0.5em 1.6em;
   /* background + frost come from the #chrome-bottom slab it lives in */
   font-size: calc(var(--chrome-fs, 15px) * 0.78);
@@ -385,6 +386,16 @@ body.chrome-fused #chrome-top::after { opacity: 0; }
 #jobstrip .jobstrip-run {
   display: flex; align-items: center; gap: 0.9em;
   flex: 1 1 auto; min-width: 0;
+}
+/* detached scans: one compact row each (mini membar + open + ✕) beside or
+   after the backup run bar */
+#jobstrip .jobstrip-scans {
+  display: flex; align-items: center; gap: 0.9em; flex-wrap: wrap;
+  flex: 1 1 auto; min-width: 0;
+}
+#jobstrip .jobstrip-scan {
+  display: flex; align-items: center; gap: 0.6em;
+  flex: 1 1 20em; min-width: 0;
 }
 #jobstrip .membar { flex: 1 1 auto; min-width: 0; }
 #jobstrip .mb-label { font-size: 1em; }

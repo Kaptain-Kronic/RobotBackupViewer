@@ -1,13 +1,18 @@
-/* jobs.js - route-independent backup-job watching + the global progress strip.
+/* jobs.js - route-independent job watching + the global progress strip.
 
    Jobs run server-side on daemon threads; this module only WATCHES: one shared
-   500ms poller (one list_backup_jobs bridge call per tick, however many jobs),
-   a "jobs" event other screens subscribe to for their own painting (#home's
-   per-row bars), and the #jobstrip footer strip that stays visible on EVERY
-   screen — leaving the library no longer hides a running backup. Also hosts
-   BV.jobs.busy()/done(), the indeterminate "working…" indicator api.js raises
-   around slow synchronous calls. Seeds itself from the backend at boot, so a
-   reloaded page re-discovers jobs it never started.
+   500ms poller (one list_backup_jobs bridge call per tick, plus one
+   list_scan_jobs while a scan is live), a "jobs" event other screens subscribe
+   to for their own painting (#home's per-row bars), a "scan-jobs" event the
+   scan windows' detached-finish watchers listen on, and the #jobstrip footer
+   strip that stays visible on EVERY screen — leaving the library no longer
+   hides a running backup, and closing the scan window no longer cancels the
+   scan: the strip carries it, its ✕ is the only cancel left, and its "open"
+   re-attaches the window (scans used to die with their modal — minutes of
+   fleet scan lost to a stray Esc). Also hosts BV.jobs.busy()/done(), the
+   indeterminate "working…" indicator api.js raises around slow synchronous
+   calls. Seeds itself from the backend at boot, so a reloaded page
+   re-discovers jobs it never started.
 
    The strip measures the whole RUN: every job sharing a run_id with one still
    going — the same grouping the durable backup log keeps server-side, retries
@@ -24,6 +29,8 @@
   var tracked = {};       /* jobId -> {robotId} local metadata (which library row) */
   var last = {};          /* jobId -> latest snapshot */
   var seenTerminal = {};  /* jobId -> true once its terminal state was announced */
+  var scans = {};         /* scan jobId -> latest LIGHT snapshot (no results) */
+  var scanSeen = {};      /* scan jobId -> true once its terminal state was announced */
   var timer = null;
   var busyCount = 0;
   var busyLabel = "";
@@ -35,6 +42,15 @@
   }
   function activeIds() {
     return Object.keys(last).filter(function (id) { return !isTerminal(last[id]); });
+  }
+  function activeScanIds() {
+    return Object.keys(scans).filter(function (id) { return !isTerminal(scans[id]); });
+  }
+  /* fallback row copy for the tick between trackScan() and the first poll —
+     the server's own `label` (which carries the cidr) wins once it arrives */
+  var KIND_LABEL = { health: "fleet scan", network: "network sweep" };
+  function scanLabel(p) {
+    return p.label || KIND_LABEL[p.kind] || "scan";
   }
 
   /* the current RUN: active jobs plus the settled jobs of the same run_id(s).
@@ -60,6 +76,7 @@
     statusText: function (p) {
       return {
         connecting: "connecting…", listing: "listing files…", downloading: "downloading…",
+        scanning: "scanning…",
         done: "done", error: "failed", cancelled: "cancelled", pending: "starting…",
       }[p.status] || p.status || "";
     },
@@ -69,6 +86,37 @@
       if (!last[jobId]) last[jobId] = { id: jobId, status: "pending", total: 0, done: 0 };
       ensureTimer();
       render();
+    },
+    /* watch a just-started scan job (health scan / network sweep). kind fills
+       the row label until the first poll returns the server's own. */
+    trackScan: function (jobId, kind) {
+      if (!scans[jobId]) {
+        scans[jobId] = { id: jobId, kind: kind || "", status: "pending",
+                         total: 0, scanned: 0, found: 0 };
+      }
+      ensureTimer();
+      render();
+    },
+    /* the scan windows' attach path: the live job of my kind, else the newest
+       one either way (a finished sweep still holds its results server-side) */
+    scanLatest: function () { return scans; },
+    activeScan: function (kind) {
+      var best = null;
+      activeScanIds().forEach(function (id) {
+        var p = scans[id];
+        if (p.kind !== kind) return;
+        if (!best || (p.started || "") > (best.started || "")) best = p;
+      });
+      return best;
+    },
+    newestScan: function (kind) {
+      var best = null;
+      Object.keys(scans).forEach(function (id) {
+        var p = scans[id];
+        if (p.kind !== kind) return;
+        if (!best || (p.started || "") > (best.started || "")) best = p;
+      });
+      return best;
     },
     meta: function (jobId) { return tracked[jobId] || {}; },
     latest: function () { return last; },
@@ -95,6 +143,9 @@
       if (r.id && t.ids[r.id]) return true;
       return (r.ips || []).some(function (ip) { return !!t.hosts[ip]; });
     },
+    /* deliberately BACKUPS-only: a bulk cancel exists because a backup run is
+       one thing (many robots, one intent). Scans are killed one at a time via
+       their own ✕ — an accidental "cancel all" must never eat a fleet scan. */
     cancelAll: function () {
       activeIds().forEach(function (id) {
         BV.api.call("cancel_backup", id).catch(function () {});
@@ -123,20 +174,40 @@
       if (activeIds().length) ensureTimer();
       render();
     }).catch(function () {});
+    BV.api.call("list_scan_jobs").then(function (res) {
+      (res.jobs || []).forEach(function (p) {
+        scans[p.id] = p;
+        if (isTerminal(p)) scanSeen[p.id] = true;
+      });
+      if (activeScanIds().length) ensureTimer();
+      render();
+    }).catch(function () {});
   });
 
   function ensureTimer() {
     if (!timer) timer = setInterval(tick, 500);
   }
 
+  /* one tick = one poll per family that still has live jobs, then ONE paint.
+     The "jobs" event keeps firing every tick (home's per-row bars repaint from
+     it); "scan-jobs" fires only on terminal transitions — nothing paints live
+     scan bars from the event (the strip renders directly, an attached window
+     polls scan_progress itself), the listeners only care that a scan ENDED. */
   function tick() {
-    if (!activeIds().length) {
+    if (!activeIds().length && !activeScanIds().length) {
       clearInterval(timer);
       timer = null;
       render();
       return;
     }
-    BV.api.call("list_backup_jobs").then(function (res) {
+    var polls = [];
+    if (activeIds().length) polls.push(pollBackups());
+    if (activeScanIds().length) polls.push(pollScans());
+    Promise.all(polls).then(render);
+  }
+
+  function pollBackups() {
+    return BV.api.call("list_backup_jobs").then(function (res) {
       var wasActive = activeIds().length > 0;
       (res.jobs || []).forEach(function (p) { last[p.id] = p; });
       var newlyDone = [];
@@ -148,7 +219,31 @@
       });
       BV.state.emit("jobs", { jobs: last, newlyDone: newlyDone });
       if (wasActive && !activeIds().length) BV.toast("backups finished");
-      render();
+    }).catch(function () {});
+  }
+
+  function pollScans() {
+    return BV.api.call("list_scan_jobs").then(function (res) {
+      var seen = {};
+      (res.jobs || []).forEach(function (p) { scans[p.id] = p; seen[p.id] = true; });
+      /* reconcile: a tracked id the server does not list is a stub that never
+         became a real job (a failed start, a probe's faked start, a pre-reload
+         relic). A few polls' grace - a brand-new track can race one in-flight
+         response - then it drops, or it pins the timer and poisons
+         activeScan() forever. */
+      Object.keys(scans).forEach(function (id) {
+        if (seen[id]) return;
+        scans[id]._misses = (scans[id]._misses || 0) + 1;
+        if (scans[id]._misses >= 3) { delete scans[id]; delete scanSeen[id]; }
+      });
+      var newlyDone = [];
+      Object.keys(scans).forEach(function (id) {
+        if (isTerminal(scans[id]) && !scanSeen[id]) {
+          scanSeen[id] = true;
+          newlyDone.push(id);
+        }
+      });
+      if (newlyDone.length) BV.state.emit("scan-jobs", { jobs: scans, newlyDone: newlyDone });
     }).catch(function () {});
   }
 
@@ -172,6 +267,23 @@
     run.appendChild(bar);
     run.appendChild(details);
     run.appendChild(cancel);
+    /* the scan rows' box: clicks are DELEGATED to the stable parent (a row
+       whose button is rebuilt mid-click misfires - the details-button lesson) */
+    var scanBox = BV.el("div", { class: "jobstrip-scans hidden" });
+    scanBox.addEventListener("click", function (e) {
+      var t = e.target && e.target.closest
+        ? e.target.closest("[data-cancel-scan],[data-open-scan]") : null;
+      if (!t || !scanBox.contains(t)) return;
+      var cid = t.getAttribute("data-cancel-scan");
+      if (cid) {
+        BV.api.call("cancel_scan", cid).catch(function () {});
+        return;
+      }
+      var p = scans[t.getAttribute("data-open-scan")];
+      if (!p) return;
+      if (p.kind === "network" && BV.discover) BV.discover();
+      else if (BV.scanUI) BV.scanUI.open([]);   /* attaches to the live scan */
+    });
     var busy = BV.el("div", { class: "jobstrip-busy hidden" },
       '<span class="busy-pulse"></span><span class="jobstrip-busy-label"></span>');
     var panel = BV.el("div", { class: "jobstrip-panel hidden" });
@@ -181,10 +293,12 @@
       BV.api.call("cancel_backup", b.getAttribute("data-cancel")).catch(function () {});
     });
     el.appendChild(run);
+    el.appendChild(scanBox);
     el.appendChild(busy);
     el.appendChild(panel);
     dom = {
       root: el, run: run, panel: panel, details: details, busy: busy,
+      scanBox: scanBox, scanRows: {},
       labL: bar.querySelector(".js-lab-l"),
       labR: bar.querySelector(".js-lab-r"),
       fill: bar.querySelector(".mb-fill"),
@@ -193,11 +307,56 @@
     return dom;
   }
 
+  /* one scan row = its own mini membar + open + ✕, updated in place like the
+     run bar (rebuilding every tick would snap the fill animation too) */
+  function scanRow(id) {
+    var row = BV.el("div", { class: "jobstrip-scan" });
+    var bar = BV.el("div", { class: "membar" },
+      '<div class="mb-label"><span class="js-slab-l"></span><span class="js-slab-r"></span></div>' +
+      '<div class="mb-track"><div class="mb-fill"></div></div>');
+    row.appendChild(bar);
+    row.appendChild(BV.el("button", { class: "btn", "data-open-scan": id,
+      title: "reopen this scan's window - the scan keeps running either way" }, "open"));
+    row.appendChild(BV.el("button", { class: "btn jobstrip-cancel", "data-cancel-scan": id,
+      title: "stop this scan" }, "✕"));
+    return { el: row,
+             labL: bar.querySelector(".js-slab-l"),
+             labR: bar.querySelector(".js-slab-r"),
+             fill: bar.querySelector(".mb-fill") };
+  }
+
+  function renderScans(d) {
+    var act = activeScanIds();
+    Object.keys(d.scanRows).forEach(function (id) {
+      if (act.indexOf(id) === -1) {
+        d.scanBox.removeChild(d.scanRows[id].el);
+        delete d.scanRows[id];
+      }
+    });
+    act.forEach(function (id) {
+      var r = d.scanRows[id];
+      if (!r) {
+        r = d.scanRows[id] = scanRow(id);
+        d.scanBox.appendChild(r.el);
+      }
+      var p = scans[id];
+      r.labL.textContent = scanLabel(p);
+      r.labR.textContent = p.total
+        ? (p.scanned || 0) + " / " + p.total +
+          (p.kind === "network" && p.found ? " · " + p.found + " found" : "")
+        : BV.jobs.statusText(p);
+      var pct = p.total ? Math.round(100 * (p.scanned || 0) / p.total) : 0;
+      if (pct < 2) pct = 2;   /* the same sliver of life the run bar keeps */
+      r.fill.style.width = pct + "%";
+    });
+    d.scanBox.classList.toggle("hidden", !act.length);
+  }
+
   function render() {
     var el = document.getElementById("jobstrip");
     if (!el) return;
     var act = activeIds();
-    if (!act.length && !busyCount) {
+    if (!act.length && !activeScanIds().length && !busyCount) {
       dom = null;
       detailsOpen = false;
       el.classList.add("hidden");
@@ -208,6 +367,7 @@
     el.classList.remove("hidden");
     d.run.classList.toggle("hidden", !act.length);
     d.panel.classList.toggle("hidden", !act.length || !detailsOpen);
+    renderScans(d);
 
     if (act.length) {
       var run = runIds();

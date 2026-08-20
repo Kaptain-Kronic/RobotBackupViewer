@@ -1089,7 +1089,7 @@ class HealthScanJob(_ScanJob):
 
     def __init__(self, robots: list[dict], check_ids: list[str], queries=None,
                  params=None, *, session_factory=BackupSession, search_fn=None):
-        super().__init__()
+        super().__init__(label="fleet scan")
         self.robots = robots
         self.check_ids = valid_ids(check_ids)
         self.queries = norm_queries(queries)
