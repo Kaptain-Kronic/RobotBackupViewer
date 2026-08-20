@@ -586,17 +586,21 @@ zone payload census (32 CPC slots / 2 enabled / 16 models / TCP present on
 the rich pin; zero drawable zones honestly reported on the DG-only pins).
 
 **The viewport is under test now — 2026-08-20.** `tests/ui_view3d_probe.py`
-(registered in `test_probes.py`) boots the tab in a hidden WebView2 on two
-fabricated backups and asserts on real DOM: **49 checks**. The baseline this
+(registered in `test_probes.py`) boots the tab in a hidden WebView2 on three
+fabricated backups and asserts on real DOM: **57 checks**. The baseline this
 doc used to call untested — zones drawn, arm posed with real geometry, the
 five-group layer order, the cube snapping *and* refitting, elevation
 clamping to exactly 90 however it got out of range, and per-tab state
 surviving a round trip — plus the program path (steps listed, path drawn,
 markers matching the placed count as an *invariant* rather than a literal,
 the refused move listed with its note, the viewport note, step selection in
-list and viewport, the picker filtering, the toggles) and the contradiction
-gate end to end (no arm, no FK-placed point, cartesian path still drawn,
-the residual note printed). No private tree: fabricated `DCSPOS.VA`,
+list and viewport, the picker filtering, the toggles) and both honest-refusal cases end
+to end: the contradiction gate (no arm, no FK-placed point, cartesian path
+still drawn, the residual note printed) and the **untyped backup** - no
+robot-setup line, so no type and no chain, which is what two of the four
+pinned sample backups actually are. There the zones and the cartesian path
+still draw, the joint-recorded point says it needs kinematics, there is no
+player, and nothing claims a posture it did not solve. No private tree: fabricated `DCSPOS.VA`,
 `DCSVRFY.DG` naming a shipped builtin type, `CURPOS.DG`, a `.LS` with both
 point representations, `RB…` names under `FakePlant`.
 

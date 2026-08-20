@@ -23,7 +23,7 @@ batch lands, or with `--check` to hear about drift).
 > When per-subsystem docs land, they supersede this file for their own area. This
 > map's remaining job is breadth: what exists, and where.
 
-**Scope.** 275 files / ~81,886 lines. Covers everything in the working tree except: the
+**Scope.** 275 files / ~81,931 lines. Covers everything in the working tree except: the
 `.git` internals, build outputs (`dist/`, `build/`, `__pycache__/`), the private
 `SampleBackup/` fixture tree, the `.rmd` model corpus (61 binary robot-model blobs
 that are input data, not source), and the two local-only real-plant reference files
@@ -54,7 +54,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `run_libraryimporter.py` | 10 | dev launcher and pyinstaller entry script for the companion libraryimporter app | LibraryImporter | active |
 | `docs/INVENTORY.md` | 643 | this file: dated file-level map of the repo plus the findings from the phase-1 documentation pass, with resolved items marked inline | docs | active |
 | `docs/proposals/home-split.md` | 284 | investigation of tabs/home.js (2,277 lines) by responsibility, where the real seams are, what must become shared components first, and a phased sequence — no code changed | docs | active |
-| `docs/subsystems/3d-viewer.md` | 717 | subsystem doc #3 (the 3D viewer): the pendant-proven FK solve and its JS twin, the 228-type table's validated-vs-not honesty, flange residuals re-measured on the pins, the zone degradation ladder, and the unprobed-viewport gap said plainly | docs | active |
+| `docs/subsystems/3d-viewer.md` | 721 | subsystem doc #3 (the 3D viewer): the pendant-proven FK solve and its JS twin, the 228-type table's validated-vs-not honesty, flange residuals re-measured on the pins, the zone degradation ladder, and the unprobed-viewport gap said plainly | docs | active |
 | `docs/subsystems/backup-capture.md` | 656 | subsystem doc #2 (the backup/discovery jobs + shared plumbing): transport ground truth tagged live-run-vs-assumed, the gentle-with-equipment invariants, a dedicated failure-modes section, and the batch-flow coverage gap said plainly | docs | active |
 | `docs/subsystems/parsing.md` | 638 | subsystem doc #1 (parsers/ + session.py): ground truth marked verified-vs-assumed per fact, cross-file invariants, paid-for traps, honest coverage gaps — and the template later subsystem docs follow | docs | active |
 | `docs/subsystems/remote-mobile.md` | 761 | subsystem doc #4 (CV-X/Matrox remotes + phone view): the reverse-engineered CV-X wire protocol whose reference client is gone, the vendor-reflected mouse enum, the only listening socket's trust posture, and the app's one UAC elevation | docs | active |
@@ -271,7 +271,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/ui_cvxremote_probe.py` | 205 | hidden-window probe of the cv-x remote bar, top-bar phone button and pop-out session adoption | tests | active |
 | `tests/ui_edit_probe.py` | 1753 | hidden-window probe of the #edit workspace: panes, tab strips, find/replace, pane diff, per-robot export | tests | active |
 | `tests/ui_files_extract_probe.py` | 234 | hidden-window probe of the files-tab extract flow: tick/range/header selection against the filter, the extract modal, and the landed tree's shape | tests | active |
-| `tests/ui_view3d_probe.py` | 468 | hidden-window probe for the 3d view: zones drawn, arm posed, layer order, cube snap, el clamp, state restore, a program's path and refusals, and the contradiction gate | tests | active |
+| `tests/ui_view3d_probe.py` | 509 | hidden-window probe for the 3d view: zones drawn, arm posed, layer order, cube snap, el clamp, state restore, a program's path and refusals, and the contradiction gate | tests | active |
 | `tests/ui_fk_probe.py` | 135 | hidden-window probe holding BV.fk.chain equal to kinematics.chain_frames within 1e-6 across builtin chains plus the synthetic parallel-link arm | tests | active |
 | `tests/ui_logic_probe.py` | 227 | hidden-window probe of the camera logic tab: tab lights only on a script-bearing backup, calculation units lead the rail, the show-other toggle, script text renders whole | tests | active |
 | `tests/ui_probe.py` | 2108 | the original full-app probe: boots a real local backup and walks every tab, primitive and compare view *(untracked, local-only)* | tests | active |
@@ -296,9 +296,9 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 
 | subsystem | files | ~lines |
 |---|---:|---:|
-| tests | 85 | 24,342 |
+| tests | 85 | 24,383 |
 | shared/infra | 27 | 8,717 |
-| docs | 12 | 6,741 |
+| docs | 12 | 6,745 |
 | backup parsing | 32 | 6,352 |
 | theming | 34 | 6,011 |
 | 3D viewer | 17 | 5,294 |
@@ -312,7 +312,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | compare engine | 5 | 1,355 |
 | tools/scripts | 5 | 1,087 |
 | build/config | 7 | 267 |
-| **total** | **275** | **81,886** |
+| **total** | **275** | **81,931** |
 
 > Counts are by *primary* subsystem only — a file appears once, so these add up to the
 > whole repo. The `tests` row is the largest because every probe and unit suite counts as

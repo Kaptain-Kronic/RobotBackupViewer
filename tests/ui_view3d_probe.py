@@ -8,13 +8,17 @@ existing baseline (zones drawn, arm posed, cube snap, elevation clamp, state
 restore) as well as the new program path, because the slices that follow build
 on that baseline and it should not be the first thing to break.
 
-Two backups, both fabricated:
+Three backups, all fabricated:
   RB010R01B01  matched type + CURPOS, no FRAME.DG -> the arm poses (unverified)
                and follows the program: joint-recorded points exactly, cartesian
                ones through the inverse solve
   RB020R01B01  matched type + CURPOS + FRAME.DG whose world TCP CONTRADICTS the
                kinematics -> the arm must NOT be drawn, and the joint-recorded
                point must not be placed either, while cartesian points still are
+  RC010R01B01  zones but no robot-setup line at all, so no type and no chain -
+               the commonest real case (two of the four pinned sample backups
+               are exactly this). Cartesian points and the path still draw,
+               because that composition never needed the kinematics
 
 Fully synthetic and identifier-clean: RB fakes under FakePlant in a temp
 library, APPDATA redirected before any backupviewer import.
@@ -37,6 +41,7 @@ from backupviewer.app import resource_path  # noqa: E402
 
 GOOD = "RB010R01B01"          # poses honestly
 BENT = "RB020R01B01"          # kinematics contradict the backup's own report
+BARE = "RC010R01B01"          # no robot type in the report -> no chain at all
 ROBOT_TYPE = "ARC Mate 120iD"  # a shipped builtin chain
 PROG = "MOVER.LS"
 
@@ -121,14 +126,22 @@ P[3]{{
 """
 
 
+# the same report with no robot-setup section: nothing names a type, so
+# modeldb has nothing to match and the arm stays honestly absent
+DCSVRFY_UNTYPED = """DATE: 01-JAN-26 12:00
+DCS Version: V9.30
+"""
+
+
 def build_tree(lib: Path) -> None:
     line = lib / "FakePlant" / "LINE01"
-    for rb, bent in ((GOOD, False), (BENT, True)):
+    for rb, bent in ((GOOD, False), (BENT, True), (BARE, False)):
         snap = line / rb / "2026_01_01" / "12_00_00"
         snap.mkdir(parents=True)
         (snap / "SUMMARY.DG").write_text(f"Robot: {rb}\n", encoding="utf-8")
         (snap / "DCSPOS.VA").write_text(dcspos(), encoding="utf-8")
-        (snap / "DCSVRFY.DG").write_text(DCSVRFY, encoding="utf-8")
+        (snap / "DCSVRFY.DG").write_text(
+            DCSVRFY_UNTYPED if rb == BARE else DCSVRFY, encoding="utf-8")
         (snap / "CURPOS.DG").write_text(curpos(), encoding="utf-8")
         (snap / PROG).write_text(PROGRAM, encoding="utf-8")
         if bent:
@@ -431,6 +444,34 @@ def probe(window):
                                ".map(function(t){return t.textContent;}).join('|')")
         check("gate.mismatch_note", "mismatch" in str(bentnotes),
               f"({str(bentnotes)[:120]!r})")
+
+        # ---------- no kinematics at all: the commonest real case ----------
+        js(window, "BV.goHome()")
+        time.sleep(0.8)
+        sid3 = open_robot(window, BARE, prev_sid=sid2)
+        check("open.untyped_backup", bool(sid3) and sid3 != sid2)
+        goto(window, "#view3d/" + PROG)
+        poll(window, "document.querySelectorAll('.v3-step').length")
+
+        check("bare.zones_still_drawn",
+              js(window, "document.querySelectorAll('.v3-face').length") > 0)
+        check("bare.no_arm",
+              js(window, "document.querySelectorAll('.v3-skel').length") == 0)
+        check("bare.cartesian_path_drawn",
+              js(window, "document.querySelectorAll('.v3-path').length") == 1)
+        # the two cartesian points place; the joint-recorded one cannot
+        check("bare.two_points_placed",
+              js(window, "document.querySelectorAll('.v3-pt').length") == 2)
+        bare_notes = js(window, "[...document.querySelectorAll('.v3-step')]"
+                                ".map(function(r){return r.title;}).join('|')")
+        check("bare.joint_point_says_why", "kinematics" in str(bare_notes),
+              f"({str(bare_notes)[:110]!r})")
+        check("bare.no_player",
+              js(window, "document.querySelector('.v3-player').hidden"))
+        # and nothing claims a posture it did not solve
+        vp_notes = js(window, "[...document.querySelectorAll('.v3-note')]"
+                              ".map(function(t){return t.textContent;}).join('|')")
+        check("bare.no_branch_claim", "CONFIG" not in str(vp_notes), f"({vp_notes})")
 
         report()
     except Exception as e:  # noqa: BLE001
