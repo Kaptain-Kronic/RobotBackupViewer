@@ -1223,9 +1223,26 @@
     sb.focus();
   }
 
-  /* one menu for the ⋯ button AND right-click on the row. No delete here:
-     files are law — hide covers the everyday case, and a true delete is done
-     in Explorer ("open folder"); the library follows. */
+  function robotById(id) {
+    return _robots.find(function (x) { return x.id === id; }) || null;
+  }
+
+  /* this robot's row in the mounted listing, or null — the listing is gone
+     from the DOM whenever a backup is on screen. Used by the actions that
+     want to act ON the row (the inline note editor) rather than on the
+     record, so they can tell "no row here" from "row somewhere else". */
+  function libRowFor(r) {
+    if (!_libWrap || !document.body.contains(_libWrap)) return null;
+    return _libWrap.querySelector('.lib-robot[data-robot-id="' + r.id + '"]');
+  }
+
+  /* THE per-robot menu: the ⋯ button, right-click on the row, and right-click
+     on the robot's backup tab (BV.libActions.robotMenu → backuptabs.js) all
+     build from here, so a robot offers the same actions wherever it is on
+     screen. `main` is the row's cell when a row was clicked and null when it
+     wasn't — items that need one say so themselves. No delete here: files are
+     law — hide covers the everyday case, and a true delete is done in Explorer
+     ("open folder"); the library follows. */
   function rowMenuItems(r, main) {
     var items = [
       { label: "edit", onClick: function () { editRobotModal(r, false); } },
@@ -1238,29 +1255,87 @@
     }
     items.push(
       { label: r.notes ? "edit note" : "add note",
-        onClick: function () { editNoteInline(main, r); } },
+        onClick: function () {
+          /* opened from the row: edit right there. Opened from a backup tab:
+             the row still gets the editor when the listing is on screen (and
+             is scrolled to first — an editor focused off-screen looks like
+             nothing happened), otherwise the edit modal carries the very same
+             notes field, so the action never has to be missing. */
+          var host = main;
+          if (!host) {
+            var row = libRowFor(r);
+            if (row) {
+              row.scrollIntoView({ block: "nearest" });
+              host = row.querySelector(".lib-robot-main");
+            }
+          }
+          if (host) editNoteInline(host, r);
+          else editRobotModal(r, false, { focus: "notes" });
+        } },
       { label: r.hidden ? "unhide" : "hide", onClick: function () { setHidden(r, !r.hidden); } });
     if (r.history_root) {
       items.push({ label: "open folder", onClick: function () { openLocation(r.history_root); } });
     }
-    /* the quick bulk route into the edit workspace: every .LS this robot has.
-       Resolved server-side (a stale Latest mirror must not decide it) and
-       without opening a session - a workspace spans more robots than the
-       session cap allows. */
+    /* the quick bulk route into the edit workspace. With several rows ticked
+       it takes the WHOLE selection — the label says how many, so the menu can
+       never quietly act on rows you had forgotten were lit. */
+    var into = selectionFor(r, main);
     items.push({
-      label: "add all programs to edit workspace",
-      onClick: function () {
-        BV.api.call("ws_robot_programs", r.id).then(function (res) {
-          var added = BV.workspace.addMany((res.programs || []).map(function (p) {
-            return { root: res.root, label: res.label, file: p.file, name: p.name };
-          }));
-          if (!added) { BV.toast("already in the workspace"); return; }
-          BV.toast(added + " program" + (added === 1 ? "" : "s") + " added");
-          BV.openWorkspace();
-        }).catch(function (e) { BV.toast(e.message || "could not read that robot"); });
-      },
+      label: into.length > 1
+        ? "add all programs from " + into.length + " selected robots to edit workspace"
+        : "add all programs to edit workspace",
+      onClick: function () { addProgramsToWorkspace(into); },
     });
     return items;
+  }
+
+  /* which robots a row action means: the ticked selection when the menu was
+     opened from a row that is part of it (`main` is that row's cell — a backup
+     tab has no row and no selection behind it), else just the one you clicked. */
+  function selectionFor(r, main) {
+    if (!main || !_cl.has(r.id)) return [r];
+    var sel = selectedRobots();
+    return sel.length > 1 ? sel : [r];
+  }
+
+  /* every TP program these robots have, into the edit workspace. Resolved
+     server-side (a stale Latest mirror must not decide it) and without opening
+     a session — a workspace spans more robots than the session cap allows.
+     One robot failing never sinks the batch: whatever could be read is added
+     and the rest are NAMED, the way every other batch flow here reports. */
+  function addProgramsToWorkspace(list) {
+    Promise.all(list.map(function (r) {
+      return BV.api.call("ws_robot_programs", r.id).then(function (res) {
+        return { robot: r.robot, res: res };
+      }).catch(function (e) {
+        return { robot: r.robot, error: e.message || "could not read that robot" };
+      });
+    })).then(function (results) {
+      var added = 0, found = 0, fails = [];
+      results.forEach(function (x) {
+        if (x.error) { fails.push({ robot: x.robot, error: x.error }); return; }
+        var progs = x.res.programs || [];
+        found += progs.length;
+        added += BV.workspace.addMany(progs.map(function (p) {
+          return { root: x.res.root, label: x.res.label, file: p.file, name: p.name };
+        }));
+      });
+      var note = fails.length ? " · " + failureLines(fails).join(" · ") : "";
+      var ms = fails.length ? 6000 : undefined;
+      if (added) {
+        BV.toast(added + " program" + (added === 1 ? "" : "s") + " added" + note, ms);
+        BV.openWorkspace();
+      } else if (found) {
+        BV.toast("already in the workspace" + note, ms);
+      } else if (fails.length) {
+        BV.toast(failureLines(fails).join(" · "), 6000);
+      } else {
+        /* nothing to add and nothing failed: the backups simply hold no TP
+           programs — "already in the workspace" would have been a lie */
+        BV.toast(list.length > 1 ? "no programs in those backups"
+                                 : "no programs in that backup");
+      }
+    });
   }
 
   /* a robot's note in the listing: first line in grey, the rest behind an
@@ -1738,13 +1813,19 @@
     return lineRobots.filter(function (r) { return _cl.has(r.id); });
   }
 
+  /* the ticked robots, in listed order — the toolbar counter, the
+     manage-backups flows and the row menu all mean the same set by it */
+  function selectedRobots() {
+    return _visibleRobots.filter(function (r) { return _cl.has(r.id); });
+  }
+
   /* the sticky toolbar follows the selection: just the counter now — the
      selection ACTIONS moved into the functions… menu, which reads the live
      selection each time it opens (checkbox + line tri-state repaints are the
      shared checklist's job — this runs as its onChange) */
   function syncToolbar() {
     if (!_libWrap) return;
-    var selN = _visibleRobots.filter(function (r) { return _cl.has(r.id); }).length;
+    var selN = selectedRobots().length;
     var count = _tslot && _tslot.querySelector(".lib-sel-count");
     if (count) {
       count.textContent = selN ? selN + " selected" : "";
@@ -1756,8 +1837,29 @@
   /* the manage-backups modal (manage_ui.js) drives the selected-robot flows
      without owning selection state or the flows themselves */
   BV.libActions = {
-    selected: function () {
-      return _visibleRobots.filter(function (r) { return _cl.has(r.id); });
+    selected: selectedRobots,
+    /* the per-robot action menu for a surface that knows a robot ID but has
+       no library row behind it — the backup tabs. Same items the row's own
+       ⋯ builds, so a robot can be edited, noted, hidden, opened in Explorer
+       or sent to the edit workspace from wherever it is on screen instead of
+       only from the listing.
+
+       A PROMISE because the listing may never have been drawn: a window
+       started on a backup (--backup) boots straight past home, and a menu
+       missing half its actions is worse than one that arrives a beat later.
+       Settled already in every other case — the listing is cached. An
+       unknown robot (an ad-hoc backup with no library entry, or a lookup
+       that comes back empty) yields no items rather than dead ones. */
+    robotMenu: function (robotId) {
+      if (!robotId) return Promise.resolve([]);
+      var r = robotById(robotId);
+      if (r) return Promise.resolve(rowMenuItems(r, null));
+      return BV.api.call("lib_list").then(function (data) {
+        _robots = (data && data.robots) || [];
+        _lastData = data;              /* the pair is always set together */
+        var found = robotById(robotId);
+        return found ? rowMenuItems(found, null) : [];
+      }).catch(function () { return []; });
     },
     fixNames: function () { fixNamesInLine(_visibleRobots); },
     merge: function () { mergeSelectedInLine(_visibleRobots); },
@@ -1795,11 +1897,17 @@
     }).catch(function (e) { BV.toast(e.message); });
   }
 
+  /* the cached record carries the flag straight away (the star's pattern):
+     off the library screen refresh() is a no-op, and the menu is built from
+     the cache — without this a second right-click on the tab of a robot you
+     just hid would still offer "hide". Reverted if the write fails. */
   function setHidden(r, hidden) {
+    var prev = r.hidden;
+    r.hidden = hidden;
     BV.api.call("lib_set_hidden", r.id, hidden).then(function () {
       BV.toast(hidden ? "hidden" : "unhidden");
       refresh();
-    }).catch(function (e) { BV.toast(e.message); });
+    }).catch(function (e) { r.hidden = prev; BV.toast(e.message); });
   }
 
   /* ---- rename / merge / tidy ---- */
@@ -2315,7 +2423,11 @@
     return row;
   }
 
-  function editRobotModal(entry, isNew) {
+  /* opts.focus === "notes" lands the cursor in the notes box instead of
+     the name — the menu's "add note" falls back here when the robot has
+     no row on screen to edit in place. */
+  function editRobotModal(entry, isNew, opts) {
+    opts = opts || {};
     entry = entry || {};
     var form = BV.el("div", { class: "lib-form" });
 
@@ -2436,7 +2548,12 @@
     }
     openEditModal();
     cancel.addEventListener("click", function () { m.close(); });
-    fRobot.focus();
+    if (opts.focus === "notes") {
+      fNotes.focus();
+      fNotes.selectionStart = fNotes.selectionEnd = fNotes.value.length;   /* ready to append */
+    } else {
+      fRobot.focus();
+    }
 
     /* the linked-robot picker replaces the edit modal (modals don't stack) and
        brings it back on ANY close — the form element survives detached, so

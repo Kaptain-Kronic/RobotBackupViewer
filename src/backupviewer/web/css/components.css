@@ -1872,6 +1872,9 @@ button.btn.danger:disabled { opacity: 0.5; cursor: default; }
 .ctx-item .ctx-act:hover { color: var(--accent); border-color: var(--accent); }
 .ctx-item:hover { background: color-mix(in srgb, var(--accent) 14%, var(--bg2)); color: var(--accent); }
 .ctx-item.danger:hover { background: color-mix(in srgb, var(--error) 14%, var(--bg2)); color: var(--error); }
+/* divider between two groups of actions in one menu (a backup tab lists the
+   robot's actions above its own) — the same hairline the menu is framed in */
+.ctx-sep { height: 0; margin: 0.25rem 0.35rem; border-top: 1px solid var(--edge); }
 
 /* fleet health scan modal (scan_ui.js) */
 .hs-info { font-size: 0.82rem; color: var(--sub); }
