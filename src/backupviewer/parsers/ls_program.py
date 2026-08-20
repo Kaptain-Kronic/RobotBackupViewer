@@ -30,6 +30,9 @@ _PROG = re.compile(r"^/PROG\s+(\S+)[ \t]*(.*?)\s*$")
 _ATTR = re.compile(r"^(\w+)\s*=\s*(.*?);?\s*$")
 _DATE_TIME = re.compile(r"DATE\s+(\S+)\s+TIME\s+(\S+)")
 _BODY_LINE = re.compile(r"^\s*(\d+):\s{0,2}(.*?)\s*;?\s*$")
+# the same stream with the UNNUMBERED continuation rows of circular moves
+# ("    :  P[3] 500mm/sec FINE ;") kept - mn_stream() needs them, body does not
+_MN_LINE = re.compile(r"^\s*(\d+)?\s*:\s{0,2}(.*?)\s*;?\s*$")
 _POS_START = re.compile(r'^P\[(\d+)(?::"([^"]*)")?\]\s*\{')
 _GP = re.compile(r"^\s*GP(\d+):")
 _UF_UT = re.compile(r"UF\s*:\s*(\S+?),\s*UT\s*:\s*(\S+?),")
@@ -120,6 +123,42 @@ def label_xref(body: list[dict]) -> list[dict]:
                 e = broken.setdefault(i, {"id": i, "name": "", "line": None, "jumps": []})
             e["jumps"].append(ln["n"])
     return defs + [broken[k] for k in sorted(broken)]
+
+
+def mn_stream(text: str) -> list[dict]:
+    """Every /MN instruction as the raw listing shows it.
+
+    -> [{"n", "text", "active", "cont"}]
+
+    Unlike parse_ls_program()["body"] this KEEPS the unnumbered continuation
+    rows of circular moves - they carry the second P[..] of the move, so a
+    motion reader cannot see a C move without them. A continuation belongs to
+    the numbered line above it and inherits its remark state:
+
+        7:C P[1]              -> n=7 cont=False
+         :  P[4] 300mm/sec ;  -> n=7 cont=True
+
+    active is False on "!" comment lines, "//" remarked lines, and every
+    continuation of a remarked line - the robot runs none of them.
+    """
+    rows: list[dict] = []
+    body = text.split("/MN", 1)
+    body = body[1] if len(body) > 1 else ""
+    for sec in ("/POS", "/END"):
+        body = body.split(sec, 1)[0]
+    n, active = 0, True
+    for raw in body.splitlines():
+        m = _MN_LINE.match(raw)
+        if not m or not m.group(2):
+            continue
+        t = m.group(2).lstrip()      # listings pad remarks unevenly
+        cont = not m.group(1)
+        if not cont:                 # a numbered line sets the state
+            n = int(m.group(1))
+            active = not (t.startswith("!") or t.startswith("//"))
+        rows.append({"n": n, "text": t, "cont": cont,
+                     "active": active and not t.startswith("//")})
+    return rows
 
 
 def parse_ls_program(text: str) -> dict:

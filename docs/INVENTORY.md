@@ -23,7 +23,7 @@ batch lands, or with `--check` to hear about drift).
 > When per-subsystem docs land, they supersede this file for their own area. This
 > map's remaining job is breadth: what exists, and where.
 
-**Scope.** 269 files / ~78,348 lines. Covers everything in the working tree except: the
+**Scope.** 271 files / ~78,977 lines. Covers everything in the working tree except: the
 `.git` internals, build outputs (`dist/`, `build/`, `__pycache__/`), the private
 `SampleBackup/` fixture tree, the `.rmd` model corpus (61 binary robot-model blobs
 that are input data, not source), and the two local-only real-plant reference files
@@ -43,7 +43,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 |---|---|---|---|---|
 | `.gitignore` | 21 | ignore rules for pycache/build/dist plus the local-only sample backup, real ip list and diag folders | build/config | active |
 | `build_exe.log` | 106 | pyinstaller transcript of one successful onefile build on store python 3.13 with pyinstaller 6.20 *(untracked, local-only)* | build/config | generated |
-| `CHANGELOG.md` | 1293 | prose changelog newest-first: a large unreleased section over v1.4 back to v0.1, feature by feature | docs | active |
+| `CHANGELOG.md` | 1316 | prose changelog newest-first: a large unreleased section over v1.4 back to v0.1, feature by feature | docs | active |
 | `CLAUDE.md` | 273 | the build contract: locked stack, layer map, composition/honesty rules and the plant-identifier firewall | docs | active |
 | `CVX_FTP_LAYOUT.md` | 108 | field notes on the cv-x ftp tree and simulator workspace layout, and what env.dat cannot prove | docs | active |
 | `LICENSE` | 620 | verbatim gnu gpl v3 license text, the license the readme points at | docs | vendored |
@@ -52,11 +52,11 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `ROADMAP.md` | 358 | lane-claiming roadmap: shipped/building/decided/open items per subsystem, plus the 2.0 editing principles | docs | active |
 | `run.py` | 10 | dev launcher and pyinstaller entry script: puts src on sys.path, calls backupviewer.app.main | build/config | active |
 | `run_libraryimporter.py` | 10 | dev launcher and pyinstaller entry script for the companion libraryimporter app | LibraryImporter | active |
-| `docs/INVENTORY.md` | 637 | this file: dated file-level map of the repo plus the findings from the phase-1 documentation pass, with resolved items marked inline | docs | active |
+| `docs/INVENTORY.md` | 639 | this file: dated file-level map of the repo plus the findings from the phase-1 documentation pass, with resolved items marked inline | docs | active |
 | `docs/proposals/home-split.md` | 284 | investigation of tabs/home.js (2,277 lines) by responsibility, where the real seams are, what must become shared components first, and a phased sequence — no code changed | docs | active |
 | `docs/subsystems/3d-viewer.md` | 560 | subsystem doc #3 (the 3D viewer): the pendant-proven FK solve and its JS twin, the 228-type table's validated-vs-not honesty, flange residuals re-measured on the pins, the zone degradation ladder, and the unprobed-viewport gap said plainly | docs | active |
 | `docs/subsystems/backup-capture.md` | 656 | subsystem doc #2 (the backup/discovery jobs + shared plumbing): transport ground truth tagged live-run-vs-assumed, the gentle-with-equipment invariants, a dedicated failure-modes section, and the batch-flow coverage gap said plainly | docs | active |
-| `docs/subsystems/parsing.md` | 619 | subsystem doc #1 (parsers/ + session.py): ground truth marked verified-vs-assumed per fact, cross-file invariants, paid-for traps, honest coverage gaps — and the template later subsystem docs follow | docs | active |
+| `docs/subsystems/parsing.md` | 638 | subsystem doc #1 (parsers/ + session.py): ground truth marked verified-vs-assumed per fact, cross-file invariants, paid-for traps, honest coverage gaps — and the template later subsystem docs follow | docs | active |
 | `docs/subsystems/remote-mobile.md` | 761 | subsystem doc #4 (CV-X/Matrox remotes + phone view): the reverse-engineered CV-X wire protocol whose reference client is gone, the vendor-reflected mouse enum, the only listening socket's trust posture, and the app's one UAC elevation | docs | active |
 | `packaging/backupviewer.ico` | *75 KB* | multi-resolution app icon embedded in the exe and inherited by the pywebview window | build/config | active |
 | `packaging/backupviewer.spec` | 58 | pyinstaller onefile spec: bundles web/ and cvx_handshake/, edgechromium hidden imports, excludes paramiko | build/config | active |
@@ -73,7 +73,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/cvx_remote.py` | 590 | cv-x remote-desktop client: handshake replay on 3 sockets, jpeg frame harvest, mouse events, mjpeg server | remote/mobile | active |
 | `src/backupviewer/discover.py` | 669 | subnet scan job finding fanuc/keyence over ftp and matrox via ethernet/ip, plus adapter list and live name probe | backup capture | active |
 | `src/backupviewer/ftpbackup.py` | 627 | ftp backup engine: gentle md: pull, dated+latest tree, .part/complete-marker crash safety, shared job base | backup capture | active |
-| `src/backupviewer/healthscan.py` | 1185 | fleet health-scan engine: 17-check registry, lazy per-robot parse context, threaded job, fleet-wide verdict passes | flag scanning | active |
+| `src/backupviewer/healthscan.py` | 1167 | fleet health-scan engine: 17-check registry, lazy per-robot parse context, threaded job, fleet-wide verdict passes | flag scanning | active |
 | `src/backupviewer/keyence_workspace.py` | 374 | cv-x simulator workspace.xml writer/reader plus flat-folder export guarded by a we-created-this ledger | cameras | active |
 | `src/backupviewer/keyencebackup.py` | 359 | cv-x camera backup job over anonymous ftp, plus pre-flight probe, read-only diagnose and self-naming | cameras | active |
 | `src/backupviewer/kinematics_builtin.py` | 247 | built-in kinematics table: one chain (joint placements + faceplate) per fanuc robot type, some validated | 3D viewer | active |
@@ -96,7 +96,8 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/parsers/io_dg.py` | 179 | parses IOCONFIG.DG definitions and IOSTATE.DG states and merges them into per-type tables with rack/slot/port | backup parsing | active |
 | `src/backupviewer/parsers/kinematics.py` | 148 | forward kinematics over a parsed .def chain: joint frames, faceplate pose and flange-offset measurement | 3D viewer | active |
 | `src/backupviewer/parsers/ls_edit.py` | 345 | byte-faithful .LS edit engine: split/emit body records, splice /ATTR and /POS values, latin-1 round-trip | program editor | active |
-| `src/backupviewer/parsers/ls_program.py` | 197 | parses a .LS tp program: /PROG and /ATTR header, body lines, /POS points and lbl/jmp label cross-reference | backup parsing | active |
+| `src/backupviewer/parsers/ls_motion.py` | 282 | reads the /MN instruction stream as moves: type J/L/C/A, destination (P/PR/anon/indirect), speed with its unit, FINE/CNT termination, option tokens, and how honestly a duration is known | backup parsing | active |
+| `src/backupviewer/parsers/ls_program.py` | 236 | parses a .LS tp program: /PROG and /ATTR header, body lines, /POS points and lbl/jmp label cross-reference | backup parsing | active |
 | `src/backupviewer/parsers/macros.py` | 44 | parses $MACROTABLE from SYSMACRO.VA into the macro list, a fallback for SUMMARY.DG's friendlier macro section | backup parsing | active |
 | `src/backupviewer/parsers/magnet.py` | 68 | detects a magnet gripper from MAG*.PC karel programs and groups its R[800-899] config registers | backup parsing | active |
 | `src/backupviewer/parsers/mastering.py` | 41 | parses $DMR_GRP from SYSMAST.VA into per-group master/reference encoder counts and mastered flags | backup parsing | active |
@@ -234,6 +235,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/test_libraryimporter_core.py` | 209 | pytest for the importer's parse -> plan -> seed pipeline, full-name expansion, schema-2 sidecar shape and destination sanity warnings | tests | active |
 | `tests/test_libraryimporter_integration.py` | 63 | pytest proving a tree seeded by libraryimporter.core is adopted by BackupViewer's scanner with path identity, IPs and stable ids | tests | active |
 | `tests/test_ls_edit.py` | 343 | pytest for the .LS edit/export engine: byte-faithful decode/encode, section split, emit renumbering, /ATTR and /POS splices, program rename | tests | active |
+| `tests/test_ls_motions.py` | 282 | pytest for the /MN motion grammar: the instruction stream incl. circular continuations, destination-after-the-motion-letter, nested P[R[n]], option tokens, speed units, derived vs assumed durations | tests | active |
 | `tests/test_macros.py` | 21 | pytest for the SYSMACRO.VA macro table: names, program names and DI assignments *(untracked, local-only)* | tests | active |
 | `tests/test_magnet.py` | 67 | pytest for magnet-EOAT detection from MAG*.PC programs and the R[800-899] register grouping | tests | active |
 | `tests/test_mhvalves.py` | 151 | pytest for MH valve signal-table resolution and the no-phantom-vacuum guard on controller defaults | tests | active |
@@ -290,23 +292,23 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 
 | subsystem | files | ~lines |
 |---|---:|---:|
-| tests | 81 | 23,072 |
+| tests | 82 | 23,354 |
 | shared/infra | 27 | 8,615 |
-| docs | 12 | 6,424 |
-| backup parsing | 31 | 6,031 |
+| docs | 12 | 6,468 |
+| backup parsing | 32 | 6,352 |
 | theming | 34 | 5,934 |
 | library | 4 | 4,946 |
 | program editor | 5 | 4,929 |
 | cameras | 15 | 4,524 |
 | 3D viewer | 16 | 3,836 |
 | remote/mobile | 10 | 2,114 |
-| flag scanning | 2 | 2,080 |
+| flag scanning | 2 | 2,062 |
 | backup capture | 4 | 1,739 |
 | LibraryImporter | 11 | 1,395 |
 | compare engine | 5 | 1,355 |
 | tools/scripts | 5 | 1,087 |
 | build/config | 7 | 267 |
-| **total** | **269** | **78,348** |
+| **total** | **271** | **78,977** |
 
 > Counts are by *primary* subsystem only — a file appears once, so these add up to the
 > whole repo. The `tests` row is the largest because every probe and unit suite counts as

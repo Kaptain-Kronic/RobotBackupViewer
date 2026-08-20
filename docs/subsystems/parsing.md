@@ -10,7 +10,11 @@ slice, when `raw_facets` decoded the HND gripper mesh and then the RMD
 robot arm that shares its encoding. §2, §4 and §8 updated 2026-08-11, same
 slice, with `cvx_program` — the `inspect.dat` reader behind the camera **logic**
 tab: the container shape, the tool-name language table, the calculation
-scripts, and the three things that pass could not prove.*
+scripts, and the three things that pass could not prove.
+§2 updated 2026-08-20, the program-path slice, with `ls_motion` — the /MN
+motion-instruction reader behind the 3D view's program playback — and with
+`ls_program.mn_stream`, the promoted instruction stream it and `healthscan`
+now share.*
 
 Covers: src/backupviewer/session.py, src/backupviewer/parsers/__init__.py,
 src/backupviewer/parsers/alarms.py, src/backupviewer/parsers/callgraph.py,
@@ -20,7 +24,8 @@ src/backupviewer/parsers/cvx_models.py, src/backupviewer/parsers/cvx_program.py,
 src/backupviewer/parsers/dcs.py, src/backupviewer/parsers/dcszones.py,
 src/backupviewer/parsers/frames.py, src/backupviewer/parsers/gmwizlog.py,
 src/backupviewer/parsers/io_dg.py, src/backupviewer/parsers/kinematics.py,
-src/backupviewer/parsers/ls_edit.py, src/backupviewer/parsers/ls_program.py,
+src/backupviewer/parsers/ls_edit.py, src/backupviewer/parsers/ls_motion.py,
+src/backupviewer/parsers/ls_program.py,
 src/backupviewer/parsers/macros.py, src/backupviewer/parsers/magnet.py,
 src/backupviewer/parsers/mastering.py, src/backupviewer/parsers/mhvalves.py,
 src/backupviewer/parsers/mtx_portal.py, src/backupviewer/parsers/mtx_saved_image.py,
@@ -28,7 +33,7 @@ src/backupviewer/parsers/payloads.py, src/backupviewer/parsers/registers.py,
 src/backupviewer/parsers/roboguidedef.py, src/backupviewer/parsers/styles.py,
 src/backupviewer/parsers/summary_dg.py, src/backupviewer/parsers/sysvars.py,
 src/backupviewer/parsers/va.py
-(31 files)
+(32 files)
 
 *Four of those — `curpos`, `dcszones`, `kinematics`, `roboguidedef` — are also
 claimed by [3d-viewer.md](3d-viewer.md), which uses what they produce. Here they
@@ -69,7 +74,7 @@ counted but never decoded — only text formats are parsed, by design.
 
 Per-file descriptions live in the [INVENTORY map](../INVENTORY.md); this is
 the structure the flat listing hides. The folder is *not* one subsystem — the
-inventory assigns its 30 files to four: **backup parsing** (19: the engine
+inventory assigns its 31 files to four: **backup parsing** (20: the engine
 plus the robot-file leaves), **3D viewer** (4: `curpos`, `dcszones`,
 `kinematics`, `roboguidedef`), **cameras** (6: `cvx_image`, `cvx_inspect`,
 `cvx_models`, `cvx_program`, `mtx_portal`, `mtx_saved_image`), **program
@@ -87,7 +92,8 @@ Structurally the layer is two tiers:
 - **Leaves** — one module per format. `.VA`-family leaves (`registers`,
   `frames`, `macros`, `mastering`, `payloads`, `mhvalves`, `styles`,
   `dcszones`) sit on `va.py`; `.DG` leaves (`summary_dg`, `io_dg`, `dcs`,
-  `curpos`) and `.LS` leaves (`ls_program`, `ls_edit`, `alarms`, `callgraph`)
+  `curpos`) and `.LS` leaves (`ls_program`, `ls_motion`, `ls_edit`, `alarms`,
+  `callgraph`)
   each carry their own line grammar; the camera leaves parse bytes
   (`cvx_image`, `cvx_inspect`, `cvx_models`, `cvx_program`) or non-backup text
   (`mtx_saved_image`, and `mtx_portal`, which parses live portal HTML fetched
@@ -111,6 +117,19 @@ Two deliberate structure decisions worth knowing before "fixing" them:
   acknowledged: each carries its own body/POS regex set, so a format fix must
   be made twice. The alternative — one reader — was rejected because display
   wants replacement characters shown and editing cannot tolerate them.
+  **`ls_motion.py` is not a third reader** and does not join that obligation:
+  it takes already-decoded instruction *text* from `ls_program.mn_stream` and
+  never touches the `/POS` grammar or the byte layer, so a `/POS` format fix
+  still has exactly the two homes it always had.
+- **The `/MN` instruction stream is `ls_program.mn_stream`, and only there.**
+  It is the numbered lines *plus* the unnumbered continuation rows of circular
+  moves — which `parse_ls_program`'s `body` deliberately drops (the programs
+  tab renders numbered lines) but which carry the second `P[..]` of a circular
+  move, so a motion reader cannot see a `C` move without them. A continuation
+  belongs to the numbered line above it and inherits its remark state.
+  `healthscan._RobotData.mn_lines` reads it too — its five listing checks were
+  the original caller — and the promotion happened when `ls_motion` became the
+  third place needing the same scan.
 - **`record_tree` lives in `sysvars.py`, not `va.py`.** CLAUDE.md's
   composition section cites it as the shared-engine model ("powers sysvars,
   KAREL vars *and* MH valves") — true, but the claim is about the *va.py

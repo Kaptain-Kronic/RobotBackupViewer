@@ -1,6 +1,29 @@
 # Changelog
 
 ## unreleased — the camera gets its 3d view, and the files tab extracts
+- **A program's moves are read as structure, not text.** A new parser
+  (`parsers/ls_motion.py`) turns the `/MN` instruction stream into moves: type
+  (J/L/C/A), destination, speed with its unit, termination (FINE, CNT, or a
+  register-driven CNT whose value a listing cannot know), and the option
+  tokens. Nothing shows this on screen yet — it is the groundwork for drawing a
+  program's path in the 3D view.
+  Two rules it exists to get right. The destination is the reference
+  **immediately after the motion letter**, never "the first `P[..]` in the
+  line": options carry references of their own (`Offset,PR[7]`, `Skip,LBL[3]`,
+  `TIME BEFORE 0.5sec,DO[1]=ON`), and reading one of those as the destination
+  would put the arm somewhere the robot never went. And bracket contents nest,
+  so `P[R[4]]` is scanned by bracket depth rather than by a character class
+  that would quietly truncate it. A circular move collapses into one move: the
+  numbered line names the via point, its continuation row names the end point.
+  Durations say how well they are known. A linear feedrate over a computed
+  distance, and a time-specified move (`3sec`), are **derived**. A percentage
+  move is **assumed** — no `.VA`, `.DG` or listing in a FANUC backup records
+  per-model maximum joint rates, so the number rests on an assumption and says
+  so. A register-driven speed is **unknown** and yields no number at all.
+  Alongside it, the `/MN` scan itself moved into the parser that owns the
+  format (`ls_program.mn_stream`) — numbered lines plus the continuation rows
+  of circular moves, remark state inherited. The health scan now reads that
+  instead of its own copy; it was the third place needing the same scan.
 - **The camera wall sorts by camera type.** The sort button gains a fourth
   option while you are on the wall — name, IP, last backup, and now **camera
   type** — which groups the Keyence tiles together and the Matrox tiles
