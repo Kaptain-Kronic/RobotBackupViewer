@@ -129,8 +129,8 @@ def find_backup_roots(parent: Path, max_depth: int = 7, cap: int = 5000,
         for c in children:
             if len(roots) >= cap:
                 break
-            if c.name.endswith((".__part", ".__tmp")):
-                continue    # transient staging dir (crash residue mid move/mirror-regen)
+            if c.name.endswith((".__part", ".__tmp")) or c.name.lower() == "_staged":
+                continue    # move residue / cleanup staging area (also guards the cap)
             if looks_like_backup(c):
                 roots.append(c)
                 if on_root:

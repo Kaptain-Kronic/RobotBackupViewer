@@ -195,6 +195,7 @@ def test_dest_warnings_flag_scanner_invisible_names(tmp_path, monkeypatch):
     assert core.dest_warnings(tmp_path / "2026_07_16")
     assert core.dest_warnings(tmp_path / "26_07_16")
     assert core.dest_warnings(tmp_path / "Latest")
+    assert core.dest_warnings(tmp_path / "_staged")
     assert core.dest_warnings(tmp_path / "Plant.__part")
     assert core.dest_warnings(tmp_path / "LakeFake") == []
 
