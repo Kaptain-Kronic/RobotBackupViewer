@@ -400,11 +400,14 @@ def probe(window):
         })()""")
         prefs = json.loads(got or "{}")
         check("prefs.sections",
-              prefs.get("heads") == ["3d view", "library", "cv-x simulator", "updates"],
+              prefs.get("heads") == ["3d view", "library", "cv-x simulator",
+                                     "staging", "updates"],
               f"({prefs.get('heads')})")
         check("prefs.rows",
               prefs.get("rows") == ["invert rotate x", "invert rotate y",
                                     "library folder", "simulator folder",
+                                    "staging destination",
+                                    "auto-stage partial backups",
                                     "check on startup"],
               f"({prefs.get('rows')})")
         # every one of the 14 controls has exactly one home

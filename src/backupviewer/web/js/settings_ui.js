@@ -423,6 +423,66 @@
           BV.simExport(function () { BV.uiPrefs.modal("preferences"); });
         });
 
+        /* ---- staging: where "move to staging" parks snapshots ----
+           (below the cv-x rows: the sim row sits directly under the library
+           row by probe-pinned design). library = <root>/_staged (one-folder
+           delete in Explorer); folder = anywhere OUTSIDE the library (a
+           second disk actually reclaims this one); recycle bin = restorable
+           in the shell and expired by Windows' own storage policy - local
+           drives only, shares/sticks have no bin and the app refuses rather
+           than silently hard-deleting. */
+        section(into, "staging");
+        var stgHost = BV.el("div");
+        into.appendChild(stgHost);
+        function pickStagingDir() {
+          BV.api.call("pick_staging_dir").then(function (p) {
+            if (!p) return;
+            persist("staging_dir", p);
+            buildStaging();
+          }).catch(function (e) { BV.toast(e.message); });
+        }
+        function buildStaging() {
+          stgHost.innerHTML = "";
+          var mode = s.staging_mode === "folder" || s.staging_mode === "recycle"
+            ? s.staging_mode : "library";
+          segRow(stgHost, "staging destination", ["library", "folder", "recycle"], mode,
+            function (v) {
+              return v === "library" ? "library _staged"
+                : v === "folder" ? "folder…" : "recycle bin";
+            },
+            function (v) {
+              persist("staging_mode", v);
+              if (v === "folder" && !s.staging_dir) pickStagingDir();
+              else buildStaging();
+            });
+          if (mode === "folder") {
+            var pr = row(stgHost, "staging folder");
+            var wrap = BV.el("div", { class: "set-path" });
+            var val = BV.el("span", { class: "set-path-val dim" },
+              BV.esc(s.staging_dir || "(pick a folder)"));
+            val.title = s.staging_dir || "";
+            var ch = BV.el("button", { class: "btn" }, "change…");
+            ch.addEventListener("click", pickStagingDir);
+            wrap.appendChild(val);
+            wrap.appendChild(ch);
+            pr.appendChild(wrap);
+          }
+          if (mode === "recycle") {
+            stgHost.appendChild(BV.el("div", { class: "set-note dim" },
+              "staged snapshots go to the windows recycle bin — restorable there, and " +
+              "windows' own storage policy expires them. local drives only: a network " +
+              "share or usb stick has no bin, so staging there is refused."));
+          }
+        }
+        buildStaging();
+        /* dead pulls that are NOT a robot's newest snapshot get staged for you
+           when the cleanup tab loads; the newest ones stay - they are the
+           evidence a robot is out of date (the backup-broken button's job) */
+        segRow(into, "auto-stage partial backups", [false, true],
+          s.auto_stage_partials === true,
+          function (v) { return v ? "on" : "off"; },
+          function (v) { persist("auto_stage_partials", v); });
+
         section(into, "updates");
         /* the boot-time github ping runs only in the packaged exe (source runs
            stay offline); this switch turns even that off. The about box's

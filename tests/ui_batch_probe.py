@@ -1609,20 +1609,23 @@ def probe(window):
                 ? 'y' : '';
         })()""")
         check("fns.link_cams_in_menu", mi == "y")
-        # the "last backup…" entry opens the REPORT alone — no actions bar
+        # the "manage backups…" entry opens the two-tab modal on report; the
+        # old tidy-up actions bar is gone for good (those live in this menu)
         js(window, """(function(){
             var items=[].slice.call(document.querySelectorAll('.ctx-menu .ctx-item'));
-            items.filter(function(b){return b.textContent.indexOf('last backup')===0;})[0].click();
+            items.filter(function(b){return b.textContent.indexOf('manage backups')===0;})[0].click();
         })()""")
         mb = poll(window, """(function(){
             var m=document.querySelector('.mb-modal');
-            if(!m || !m.querySelector('.mb-partial')) return '';
+            if(!m || !m.querySelector('.mb-runpane')) return '';
             return JSON.stringify({ actbar: !!m.querySelector('.mb-actbar'),
-                                    partial: true });
+                                    tabs: m.querySelectorAll('.mb-tabs .mb-tab').length,
+                                    run: true });
         })()""")
         mb = json.loads(mb or "{}")
-        check("fns.report_opens_without_actbar",
-              mb.get("actbar") is False and mb.get("partial") is True, f"({mb})")
+        check("fns.manage_opens_tabbed_report",
+              mb.get("actbar") is False and mb.get("tabs") == 2 and mb.get("run") is True,
+              f"({mb})")
         js(window, "document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))")
         check("manage.modal_closes", bool(poll(window,
               "document.getElementById('modal-root').classList.contains('hidden')")))

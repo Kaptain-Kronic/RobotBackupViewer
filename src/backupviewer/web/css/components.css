@@ -2029,31 +2029,36 @@ button.btn.danger:disabled { opacity: 0.5; cursor: default; }
   border-radius: 6px; padding: 0.4rem 0.6rem; word-break: break-all;
 }
 
-/* manage-backups modal (manage_ui.js): the tidy-up actions bar on top (ready
-   to fire, greyed without a selection), the partial strip full-width under it,
-   then the two HEAVY lists (last run | stale) side by side. Same no-scroll
-   discipline as the discover modal: the body never scrolls — only the lists
-   do — so the bar, summaries and buttons can never sink below the fold. */
+/* manage-backups modal (manage_ui.js): two tabs on a segmented row.
+   report = the last-run pane (its failed list capped so it never starves the
+   stale list) above the stale pane; cleanup = totals + policy knobs (chrome),
+   ONE grouped checklist (the tab's only scroller), and the stage bar pinned
+   under it. Same no-scroll discipline as the discover modal: the body never
+   scrolls — only lists do — so summaries and buttons never sink below the
+   fold. (.mb-label/.mb-track/.mb-fill belong to the MEMORY BAR, not here.) */
 .modal.mb-modal { width: min(92vw, 60rem); max-width: none; max-height: 86vh; }
 .modal.mb-modal .modal-body { display: flex; overflow: hidden; min-height: 0; }
 .mb-host { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.mb-actbar {
-  display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
-  padding: 0.4rem 0.3rem 0.6rem;
-  border-bottom: 1px solid var(--edge-soft, transparent);
+/* the tab row IS the modal header - browser-tab style like .stab: each tab
+   wears its own border and fills (accent label + edge border) when active */
+.mb-tabs { flex: 0 0 auto; display: flex; gap: 0.3rem; padding: 0.1rem 0.3rem 0.55rem; }
+.mb-tab {
+  font: inherit; font-size: 0.82rem; padding: 0.22rem 0.95rem;
+  border: 1px solid var(--edge-soft); border-radius: var(--radius);
+  background: var(--panel); color: var(--sub); cursor: pointer;
+  transition: color var(--trans), border-color var(--trans);
 }
-.mb-actbar .hs-cat-title { margin-right: 0.5rem; }
-.mb-partial { flex: 0 0 auto; }
-.mb-partial .mb-list { max-height: 18vh; }   /* the strip never starves the columns */
-.mb-cols { display: flex; gap: 1.4rem; flex: 1 1 auto; min-height: 0; }
-.mb-col { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.mb-colfill { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.mb-col .mb-list { flex: 1 1 auto; max-height: none; }
-@media (max-width: 760px) {
-  .mb-cols { flex-direction: column; flex: none; }
-  .mb-col .mb-list { max-height: 24vh; }
-  .mb-host { overflow-y: auto; }   /* narrow-window safety valve — never hide content */
-}
+.mb-tab:hover { color: var(--text); }
+.mb-tab.active { color: var(--accent); border-color: var(--edge); }
+.set-note { font-size: 0.78rem; padding: 0.05rem 0.3rem 0.35rem; max-width: 34rem; }
+.mb-slot { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.mb-runpane { flex: 0 0 auto; display: flex; flex-direction: column; min-height: 0; }
+.mb-runpane .mb-list { max-height: 22vh; }   /* a bad run never starves the stale list */
+.mb-stalepane { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+/* the pane's ONE scroller: folds inside grow naturally and the pane scrolls,
+   so an opened fold can never shove its siblings out of reach */
+.mb-colfill { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.mb-modal .hs-row { display: flex; align-items: baseline; gap: 0.55rem; flex-wrap: wrap; }
 .mb-sum { font-size: 0.86rem; padding: 0.12rem 0.3rem 0.3rem; }
 .mb-none { color: var(--sub); font-size: 0.8rem; padding: 0.1rem 0.3rem 0.45rem; }
 .mb-list { display: flex; flex-direction: column; gap: 0.15rem; min-height: 0; overflow-y: auto; margin: 0.1rem 0 0.25rem; }
@@ -2066,6 +2071,40 @@ button.btn.danger:disabled { opacity: 0.5; cursor: default; }
   border: 1px solid var(--edge); border-radius: 6px; padding: 0.14rem 0.35rem;
 }
 .mb-stale-days:focus { outline: none; border-color: var(--accent); }
+.mb-fold > .hs-cat-head { cursor: pointer; }
+.mb-fold.bv-collapsible:not(.open) > .bv-collapse-body { display: none; }
+.mb-fold .mb-fold { margin-left: 0.95rem; }   /* plant > line > rows read as a tree */
+/* cleanup tab */
+.mb-cleantop { flex: 0 0 auto; display: flex; flex-direction: column; gap: 0.15rem; }
+.mb-cleanrow { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; padding: 0 0.3rem; }
+.mb-cleanrow .btn { font-size: 0.78rem; padding: 0.1rem 0.5rem; }
+.mb-stg { color: var(--sub); font-size: 0.8rem; }
+.mb-cleanlist { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin: 0.3rem 0 0.2rem; }
+.mb-cleanlist > .mb-fold { padding: 0.1rem 0.1rem 0.3rem; }
+.mb-cl-row {
+  display: flex; align-items: baseline; gap: 0.55rem;
+  font-size: 0.82rem; border-radius: 6px; padding: 0.08rem 0.35rem;
+  content-visibility: auto;                 /* thousands of rows stay free */
+  contain-intrinsic-size: 1.7rem;           /* plain fallback first, then auto */
+  contain-intrinsic-size: auto 1.7rem;
+}
+.mb-cl-row:hover { background: var(--bg2); }
+.mb-cl-row.hs-check { cursor: pointer; }
+.mb-cl-row .hs-robot { min-width: 9rem; }
+.mb-cl-when { color: var(--sub); }
+.mb-cl-size { margin-left: auto; color: var(--sub); font-size: 0.78rem; }
+.mb-cl-reason { margin-left: auto; color: var(--sub); font-size: 0.78rem; }
+.mb-cl-row.prot { opacity: 0.62; }
+.mb-cl-row.prot.warn { opacity: 1; }
+.mb-cl-row.warn .mb-cl-reason { color: var(--warn); }
+.mb-pin { font-size: 0.72rem; padding: 0.02rem 0.4rem; }
+.mb-cl-row.prot .mb-pin { opacity: 1; }
+.mb-stagebar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 0.6rem;
+  border-top: 1px solid var(--edge); padding: 0.45rem 0.3rem 0.1rem; margin-top: 0.15rem;
+}
+.mb-stagebar .mb-sum { padding: 0; }
+.mb-stagebar .btn.armed { border-color: var(--warn); color: var(--warn); }
 
 /* bulk-add + discover scan modals */
 .scan-info { font-size: 0.82rem; margin-bottom: 0.2rem; }
