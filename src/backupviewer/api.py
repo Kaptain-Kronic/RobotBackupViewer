@@ -1729,6 +1729,33 @@ class Api:
         and say so when there isn't one."""
         return self._program_path(self._side_session(side, sid), file_name)
 
+    def _program_pose(self, s: BackupSession, file_name: str) -> dict:
+        path = self._program_path(s, file_name)
+        robot = self._robot_pose(s)
+        kin, flange_dz = self._posable_chain(robot)
+        key = "progpose:%s:%s:%s" % (path["file"].upper(),
+                                     robot["type_name"] if kin else "",
+                                     flange_dz)
+
+        def build():
+            out = program_path.build_pose(path, kin, flange_dz, robot.get("q"))
+            out["file"] = path["file"]
+            out["type_name"] = robot["type_name"] if kin else ""
+            out["flange_dz"] = flange_dz
+            out["q_seed"] = robot.get("q")
+            return out
+
+        return s.cached(key, build)
+
+    @_endpoint
+    def get_program_pose(self, file_name: str, sid: str | None = None,
+                         side: str = "a"):
+        """Joint angles that put the arm at each of a program's taught points,
+        plus the knots between them. A joint-recorded point poses at its own
+        angles - exact, no solver. A cartesian point is solved and the answer
+        accepted only when the forward chain reproduces the taught pose."""
+        return self._program_pose(self._side_session(side, sid), file_name)
+
     # -- system vars ----------------------------------------------------------
 
     def _sysvar_index(self, s: BackupSession):

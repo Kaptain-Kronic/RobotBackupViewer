@@ -105,7 +105,13 @@
 
   /* ---- robot pose (imported .def kinematics + backup CURPOS) ---- */
 
-  function poseQ(s, robot) {
+  /* precedence: the loaded program's selected step, then a hand-edited
+     pose, then the backup's own CURPOS snapshot, then home. The first two
+     never coexist - loading a program clears s.pose and editing a joint
+     clears s.prog (see st()) - so this is an order, not a fight. */
+  function poseQ(s, robot, pose) {
+    var row = pose && pose.steps ? pose.steps[s.step] : null;
+    if (row && row.q) return row.q;
     if (s.pose) return s.pose;
     if (robot && robot.q) return robot.q;
     return [];
@@ -114,10 +120,19 @@
   /* frames when the arm is honestly posable: kinematics matched AND the
      backup's own position report did not contradict them. calib=null
      (no CURPOS to check against) still poses, flagged unverified. */
-  function robotFrames(s, robot) {
-    if (!robot || !robot.kin) return null;
-    if (robot.calib && !robot.calib.ok) return null;
-    return BV.fk.chain(robot.kin, poseQ(s, robot), robot.flange_dz || 0);
+  function robotFrames(s, robot, pose) {
+    if (!poseGate(robot)) return null;
+    return BV.fk.chain(robot.kin, poseQ(s, robot, pose), robot.flange_dz || 0);
+  }
+
+  /* the one contradiction gate. Python has the same rule in _posable_chain,
+     so a backup whose kinematics disagree with its own position report gets
+     no arm here AND no fk-placed point there. Every path that ends in
+     BV.fk.chain goes through this - a per-frame redraw that skipped it would
+     cheerfully draw a whole program's worth of arms the still frame refuses. */
+  function poseGate(robot) {
+    if (!robot || !robot.kin) return false;
+    return !(robot.calib && !robot.calib.ok);
   }
 
   /* user-model elements drawable at this pose: enabled, structured (VA),
@@ -196,7 +211,7 @@
     return path.steps.filter(function (st) { return st.ok; });
   }
 
-  function draw(svg, data, s, colors, robot, path) {
+  function draw(svg, data, s, colors, robot, path, pose) {
     var zones = visibleZones(data, s);
 
     /* world geometry per zone + world bounds (grid and fit both use them) */
@@ -214,7 +229,7 @@
     if (tcpW) wpts.push(tcpW);
 
     /* the posed arm + its user-model elements join the world bounds */
-    var frames = robotFrames(s, robot);
+    var frames = robotFrames(s, robot, pose);
     var skel = null, elems = [];
     if (frames) {
       var zr = (robot.kin.zero || [0, 0, 0]);
@@ -452,6 +467,17 @@
           path.steps.some(function (st) { return st.why === "no-kinematics"; })) {
         notes.push("no kinematics for this type — cartesian points shown, " +
           "joint-recorded ones cannot be placed");
+      }
+    }
+    if (pose && pose.counts.solved) {
+      notes.push("arm posture solved from cartesian points — the taught CONFIG " +
+        "is not decoded, so a pose may take a different branch than the robot did");
+    }
+    if (pose && pose.counts.refused && path && path.counts.placed) {
+      var unposed = pose.counts.refused - (path.counts.refused || 0);
+      if (unposed > 0) {
+        notes.push("⚠ " + unposed + " placed point" + (unposed === 1 ? "" : "s") +
+          " could not be reached by the arm — see “program” on the right");
       }
     }
     if (!zones.length) {
@@ -698,17 +724,32 @@
   /* one step row: the line number, the verbatim instruction, and its
      honesty pills. Flat, not a collapsible - a program runs to hundreds of
      moves, and the evidence for the SELECTED one shows once, below the list. */
-  function stepRow(st, s, onPick) {
+  function stepRow(st, s, onPick, pr) {
+    /* two different questions, two different answers: "not placed" means the
+       backup does not say where the point is; "not reached" means it does and
+       the arm cannot get there. Never collapse them into one pill. */
     var tags = "";
-    tags += st.ok
-      ? (st.rep === "joint" ? BV.pill("exact", "ok-soft") : BV.pill("taught", "ghost"))
-      : BV.pill("not placed", "err");
+    if (!st.ok) {
+      tags += BV.pill("not placed", "err");
+    } else if (!pr) {
+      tags += BV.pill("taught", "ghost");
+    } else if (!pr.solved) {
+      tags += BV.pill("not reached", "err");
+    } else {
+      tags += pr.source === "joint" ? BV.pill("exact", "ok-soft")
+        : BV.pill("solved", "ghost");
+    }
     if (st.offset || st.tool_offset) tags += BV.pill("offset", "warn");
     if (st.incremental) tags += BV.pill("inc", "warn");
     if (st.via) tags += BV.pill("via", "ghost");
     var row = BV.el("div", {
-      class: "v3-step" + (st.i === s.step ? " sel" : "") + (st.ok ? "" : " dim"),
-      title: st.note || st.text,
+      /* dim = the backup does not say where the point is. unreached = it
+         does, and the arm cannot get there - the point still draws, because
+         it is still evidence about the program. Two states, two classes. */
+      class: "v3-step" + (st.i === s.step ? " sel" : "") +
+        (st.ok ? "" : " dim") +
+        (st.ok && pr && !pr.solved ? " unreached" : ""),
+      title: st.note || (pr && pr.note) || st.text,
     });
     row.innerHTML = '<span class="v3-step-n">' + st.line + "</span>" +
       '<span class="v3-step-t">' + BV.esc(st.text) + "</span>" +
@@ -717,7 +758,7 @@
     return row;
   }
 
-  function programSection(side, s, path, pick, clear) {
+  function programSection(side, s, path, pick, clear, pose) {
     var c = path.counts;
     side.appendChild(catHead("program", c.placed, c.steps, [
       miniBtn("clear", "stop showing this program", clear),
@@ -729,6 +770,12 @@
 
     /* every assumption this drawing rests on, stated once, before the steps */
     var notes = (path.assumptions || []).map(function (a) { return a.text; });
+    if (pose && pose.counts.solved) {
+      notes.push(pose.counts.exact + " of " + (pose.counts.exact + pose.counts.solved) +
+        " poses come straight from taught joints; the rest are solved from the " +
+        "cartesian point, and the taught CONFIG is not decoded — so a solved " +
+        "posture may differ from the one the robot used");
+    }
     if (c.refused) {
       notes.push(c.refused + " of " + c.steps + " moves could not be placed — " +
         "each one says why in the list below");
@@ -739,8 +786,11 @@
       side.appendChild(nb);
     }
 
+    var poseRows = (pose && pose.steps) || [];
     var list = BV.el("div", { class: "v3-steps" });
-    path.steps.forEach(function (st) { list.appendChild(stepRow(st, s, pick)); });
+    path.steps.forEach(function (st) {
+      list.appendChild(stepRow(st, s, pick, poseRows[st.i]));
+    });
     side.appendChild(list);
 
     /* the selected move's evidence, in the pendant-style block the rest of
@@ -771,12 +821,26 @@
                 value: (st.dur_ms / 1000).toFixed(2) + " s (" + st.dur_kind + ")" });
     }
     if (st.note) kv.push({ key: "Not placed", value: st.note });
+    var pr = poseRows[s.step];
+    if (pr && pr.q) {
+      kv.push({ key: "Arm joints", value: nums(pr.q, 2) });
+      kv.push({ key: "Posed by", value: pr.source === "joint"
+        ? "the taught joints — exact, no solver"
+        : "the inverse solver — posture not from CONFIG" });
+    }
+    if (pr && pr.residual) {
+      kv.push({ key: "Solve residual", value:
+        pr.residual.pos_mm.toFixed(3) + " mm · " + pr.residual.ori_deg.toFixed(4) +
+        "° · " + pr.residual.iters + " iterations" });
+    }
+    if (pr && pr.note) kv.push({ key: "Not reached", value: pr.note });
     var det = BV.el("div", { class: "v3-prog-detail" });
     det.appendChild(BV.dcsDetail(kv));
     side.appendChild(det);
   }
 
-  function buildSide(side, data, s, colors, redraw, robot, reload, path, pick, clear) {
+  function buildSide(side, data, s, colors, redraw, robot, reload, path, pick,
+                     clear, pose, dropProgram) {
     side.innerHTML = "";
     var listed = function (arr) {
       return arr.filter(function (e) {
@@ -868,9 +932,12 @@
         },
       }));
 
-      var frames = robotFrames(s, robot);
+      var frames = robotFrames(s, robot, pose);
       if (frames) {
         var srcPill = function () {
+          if (pose && pose.steps && pose.steps[s.step] && pose.steps[s.step].q) {
+            return BV.pill("program", "acc");
+          }
           return s.pose ? BV.pill("manual", "warn")
             : BV.pill(robot.q ? "backup" : "home", "ghost");
         };
@@ -886,7 +953,10 @@
               cell.insertAdjacentHTML("beforeend", "<span>J" + j.n + "</span>");
               var inp = BV.el("input", { type: "number", step: "1", value: String(+(q[i] || 0).toFixed(2)) });
               inp.addEventListener("change", function () {
+                /* a hand-edited pose and a program cannot both drive the arm;
+                   typing here means you want this one (see st()) */
                 s.pose = inputs.map(function (x) { return parseFloat(x.value) || 0; });
+                if (dropProgram) dropProgram();
                 poseRow.querySelector(".v3-row-tags").innerHTML = BV.pill("manual", "warn");
                 redraw();
               });
@@ -898,7 +968,8 @@
             var rst = BV.el("button", { class: "btn v3-mini", title: "back to the backup’s own pose" }, "reset pose");
             rst.addEventListener("click", function () {
               s.pose = null;
-              buildSide(side, data, s, colors, redraw, robot, reload, path, pick, clear);
+              buildSide(side, data, s, colors, redraw, robot, reload, path, pick, clear,
+                pose, dropProgram);
               redraw();
             });
             body.appendChild(rst);
@@ -911,7 +982,7 @@
     /* the loaded program: its moves and the evidence for the selected one.
        Under the robot rows because it is about the arm; above the zones
        because it is what you came here to watch. */
-    if (path) programSection(side, s, path, pick, clear);
+    if (path) programSection(side, s, path, pick, clear, pose);
 
     /* cartesian zones - the drawable category, checkbox + swatch */
     var zs = listed(data.cpc);
@@ -920,11 +991,13 @@
       side.appendChild(catHead("cartesian position", en, data.cpc.length, [
         miniBtn("all", "show every listed zone", function () {
           zs.forEach(function (z) { delete s.hidden[z.n]; });
-          buildSide(side, data, s, colors, redraw, robot, reload, path, pick, clear); redraw();
+          buildSide(side, data, s, colors, redraw, robot, reload, path, pick, clear,
+                pose, dropProgram); redraw();
         }),
         miniBtn("none", "hide every listed zone", function () {
           zs.forEach(function (z) { s.hidden[z.n] = true; });
-          buildSide(side, data, s, colors, redraw, robot, reload, path, pick, clear); redraw();
+          buildSide(side, data, s, colors, redraw, robot, reload, path, pick, clear,
+                pose, dropProgram); redraw();
         }),
       ]));
       zs.forEach(function (z) {
@@ -1052,10 +1125,12 @@
       view.appendChild(side);
 
       var path = null;      /* the loaded program's resolved path, or null */
+      var pose = null;      /* and the joint angles that walk it */
 
-      function redraw() { draw(svg, data, s, colors, robot, path); }
+      function redraw() { draw(svg, data, s, colors, robot, path, pose); }
       function rebuildSide() {
-        buildSide(side, data, s, colors, redraw, robot, reload, path, pick, clear);
+        buildSide(side, data, s, colors, redraw, robot, reload, path, pick, clear,
+                pose, dropProgram);
       }
       function pick(i) {
         s.step = i;
@@ -1067,8 +1142,15 @@
            IS the state, and a same-hash set fires no hashchange (router.js's
            own idiom, which is why the explicit re-route is here) */
         s.prog = null;
+        pose = null;
         if (location.hash === "#view3d") BV.route();
         else location.hash = "#view3d";
+      }
+      function dropProgram() {
+        /* the pose grid took the arm. The path stays drawn - it is still
+           evidence about the program - but the program stops driving the
+           skeleton, so the pose pill can honestly say "manual". */
+        pose = null;
       }
       function loadProgram(file) {
         return BV.api.call("get_program_path", file).then(function (r) {
@@ -1081,6 +1163,15 @@
           syncTools();
           rebuildSide();
           redraw();
+          if (!r.robot.posable) return null;
+          /* the solve is the expensive half and the path is useful without
+             it, so it lands second and the view repaints when it arrives */
+          return BV.api.call("get_program_pose", file).then(function (pr) {
+            if (s.prog !== file) return;    /* a later pick won the race */
+            pose = pr;
+            rebuildSide();
+            redraw();
+          }).catch(function () { /* the path still stands on its own */ });
         }).catch(function (e) {
           BV.toast("could not read " + file + " — " + e.message);
         });

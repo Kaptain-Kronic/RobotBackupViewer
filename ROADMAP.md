@@ -104,8 +104,12 @@ Each of these is deliberately scoped to land on its own. Good places to start.
   kinematics for the cartesian half. The slice also landed the viewport's
   first tracked probe (`ui_view3d_probe.py`), which is why 3d-viewer.md §8
   no longer opens with "the viewport renders under no test at all".
-- 🔨 **Play the path** — pose the arm at a chosen step and animate it along the
-  program. Cartesian points need an inverse solve, which is the next slice.
+- 🔨 **Play the path** — the arm now poses at whichever program step you pick:
+  joint-recorded points by their own taught angles (exact, no solver),
+  cartesian points through a damped-least-squares solve whose answer is
+  accepted only when the forward chain reproduces the taught pose. The
+  interpolation knots between steps are computed with it, so what is left is
+  the player bar and the loop.
 - 📋 **Decode the taught CONFIG, and select the IK branch with it** — the
   config string (`N U T, 0, 0, 0`) names the wrist flip, elbow up/down,
   front/back and the J1/J4/J6 turn counts, and nothing in this repo has

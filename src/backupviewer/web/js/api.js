@@ -48,6 +48,7 @@
     get_dcs_zones: 0, get_robot_pose: 0, get_sysvar_records: 0, get_sysvar: 1,
     get_mhvalves: 0, get_magnet: 0, get_payloads: 0, search_backup: 1,
     get_overview: 0, get_styles: 0, get_program: 1, get_program_path: 1,
+    get_program_pose: 1,
     get_call_tree: 2, get_alarm_files: 0, get_alarms: 4, list_files: 0,
     get_file: 1, files_extract: 3, get_photos: 0, get_image: 1,
     cvx_models: 0, cvx_model: 2, cvx_model_export: 3, cvx_overview: 0,
@@ -85,6 +86,10 @@
        scripts and names out of it measures 3-4 s cold on a real camera (then
        the session cache serves it instantly) */
     cvx_logic: "reading the camera's programs…",
+    /* one inverse solve per taught cartesian point, plus the substeps along
+       every linear move - about a second for a 200-move program, and the
+       session cache serves it instantly after that */
+    get_program_pose: "solving the program's poses…",
   };
   var inflight = {};   /* method + BV.KEYSEP + argsJSON -> the pending promise */
 

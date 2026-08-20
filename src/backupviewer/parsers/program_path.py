@@ -30,8 +30,9 @@ from __future__ import annotations
 import math
 import re
 
-from .kinematics import chain_frames, frame, inv_rigid, mul, wpr_of
-from .ls_motion import step_duration_ms
+from .kinematics import (chain_frames, frame, inv_rigid, lerp_pose, mul,
+                         pose_error, solve_ik, wpr_of)
+from .ls_motion import ASSUMED_JOINT_DEG_S, step_duration_ms
 from .ls_program import mn_stream
 
 # a body line whose statement ASSIGNS a position register: PR[7]=... . Such a
@@ -168,7 +169,7 @@ def build_path(prog, motions, frames_model=None, posreg=None, pr_written=(),
             "speed": m["speed"], "term": m["term"],
             "options": m["options"], "offset": m["offset"],
             "tool_offset": m["tool_offset"], "incremental": m["incremental"],
-            "rep": None, "uf": None, "ut": None, "config": "",
+            "rep": None, "uf": None, "ut": None, "config": "", "tool": None,
             "xyzwpr": None, "joints": None, "world": None,
             "dist_mm": None, "dur_ms": None, "dur_kind": "unknown",
             "ok": False, "why": None, "note": None,
@@ -279,6 +280,7 @@ def _place(st, target, pos_by_id, pr_by_id, pr_written, frames_model,
         st["why"] = why
         st["_num"] = ut_num
         return
+    st["tool"] = tool
     if ut_cur:
         assume["utool-current"] = ut_num
 
@@ -327,3 +329,151 @@ def flange_target(world_xyzwpr, utool_xyzwpr) -> list:
     """
     tcp = frame(world_xyzwpr[:3], world_xyzwpr[3:])
     return mul(tcp, inv_rigid(frame(utool_xyzwpr[:3], utool_xyzwpr[3:])))
+
+# -- posing the arm along the path -----------------------------------------
+
+POSE_NOTES = {
+    "no-target": "this move has no placed position to pose at",
+    "no-chain": "no kinematics for this robot type — the arm cannot be posed",
+    "no-converge": ("the solver did not converge on this point in {iters} "
+                    "iterations — not posed"),
+    "out-of-tolerance": ("the solver landed {pos:.1f} mm / {ori:.2f}° off the taught "
+                         "point — not posed"),
+}
+
+# substeps along a LINEAR or CIRCULAR move, so the arm follows the drawn line
+# instead of bowing off it. A joint move needs none: joint-space interpolation
+# IS what a J move does, so its two ends are the whole truth.
+SUBSTEP_MM = 25.0
+SUBSTEP_DEG = 5.0
+MAX_SUBSTEPS = 40
+MAX_KNOTS = 4000        # whole-program budget; over it, density scales down
+
+
+def _substeps(dist_mm, ori_deg, scale=1.0):
+    n = math.ceil((dist_mm or 0.0) / SUBSTEP_MM) + math.ceil((ori_deg or 0.0) / SUBSTEP_DEG)
+    return max(1, min(MAX_SUBSTEPS, int(math.ceil(n * scale))))
+
+
+def _pose_mat(world):
+    return frame(world[:3], world[3:])
+
+
+def build_pose(path, kin=None, flange_dz: float = 0.0, q_seed=None) -> dict:
+    """Joint angles for every placed step, and the knots between them.
+
+    -> {"steps": [{i, solved, source, q, knots, residual, why, note}], ...}
+
+    knots are the interpolation waypoints from the PREVIOUS pose up to and
+    including this one, so playback is one uniform rule - lerp in joint space
+    between consecutive knots - which a joint move satisfies exactly and a
+    linear move satisfies to the knot density.
+
+    A joint-recorded point is posed by its own taught angles: no solver, no
+    branch to choose, exact. A cartesian point is solved, and the answer is
+    only accepted when running it back through the forward chain reproduces
+    the taught pose. What that check CANNOT catch is a solution on a different
+    branch than the robot took - same tcp, mirrored elbow - so the solve warm
+    starts from the previous step to keep the branch continuous, and the
+    caller labels every solved pose as solved.
+    """
+    steps = []
+    if kin is None:
+        for st in path["steps"]:
+            steps.append({"i": st["i"], "solved": False, "source": None, "q": None,
+                          "knots": [], "residual": None, "why": "no-chain",
+                          "note": POSE_NOTES["no-chain"]})
+        return {"steps": steps, "counts": {"posed": 0, "refused": len(steps),
+                                           "exact": 0, "solved": 0},
+                "gate": None, "budget": {"knots": 0, "scaled": False},
+                "posable": False}
+
+    # one cheap pass to price the whole run, so a very long program thins its
+    # substeps rather than silently truncating
+    want = 0
+    prev = None
+    for st in path["steps"]:
+        if not st["ok"]:
+            continue
+        if st["rep"] == "joint" or prev is None:
+            want += 1
+        else:
+            _, pm, od = pose_error(_pose_mat(st["world"]), _pose_mat(prev))
+            want += _substeps(pm, od)
+        prev = st["world"]
+    scale = min(1.0, MAX_KNOTS / want) if want > MAX_KNOTS else 1.0
+
+    q = list(q_seed) if q_seed else None
+    prev_world = None
+    knots_total = 0
+    for st in path["steps"]:
+        row = {"i": st["i"], "solved": False, "source": None, "q": None,
+               "knots": [], "residual": None, "why": None, "note": None}
+        steps.append(row)
+        if not st["ok"]:
+            row["why"] = "no-target"
+            row["note"] = POSE_NOTES["no-target"]
+            continue
+
+        if st["rep"] == "joint":
+            row.update(solved=True, source="joint", q=[round(v, 4) for v in st["joints"]],
+                       knots=[[round(v, 4) for v in st["joints"]]])
+            q = list(st["joints"])
+            prev_world = st["world"]
+            knots_total += 1
+            continue
+
+        target = flange_target(st["world"], st["tool"] or [0.0] * 6)
+        # a linear or circular move walks the drawn line; a joint move (or the
+        # first placed move, with nowhere to come from) is a single hop
+        n = 1
+        if prev_world is not None and st["motion"] in ("L", "C"):
+            _, pm, od = pose_error(_pose_mat(st["world"]), _pose_mat(prev_world))
+            n = _substeps(pm, od, scale)
+        a = _pose_mat(prev_world) if prev_world is not None else None
+        b = _pose_mat(st["world"])
+        knots, last = [], None
+        failed = None
+        for k in range(1, n + 1):
+            t = k / float(n)
+            mid = flange_target_mat(lerp_pose(a, b, t), st["tool"] or [0.0] * 6) \
+                if a is not None else target
+            r = solve_ik(kin, mid, q, flange_dz=flange_dz)
+            if not r["ok"]:
+                failed = r
+                break
+            q = r["q"]
+            last = r
+            knots.append([round(v, 4) for v in q])
+        if failed is not None or last is None:
+            r = failed or {"pos_mm": float("inf"), "ori_deg": float("inf"), "iters": 0}
+            row["why"] = ("no-converge" if r["iters"] >= 60 else "out-of-tolerance")
+            row["note"] = POSE_NOTES[row["why"]].format(
+                iters=r["iters"], pos=r["pos_mm"], ori=r["ori_deg"])
+            row["residual"] = {"pos_mm": round(r["pos_mm"], 3),
+                               "ori_deg": round(r["ori_deg"], 4),
+                               "iters": r["iters"], "seed": r.get("seed", -1)}
+            continue
+        row.update(solved=True, source="ik", q=[round(v, 4) for v in last["q"]],
+                   knots=knots,
+                   residual={"pos_mm": round(last["pos_mm"], 3),
+                             "ori_deg": round(last["ori_deg"], 4),
+                             "iters": last["iters"], "seed": last["seed"]})
+        knots_total += len(knots)
+        prev_world = st["world"]
+
+    posed = [r for r in steps if r["solved"]]
+    return {
+        "steps": steps,
+        "counts": {"posed": len(posed), "refused": len(steps) - len(posed),
+                   "exact": sum(1 for r in posed if r["source"] == "joint"),
+                   "solved": sum(1 for r in posed if r["source"] == "ik")},
+        "gate": {"pos_mm": 0.5, "ori_deg": 0.05},
+        "budget": {"knots": knots_total, "scaled": scale < 1.0},
+        "posable": True,
+    }
+
+
+def flange_target_mat(tcp_mat, utool_xyzwpr):
+    """flange_target, for a tcp already expressed as a matrix."""
+    return mul(tcp_mat, inv_rigid(frame(utool_xyzwpr[:3], utool_xyzwpr[3:])))

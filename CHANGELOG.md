@@ -1,6 +1,23 @@
 # Changelog
 
 ## unreleased — the camera gets its 3d view, and the files tab extracts
+- **The arm goes where the program says.** Pick a step in the 3d view and the
+  robot poses at that point. A joint-recorded point uses its own taught angles
+  — exact, no solver involved, and labelled `exact` to say so. A cartesian
+  point is solved for, by a damped-least-squares inverse over the same chain
+  the forward pose has always used, and the answer is only accepted when
+  running it back forward reproduces the taught point inside half a
+  millimetre. When it doesn't, the point still draws and its row goes amber
+  with the residual the solver actually reached — "not reached", which is a
+  different finding from "not placed" and is kept a different one.
+  One thing the app cannot check and therefore says out loud: a robot can
+  reach the same point with its elbow up or down, and both are correct to
+  within nothing. The taught CONFIG string records which one the robot used,
+  but nothing in this app has ever proven what its letters mean, so it is
+  carried verbatim and not read. The solver instead starts from the previous
+  step, which keeps the posture continuous the way real motion is — and the
+  viewport says plainly that a solved posture may differ from the one the
+  robot used. Anything that would make that claim stronger needs a pendant.
 - **A program's path, drawn where it actually is.** The 3d view gained a
   program picker in its toolbar (and a "view in 3d" button on the programs
   tab's positions card): pick a program and its taught points draw among the

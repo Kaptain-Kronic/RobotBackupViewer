@@ -10,6 +10,8 @@ on that baseline and it should not be the first thing to break.
 
 Two backups, both fabricated:
   RB010R01B01  matched type + CURPOS, no FRAME.DG -> the arm poses (unverified)
+               and follows the program: joint-recorded points exactly, cartesian
+               ones through the inverse solve
   RB020R01B01  matched type + CURPOS + FRAME.DG whose world TCP CONTRADICTS the
                kinematics -> the arm must NOT be drawn, and the joint-recorded
                point must not be placed either, while cartesian points still are
@@ -224,9 +226,15 @@ def probe(window):
         check("prog.joint_point_placed",
               js(window, "[...document.querySelectorAll('.v3-step')][2]"
                          ".className.indexOf('dim') < 0"))
-        check("prog.joint_point_exact",
-              "exact" in str(js(window, "[...document.querySelectorAll('.v3-step')][2]"
-                                        ".querySelector('.v3-step-tags').textContent")))
+        # the inverse solve lands second - wait for it, then read the tiers
+        poll(window, "[...document.querySelectorAll('.v3-step-tags')]"
+                     ".map(function(t){return t.textContent;}).join('|')"
+                     ".indexOf('solved') >= 0 ? 'y' : ''")
+        tags = js(window, "[...document.querySelectorAll('.v3-step')]"
+                          ".map(function(r){var t=r.querySelector('.v3-step-tags');"
+                          "return t?t.textContent:'';}).join('|')")
+        check("prog.joint_point_exact", "exact" in str(tags), f"({tags})")
+        check("prog.cartesian_point_solved", "solved" in str(tags), f"({tags})")
 
         # a move whose position the program does not record is LISTED, dimmed,
         # and says why - never silently dropped
@@ -241,13 +249,61 @@ def probe(window):
                            ".map(function(t){return t.textContent;}).join('|')")
         check("prog.viewport_note", "not placed" in str(notes), f"({str(notes)[:100]!r})")
 
-        # picking a step moves the selection in the list AND in the viewport
+        # every placed step still gets a marker once the solve has landed -
+        # a point the arm cannot reach is still where the backup says it is
+        pts2 = js(window, "document.querySelectorAll('.v3-pt').length")
+        placed2 = js(window, "document.querySelectorAll('.v3-step:not(.dim)').length")
+        check("prog.markers_survive_the_solve", pts2 == placed2 and pts2 == pts,
+              f"(pts={pts2} placed={placed2})")
+
+        # picking a step moves the selection in the list, in the viewport, AND
+        # moves the arm: this is the whole point of the slice
+        arm0 = js(window, "document.querySelector('.v3-skel').getAttribute('d')")
         js(window, "[...document.querySelectorAll('.v3-step')][1].click()")
-        time.sleep(0.4)
+        time.sleep(0.5)
         check("prog.step_click_selects",
               js(window, "BV.tabState('view3d').step") == 1)
         check("prog.selected_point_marked",
               js(window, "document.querySelectorAll('.v3-pt.sel').length") == 1)
+        arm1 = js(window, "document.querySelector('.v3-skel').getAttribute('d')")
+        check("pose.arm_follows_the_step", arm0 != arm1)
+        check("pose.pill_says_program",
+              "program" in str(js(window, "[...document.querySelectorAll('.v3-row')]"
+                                          ".map(function(r){return r.textContent;})"
+                                          ".join('|')")))
+
+        # step 1 is a cartesian point, so its detail carries the solve itself
+        detail = js(window, "document.querySelector('.v3-prog-detail').textContent")
+        check("pose.residual_shown", "Solve residual" in str(detail), f"({str(detail)[:80]!r})")
+        check("pose.says_how_it_was_posed", "Posed by" in str(detail))
+        check("pose.branch_note",
+              "CONFIG" in str(js(window, "[...document.querySelectorAll('.v3-note')]"
+                                         ".map(function(t){return t.textContent;})"
+                                         ".join('|')")))
+
+        # typing in the pose grid takes the arm back off the program
+        js(window, """(function(){
+            var rows=[...document.querySelectorAll('.v3-row-head')];
+            var r=rows.find(function(h){return h.textContent.indexOf('pose')>=0;});
+            if (r) r.click();
+        })()""")
+        time.sleep(0.4)
+        js(window, """(function(){
+            var i=document.querySelector('.v3-pose-cell input');
+            if(!i) return; i.value='33';
+            i.dispatchEvent(new Event('change',{bubbles:true}));
+        })()""")
+        time.sleep(0.5)
+        check("pose.manual_takes_over",
+              "manual" in str(js(window, "[...document.querySelectorAll('.v3-row')]"
+                                         ".map(function(r){return r.textContent;})"
+                                         ".join('|')")))
+        check("pose.path_survives_manual",
+              js(window, "document.querySelectorAll('.v3-path').length") == 1)
+        # back to the program
+        goto(window, "#overview")
+        goto(window, "#view3d/" + PROG)
+        poll(window, "document.querySelectorAll('.v3-step').length")
 
         # the picker filters
         js(window, "[...document.querySelectorAll('#toolbar .btn')]"

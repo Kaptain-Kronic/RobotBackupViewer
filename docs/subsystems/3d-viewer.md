@@ -55,6 +55,15 @@ placement. It gets a provenance paragraph in §2 and nothing more.
 
 ---
 
+> **2026-08-20b — the inverse solve.** `kinematics.py` gained a damped
+> least-squares solver (add-only; not one line above `measure_flange` moved,
+> so `ui_fk_probe` and `test_kinematics` hold by construction) and the arm now
+> poses at whichever program step you select. §4 has its own table for it. The
+> one thing worth carrying in your head: the solver's honesty gate checks the
+> POSE, and a wrong **branch** reproduces the pose perfectly — so a solved
+> posture is labelled, permanently, and nothing but a pendant pairing of
+> `CONFIG` will change that.
+
 > **2026-08-20 — the program-path slice.** The tab gained a second thing to
 > draw: a program's taught points and the path between them, resolved by
 > `parsers/program_path.py` behind `get_program_path`. §2, §3, §4, §5, §6 and
@@ -281,6 +290,19 @@ note.
 | A position taught only for motion group 2 never supplies numbers for the group-1 arm | test-enforced (`test_group_two_numbers_are_never_used_for_the_group_one_arm`) |
 | `CONFIG` is carried **verbatim and never decoded**. Its letters (flip/up/front) and turn numbers have not been pendant-paired in this repo, so no meaning is claimed for them | the raw string rides every step's detail block |
 
+### The inverse solve
+
+| Fact | Evidence |
+|---|---|
+| Damped least squares, `Δq = Jᵀ(JJᵀ + λ²I)⁻¹b`, **always a 6×6 solve** whatever the joint count — so the 4-joint delta, the 6-axis arm and the 7-axis type share one code path. Too few joints leaves residual in the DOFs the chain lacks (the gate then refuses); too many gives the minimum-norm step, which stays near the warm start, so branch continuity is free | `kinematics.solve_ik`; the short-chain refusal is test-enforced |
+| The Jacobian is **analytic**, from the chain's own algebra: `frames[i] = acc_{i-1}·T_i·Rz(θ_i)`, and `Rz` about the local z changes neither the translation nor the third column, so `ω_i` is that third column, `p_i` its translation, `v_i = ω_i × (p_tcp − p_i)`. One forward pass per iteration instead of the seven a finite-difference Jacobian costs | test-enforced against a finite-difference Jacobian over **every distinct chain shape** (12 today, deduped on joint count + the neg/parallel tuples so the sweep grows with the table); worst relative difference **8.7e-09** |
+| The neg/parallel coupling in the Jacobian is `_thetas`' rule, read off the same chain dict and never restated: `∂θ_i/∂q_k = s_i` for `i == k`, plus `s_i` again when joint `i` is a parallel link mastered by `k` | test-enforced per chain shape (`test_coupling_is_the_same_rule_thetas_uses`) — a drift here mis-poses the forearm on 181 of the 228 types |
+| Orientation error uses the `atan2` form with a near-π fallback, not the skew part alone: a cold seed's first iteration routinely sits past 90°, where the skew part shrinks back toward zero and would send the step the wrong way | test-enforced at 0.5°, 30°, −95°, 120°, 179.5° and exactly 180° |
+| `ok` is an **honesty gate, not convergence**: the answer is accepted only when running it back through the forward chain reproduces the target inside 0.5 mm / 0.05°. On failure the **best iterate seen** is returned, so the residual reported is the residual of the joints handed back | test-enforced both ways |
+| Seeds are tried in order — the previous step's answer (CURPOS for the first), then home, then four spread poses — and the ladder **stops early when two seeds land within 1% of each other**: the extra seeds exist to find a different *branch*, and a branch change cannot make an out-of-reach point reachable | measured: a 600-move program with 109 genuinely out-of-reach points went 75 s → 11 s; an all-reachable 200-move program solves in ~1.0 s |
+| A joint-recorded point is posed by its **own taught angles** — no solver, no branch to choose, exact — and is labelled `exact` to distinguish it from `solved` | test- and probe-enforced |
+| **The branch is the one thing no runtime check can catch.** A solution on a mirrored elbow reaches the same TCP with a ~0 residual. Warm-starting from the previous step keeps the branch *continuous*, which is what a real motion does; it does not make it *the taught one*. Every solved posture is labelled and the viewport says so | `test_warm_start_recovers_the_branch_not_just_the_pose` pins recovery to 0.5° from a warm seed; beyond that it is labelled, not proven — see §9 |
+
 ## 5. Invariants
 
 What must stay true, what enforces it, what breaks if it doesn't:
@@ -355,7 +377,12 @@ What must stay true, what enforces it, what breaks if it doesn't:
     join the world bounds at load, so the bounding sphere already covers
     every point the arm will visit. Growing the bounds per frame is the same
     trap the projected-bounding-box fit was (§7): the view pumps.
-13. **Everything the viewport claims is in mm, to scale.** The grid step,
+13. **Nothing poses on a chain the backup contradicts, whatever the route
+    in.** `poseGate(robot)` in `view3d.js` is the single JS predicate and
+    `robotFrames` is its only caller; `api._posable_chain` is the same rule on
+    the Python side. Adding a new path to `BV.fk.chain` that skips the gate
+    would draw arms the still frame refuses.
+14. **Everything the viewport claims is in mm, to scale.** The grid step,
     the axes (one grid-step long), the ruler, model radii, zone extents —
     all world mm through the same projector. No screen-space fudge factors
     on geometry; that is what "drawn to scale" means here
@@ -425,7 +452,12 @@ the code this pass, held by nothing.
     chain); joint-recorded points refuse with "a joint-recorded point needs
     the robot's kinematics to place". Verified (`test_program_path`), and
     the contradiction case is probe-verified end to end.
-14. **Probe environment** (and any headless WebView2): no
+15. **A taught point the arm cannot reach** → the point still draws (the
+    backup does say where it is) and its step row goes amber with `not
+    reached`, carrying the residual the solver actually achieved. Distinct
+    from `not placed`, which is the backup not saying where the point is —
+    two findings, two classes, never collapsed. Verified (`ui_view3d_probe`).
+16. **Probe environment** (and any headless WebView2): no
     `requestAnimationFrame`, synthetic pointers with no capturable id —
     `setPointerCapture` is wrapped in try/catch so a probe drag cannot
     throw (`view3d.js:527-528`). The tab renders statically per draw call
@@ -433,6 +465,12 @@ the code this pass, held by nothing.
 
 ## 7. Traps paid for
 
+- **Two ways to say "no", and they mean opposite things.** "Not placed" is
+  the *backup* failing to record where a point is; "not reached" is the
+  backup recording it fine and the *arm* being unable to get there. They were
+  briefly one dimmed row, which reads as "this program is half broken" when
+  the truth might be "this robot is on a rail we do not model". Separate
+  classes, separate pills, separate counts.
 - **The forked status map.** The 3D panel once carried its own
   status→pill copy; it disagreed with the dcs tab (the same zone read
   green on one screen and red on the other) and tested for a `"SAFE"`

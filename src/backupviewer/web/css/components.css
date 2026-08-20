@@ -2284,6 +2284,8 @@ text.v3-ax-z { fill: var(--accent); }
 .v3-step + .v3-step { border-top: 1px solid var(--edge-soft); }
 .v3-step:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .v3-step.sel { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+/* placed, but the arm cannot reach it - the point still draws */
+.v3-step.unreached .v3-step-t { color: var(--warn); }
 .v3-step-n { flex: none; min-width: 2.5ch; text-align: right; color: var(--sub-alt); font-family: var(--font-mono); }
 .v3-step-t { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
 .v3-step-tags { display: flex; gap: 0.2rem; flex: none; align-items: center; }
