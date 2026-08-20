@@ -1,6 +1,41 @@
 # Changelog
 
-## unreleased — the camera gets its 3d view, the files tab extracts, the scan window tightens up, and long scans go background
+## unreleased — the camera gets its 3d view, the files tab extracts, the scan window tightens up, long scans go background, and the 3d viewports share their instruments and find their speed
+- **The 3d viewports: instruments that survive every setting, one cube for
+  both viewers, and drag frames 4–7× faster.** The floor grid and the
+  orientation cube are instruments, not chrome — they used to vanish with
+  the "borders off" display setting because they borrowed its `--edge`
+  tokens; now they keep their exact look in either mode. The snap cube (26
+  targets: faces, edges, corners) moves out of view3d into a shared
+  `BV.viewCube` primitive, and the camera mesh viewer gains it plus the
+  same perspective toggle the robot view has — and in both viewers the mm
+  ruler now hides while perspective is on, because mm-per-px varies with
+  depth there and a ruler that lies is worse than none. The mesh painter
+  learns the classic software-renderer moves, each exact or honest: face
+  normals precomputed once per mesh; backface culling only on meshes
+  *proven* closed and consistently wound (every directed edge pairs with
+  its reverse — open scan surfaces keep the two-sided draw, and decimated
+  soups fail the proof by construction); painter order by O(n) counting
+  sort on quantized depth; same-shade, same-winding depth runs batched
+  into one fill; and big meshes drag at 0.6× backing resolution without
+  the antialiasing hairline, settling to a full-quality frame on release —
+  the resting image is always exact. Measured on the real 29,424-triangle
+  part that raised the complaint: drag frames that cost 258–452 ms before
+  (varying with machine load) cost 45–93 ms now, 14–27 ms internal per
+  coarse frame, with 51% of the part's faces skipped only because its mesh
+  proves closed. The enlarge lightbox carries the cube too, and
+  `ui_cvx3d_probe` pins all of it — cube render and snap, the perspective
+  toggle, the borders exemption, and the closed-culls/open-never-culls
+  proof. And the field-reported **seamless mirror**: the top plan and the
+  bottom plan are exact XZ mirror images that both draw X up-screen, and
+  spam-clicking the cube's rim targets teleports across the equator with
+  only the cube's small label as a tell — reading a keep-out zone off a
+  mirrored layout is exactly the wrong-data case this app exists to
+  prevent. Any below-floor camera (snapped or dragged there) now stamps
+  "⚠ viewing from BELOW the floor — the layout reads mirrored" first in
+  the viewport notes; bottom views stay reachable, because under-cell
+  inspection is legitimate evidence — the ambiguity was the bug, not the
+  viewpoint.
 - **Scans become background jobs — closing a window no longer cancels minutes
   of work.** The fleet health scan and the network discover used to live and
   die with their dialog: an Esc mid-scan (or, for discover, one stray click

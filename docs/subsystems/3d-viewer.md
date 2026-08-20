@@ -10,8 +10,9 @@ Covers: src/backupviewer/kinematics_builtin.py, src/backupviewer/modeldb.py,
 src/backupviewer/parsers/curpos.py, src/backupviewer/parsers/dcszones.py,
 src/backupviewer/parsers/kinematics.py, src/backupviewer/parsers/roboguidedef.py,
 src/backupviewer/web/js/components/fk.js, src/backupviewer/web/js/components/proj3d.js,
-src/backupviewer/web/js/tabs/dcs.js, src/backupviewer/web/js/tabs/view3d.js
-(10 files)
+src/backupviewer/web/js/components/viewcube.js, src/backupviewer/web/js/tabs/dcs.js,
+src/backupviewer/web/js/tabs/view3d.js
+(11 files)
 
 Not covered, from the inventory's 16-file "3D viewer" group: `robot
 modelas/_re/RMD-FORMAT.md`, `robot modelas/_re/rmd.py`, `robot
@@ -157,7 +158,11 @@ Inside `view3d.draw()` (`view3d.js:136-415`): world geometry per zone
 (poly → prism → zone frame) + the posed skeleton + posed elements → world
 bounding sphere → projector → **scene layer** in viewBox space (grid,
 axes, arm, painter-sorted zone faces, wireframes) → **overlay layer** in
-pixel space (labels, TCP crosshair, mm ruler, warnings, the snap cube).
+pixel space (labels, TCP crosshair, mm ruler, warnings). Since 2026-08-20
+the snap cube is `BV.viewCube` (`components/viewcube.js`) — the same
+26-target primitive the camera mesh screen rides — on its own fixed-size
+svg above the overlay, re-projected by `update()` at the end of each draw;
+it owns its clicks, so view3d no longer delegates `[data-az]`.
 State per tab visit lives in `BV.tabState("view3d")` — camera angles,
 hidden zones, group filter, pan/zoom box, perspective flag, manual pose —
 so the view restores exactly (`st()`, `view3d.js:25-44`).
@@ -219,7 +224,7 @@ note.
 |---|---|
 | The turntable camera is closed-form and defined for EVERY az/el — poles included and past them: screen-up is the elevation tangent (unit, perpendicular to the eye), so there is no gimbal snap and no degenerate "right" vector anywhere | `proj3d.js:20-33` |
 | …and the tab deliberately does not use that freedom: elevation clamps to exactly ±90 (§7, the flip). The projector keeps the capability; the UI keeps the sanity | `view3d.js:41-43,549-554` |
-| Orthographic by default — distances stay measurable (the mm ruler and the to-scale promise depend on it). Perspective is an optional wrap that foreshortens about the scene center: points at the center's depth are unchanged, so fit/pan/pivot math done there is exact in both modes, and the divisor is clamped so geometry never crosses the eye | `proj3d.js:5-9,38-47`; the toolbar spells the trade out ("off = orthographic (parallel, true to scale)", `view3d.js:907-910`) |
+| Orthographic by default — distances stay measurable (the mm ruler and the to-scale promise depend on it). Perspective is an optional wrap that foreshortens about the scene center: points at the center's depth are unchanged, so fit/pan/pivot math done there is exact in both modes, and the divisor is clamped so geometry never crosses the eye | `proj3d.js:5-9,38-47`; the toolbar spells the trade out ("off = orthographic (parallel, true to scale)", `view3d.js:907-910`). Since 2026-08-20 the mm ruler **hides while perspective is on** — mm-per-px varies with depth there (near side up to 1.4×), so showing it would be a lie — in this viewer and the camera mesh viewer both |
 | Painter's order: `project()` returns depth ascending toward the viewer; faces of **all** zones are sorted together, not per zone, so overlapping zones stack right | `proj3d.js:5-8`, `view3d.js:280-293` |
 | Auto-fit is rotation-invariant: it fits the world bounding **sphere**, which projects to the same circle at every angle — so orbiting cannot make the view "breathe". Bonus: mm-per-px matches across all views. Perspective's near-side magnification (≤ D/(D−R) = 1.4) is covered by the pad | `view3d.js:177-204` |
 | Zone colors rotate the theme accent's hue by the golden angle (137.508° per zone number): every theme keeps its character and 32 zones stay tellable. No hardcoded colors anywhere in the tab | `view3d.js:47-71`; the CLAUDE.md theme rule, instantiated |
@@ -292,10 +297,11 @@ What must stay true, what enforces it, what breaks if it doesn't:
    reason (§6) — and disabled/unconfigured checks stay listed behind
    "show disabled", never dropped (`view3d.js:88-94,614-621,917-927`).
 9. **Geometry in viewBox space, text in pixel space.** The scene layer
-   holds only geometry; every label, warning, ruler and the snap cube live
-   in the pixel overlay re-projected per draw — zoom and orbit move the
-   world, never the text size (`view3d.js:209-212,310-320`). The gesture
-   math and the overlay share the one uniform meet-scale (§7).
+   holds only geometry; every label, warning and the ruler live in the
+   pixel overlay re-projected per draw — zoom and orbit move the world,
+   never the text size (`view3d.js:209-212,310-320`) — and the snap cube
+   rides its own fixed-size svg (`BV.viewCube`, since 2026-08-20). The
+   gesture math and the overlay share the one uniform meet-scale (§7).
 10. **Everything the viewport claims is in mm, to scale.** The grid step,
     the axes (one grid-step long), the ruler, model radii, zone extents —
     all world mm through the same projector. No screen-space fudge factors
@@ -380,6 +386,21 @@ the code this pass, held by nothing.
   clamp elevation to **exactly** ±90 — the older complaints came from a
   ±89.5 clamp (top view never quite top), so the poles must stay exact
   (`view3d.js:41-43,549-554`).
+- **The seamless mirror at the equator** (field-reported 2026-08-20, the
+  clamp's snap-path twin). The top plan (az 180, el +90) and the bottom
+  plan (az 0, el −90) are exact XZ mirror images that BOTH draw world +X
+  up-screen — only the cube's small face label tells them apart — and cube
+  snaps teleport across the equator in a couple of rim clicks (spam-click
+  loops walk the edge→face chains), so a tech could read a keep-out zone
+  off a mirrored layout without noticing. Reproduced and quantified on a
+  real backup (+Y lands on opposite screen sides, +X identical). Fix, per
+  flag-never-block: any below-floor camera (el < 0, snap or drag) stamps
+  "⚠ viewing from BELOW the floor — the layout reads mirrored" first in
+  the overlay notes. Bottom views stay reachable — under-cell inspection
+  is legitimate evidence; only the ambiguity was the bug. Open question
+  for a ruling: giving the btm face az 180 instead of the canonical plan
+  azimuth would make the bottom plan visually distinct (X down-screen)
+  at the cost of the plan convention.
 - **Auto-fit that breathed.** Fitting the projected bounding box made the
   zoom pump while orbiting (the box's extent changes with angle, even
   spinning in place). Fix: fit the world bounding sphere — same circle at
@@ -452,10 +473,13 @@ tab**'s DOM (dashboard, signatures, section menu) but contains **no
 EOAT capsules, the mismatch-refusal note, the el-clamp under mega-drags
 and the first-run import flow (recorded 2026-07-18) were session scratch
 that never landed in a file. So today: zones-drawn, arm-posed,
-refuse-note-shown, cube-snaps, orbit state restore — all held by nothing
-but the fk math pin and care. A tracked view3d probe needs no real backup:
-synthetic DCSPOS text + a builtin chain would exercise the whole draw path
-(§9 item 2).
+refuse-note-shown, orbit state restore — all held by nothing but the fk
+math pin and care. (Since 2026-08-20 the snap cube itself is the shared
+`BV.viewCube` primitive and IS probe-held — `ui_cvx3d_probe` pins its
+render, backface hiding, click-snap and the borders-off stroke exemption —
+but view3d's own wiring of it, and everything else above, still isn't.)
+A tracked view3d probe needs no real backup: synthetic DCSPOS text + a
+builtin chain would exercise the whole draw path (§9 item 2).
 
 **Also uncovered:** `proj3d.js` — zero direct tests anywhere (turntable
 basis, perspective wrap, unproject, prism topology; its `frameTransform`
