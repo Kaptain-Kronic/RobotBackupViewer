@@ -96,6 +96,22 @@ FRAME_DG = """Tool Frame
    0.0    0.0   150.0    0.0    0.0    0.0  GRIPPER
 """
 
+# Two taught tools, because that is the shape that made the filter necessary:
+# a drop program runs most of its moves on one tool and a couple on another,
+# and the TCP is a different physical point on each.
+SYSFRAME = """[*SYSTEM*]$MNUTOOL  Storage: CMOS  Access: RW  : ARRAY[2,20] OF POSITION
+  [1,1] = '' Group: 1
+    X:   0.000   Y:   0.000   Z: 150.000
+    W:   0.000   P:   0.000   R:   0.000
+  [1,11] = '' Group: 1
+    X:   0.000   Y: 200.000   Z: 300.000
+    W:   0.000   P:   0.000   R:   0.000
+[*SYSTEM*]$MNUTOOLNUM  Storage: CMOS  Access: RW  : ARRAY[2] OF BYTE
+  [1] = 1
+[*SYSTEM*]$MNUFRAMENUM  Storage: CMOS  Access: RW  : ARRAY[2] OF BYTE
+  [1] = 0
+"""
+
 PROGRAM = f"""/PROG  MOVER
 /ATTR
 COMMENT		= "probe path";
@@ -107,19 +123,19 @@ COMMENT		= "probe path";
 /POS
 P[1]{{
    GP1:
-	UF : 0, UT : 0,		CONFIG : 'N U T, 0, 0, 0',
+	UF : 0, UT : 1,		CONFIG : 'N U T, 0, 0, 0',
 	X =  1200.000  mm,	Y =  -400.000  mm,	Z =  900.000  mm,
 	W =  0.000 deg,	P =  0.000 deg,	R =  0.000 deg
 }};
 P[2]{{
    GP1:
-	UF : 0, UT : 0,		CONFIG : 'N U T, 0, 0, 0',
+	UF : 0, UT : 1,		CONFIG : 'N U T, 0, 0, 0',
 	X =  1200.000  mm,	Y =  400.000  mm,	Z =  900.000  mm,
 	W =  0.000 deg,	P =  0.000 deg,	R =  0.000 deg
 }};
 P[3]{{
    GP1:
-	UF : 0, UT : 0,
+	UF : 0, UT : 11,
 	{",	".join(f"J{i + 1}=  {v:.3f} deg" for i, v in enumerate(TAUGHT_Q))}
 }};
 /END
@@ -160,6 +176,7 @@ def build_tree(lib: Path) -> None:
         (snap / "DCSVRFY.DG").write_text(
             DCSVRFY_UNTYPED if rb == BARE else DCSVRFY, encoding="utf-8")
         (snap / "CURPOS.DG").write_text(curpos(), encoding="utf-8")
+        (snap / "SYSFRAME.VA").write_text(SYSFRAME, encoding="utf-8")
         (snap / PROG).write_text(PROGRAM, encoding="utf-8")
         for k in range(N_WITH_POINTS):
             (snap / ("PATHFILL%02d.LS" % k)).write_text(filler(k, True), encoding="utf-8")
@@ -502,6 +519,36 @@ def probe(window):
               "no program matches" in
               str(js(window, "document.querySelector('.v3-pick-note').textContent")))
 
+        # clear the filter first, or the list is still showing no-match and
+        # the click below lands on nothing (which would let the next check
+        # pass for the wrong reason - there being no program at all)
+        js(window, "(function(){var f=document.querySelector('.v3-pick input');"
+                   "f.value='';f.dispatchEvent(new Event('input',{bubbles:true}));})()")
+        time.sleep(0.4)
+
+        # a program on ONE tool gets no filter - a checkbox that can never
+        # change anything is noise, and this surface vanishes when unusable
+        js(window, """(function(){
+            var b=[...document.querySelectorAll('.v3-pick-item')]
+                .find(function(x){return x.textContent.indexOf('PATHFILL00')>=0;});
+            if (b) b.click();
+        })()""")
+        time.sleep(1.2)
+        poll(window, "document.querySelectorAll('.v3-step').length")
+        check("tool.single_tool_program_loaded",
+              "PATHFILL00" in str(js(window, "(document.querySelector('.v3-prog-name')"
+                                             "||{}).textContent || ''")))
+        check("tool.single_tool_gets_no_filter",
+              js(window, "document.querySelectorAll('.v3-tools').length") == 0)
+        check("tool.single_tool_still_shows_its_cell",
+              js(window, "document.querySelectorAll('.v3-step-ft').length") == 1)
+        js(window, """(function(){
+            var b=[...document.querySelectorAll('.v3-cat .btn')]
+                .find(function(x){return x.textContent==='change';});
+            if (b) b.click();
+        })()""")
+        time.sleep(0.8)
+
         # clicking one loads it
         js(window, "(function(){var f=document.querySelector('.v3-pick input');"
                    "f.value='';f.dispatchEvent(new Event('input',{bubbles:true}));})()")
@@ -515,6 +562,51 @@ def probe(window):
         check("pick.click_loads_the_program",
               js(window, "BV.tabState('view3d').prog") == PROG)
         poll(window, "document.querySelectorAll('.v3-step').length")
+
+        # ---------- the frame/tool cell, and one tool at a time ----------
+        fts = js(window, "[...document.querySelectorAll('.v3-step-ft')]"
+                         ".map(function(n){return n.textContent;}).join(',')")
+        check("tool.row_shows_uf_and_ut", "uf0/ut1" in str(fts) and "uf0/ut11" in str(fts),
+              f"({fts})")
+
+        check("tool.filter_offered", js(window, "document.querySelectorAll('.v3-tool').length") == 2)
+        pts_all = js(window, "document.querySelectorAll('.v3-pt').length")
+        total_all = js(window, "document.querySelector('.v3-clock').textContent")
+
+        # drop the odd tool out: its move stays LISTED but leaves the run
+        js(window, "document.querySelector('.v3-tool[data-ut=\"11\"] input').click()")
+        time.sleep(0.8)
+        check("tool.excluded_move_stays_listed",
+              js(window, "document.querySelectorAll('.v3-step').length") == 4)
+        check("tool.excluded_move_reads_excluded",
+              js(window, "document.querySelectorAll('.v3-step.offtool').length") == 1)
+        check("tool.excluded_point_leaves_the_path",
+              js(window, "document.querySelectorAll('.v3-pt').length") == pts_all - 1,
+              f"(was {pts_all})")
+        check("tool.run_gets_shorter",
+              js(window, "document.querySelector('.v3-clock').textContent") != total_all,
+              f"(was {total_all})")
+        check("tool.says_it_is_skipping",
+              "skipping the moves taught with ut11" in
+              str(js(window, "document.querySelector('.v3-prog-notes').textContent")))
+        check("tool.says_the_join_is_not_a_real_path",
+              "not a path the" in
+              str(js(window, "document.querySelector('.v3-prog-notes').textContent")))
+
+        # the last tool cannot be turned off - that is an empty run, not a filter
+        js(window, "document.querySelector('.v3-tool[data-ut=\"1\"] input').click()")
+        time.sleep(0.8)
+        check("tool.cannot_exclude_every_tool",
+              js(window, "document.querySelectorAll('.v3-pt').length") > 0)
+
+        # back to everything
+        js(window, """(function(){
+            [...document.querySelectorAll('.v3-tool input')].forEach(function(i){
+                if (!i.checked) i.click(); });
+        })()""")
+        time.sleep(0.8)
+        check("tool.restores",
+              js(window, "document.querySelectorAll('.v3-pt').length") == pts_all)
 
         # the picker is the panel's job alone - a program button back in the
         # toolbar would be a second door into the same list

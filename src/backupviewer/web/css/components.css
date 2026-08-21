@@ -2353,6 +2353,30 @@ text.v3-ax-z { fill: var(--accent); }
 .v3-step-n { flex: none; min-width: 2.5ch; text-align: right; color: var(--sub-alt); font-family: var(--font-mono); }
 .v3-step-t { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
 .v3-step-tags { display: flex; gap: 0.2rem; flex: none; align-items: center; }
+/* the frame and tool a move was taught in. Mono so the numbers line up down
+   the list, and never truncated - it is short and it is the thing you scan
+   for when a program changes tool part-way. */
+.v3-step-ft {
+  flex: none; font-family: var(--font-mono); font-size: 0.68rem;
+  color: var(--sub-alt); white-space: nowrap;
+}
+.v3-step.sel .v3-step-ft { color: var(--sub); }
+/* a move the tool filter is skipping: still listed, visibly not in the run */
+.v3-step.offtool { opacity: 0.45; }
+.v3-step.offtool .v3-step-t { text-decoration: line-through; }
+
+/* ---- the one-tool-at-a-time filter ---- */
+.v3-tools {
+  display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+  padding: 0.1rem 0 0.4rem;
+}
+.v3-tools-lab { font-size: 0.72rem; color: var(--sub); flex: none; }
+.v3-tool {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  font-family: var(--font-mono); font-size: 0.74rem; cursor: pointer;
+}
+.v3-tool input { width: 14px; height: 14px; accent-color: var(--accent); }
+.v3-tool-n { color: var(--sub-alt); font-size: 0.68rem; }
 .v3-prog-detail { margin-bottom: 0.4rem; }
 
 /* ---- the program picker, in the side panel ----
