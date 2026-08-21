@@ -133,6 +133,23 @@ DCS Version: V9.30
 """
 
 
+# Filler so the picker has a list worth scrolling: 30 listings that carry a
+# taught point and 10 pure-logic ones that do not. The count matters - the flex
+# crush this fixture pins only appears once the rows overflow the box.
+N_WITH_POINTS = 30
+N_LOGIC_ONLY = 10
+
+
+def filler(i: int, with_point: bool) -> str:
+    body = "   1:J P[1] 100% FINE ;\n" if with_point else "   1:  DO[%d]=ON ;\n" % (i + 1)
+    pos = ("P[1]{\n   GP1:\n\tUF : 0, UT : 0,\n"
+           "\tX =  900.000  mm,\tY =  0.000  mm,\tZ =  800.000  mm,\n"
+           "\tW =  0.000 deg,\tP =  0.000 deg,\tR =  0.000 deg\n};\n"
+           if with_point else "")
+    return ("/PROG  %s\n/ATTR\nCOMMENT\t\t= \"filler %d\";\n/MN\n%s/POS\n%s/END\n"
+            % (("PATHFILL%02d" % i) if with_point else ("LOGICONLY%02d" % i), i, body, pos))
+
+
 def build_tree(lib: Path) -> None:
     line = lib / "FakePlant" / "LINE01"
     for rb, bent in ((GOOD, False), (BENT, True), (BARE, False)):
@@ -144,6 +161,10 @@ def build_tree(lib: Path) -> None:
             DCSVRFY_UNTYPED if rb == BARE else DCSVRFY, encoding="utf-8")
         (snap / "CURPOS.DG").write_text(curpos(), encoding="utf-8")
         (snap / PROG).write_text(PROGRAM, encoding="utf-8")
+        for k in range(N_WITH_POINTS):
+            (snap / ("PATHFILL%02d.LS" % k)).write_text(filler(k, True), encoding="utf-8")
+        for k in range(N_LOGIC_ONLY):
+            (snap / ("LOGICONLY%02d.LS" % k)).write_text(filler(k, False), encoding="utf-8")
         if bent:
             # a taught tool + the world TCP above cannot both hold for this
             # chain at these joints -> measure_flange refuses
@@ -398,19 +419,102 @@ def probe(window):
         goto(window, "#view3d/" + PROG)
         poll(window, "document.querySelectorAll('.v3-step').length")
 
-        # the picker filters
-        js(window, "[...document.querySelectorAll('#toolbar .btn')]"
-                   ".find(function(b){return b.textContent.indexOf('\\u25be')>=0;}).click()")
-        time.sleep(0.6)
-        n_all = poll(window, "document.querySelectorAll('.v3-pick-item').length")
-        check("prog.picker_lists", n_all >= 1, f"(got {n_all})")
+        # ---------- the picker (no program loaded) ----------
+        # a bare #view3d deliberately RESTORES the last program, so the way
+        # back to the picker is the section's own "change" button
+        js(window, """(function(){
+            var b=[...document.querySelectorAll('.v3-cat .btn')]
+                .find(function(x){return x.textContent==='change';});
+            if (b) b.click();
+        })()""")
+        time.sleep(0.8)
+        check("pick.change_returns_to_the_picker",
+              js(window, "document.querySelectorAll('.v3-pick').length") == 1)
+        check("pick.change_clears_the_program",
+              js(window, "BV.tabState('view3d').prog") is None)
+        n_shown = poll(window, "document.querySelectorAll('.v3-pick-item').length")
+        # MOVER plus the fillers that carry a point; the logic-only ones are out
+        check("pick.only_programs_with_points", n_shown == 1 + N_WITH_POINTS,
+              f"(got {n_shown}, wanted {1 + N_WITH_POINTS})")
+        names = js(window, "[...document.querySelectorAll('.v3-pick-name')]"
+                           ".map(function(n){return n.textContent;}).join(',')")
+        check("pick.logic_only_excluded", "LOGICONLY" not in str(names))
+
+        # The regression this list was rebuilt for: on a real controller's
+        # library the rows ran together into a wall of clipped, overlapping
+        # text. Pinned as the invariant a reader actually needs - every row
+        # keeps a full line box, and no row sits on top of the one above it -
+        # rather than as any one CSS mechanism, since the density had several
+        # contributing causes and a future one would look the same.
+        geom = js(window, """(function(){
+            var rs=[...document.querySelectorAll('.v3-pick-item')]
+                .map(function(r){return r.getBoundingClientRect();});
+            var minh=Infinity, overlap=0;
+            for (var i=0;i<rs.length;i++){
+                if (rs[i].height < minh) minh = rs[i].height;
+                if (i && rs[i].top < rs[i-1].bottom - 0.5) overlap++;
+            }
+            return minh + '|' + overlap + '|' + rs.length;
+        })()""")
+        minh, overlap, nrows = str(geom).split("|")
+        check("pick.rows_keep_a_full_line", float(minh) >= 12,
+              f"(shortest row {minh}px over {nrows} rows)")
+        check("pick.rows_do_not_overlap", int(overlap) == 0,
+              f"({overlap} of {nrows} rows sit on the one above)")
+        check("pick.list_scrolls_instead",
+              js(window, "(function(){var l=document.querySelector('.v3-pick-list');"
+                         "return l.scrollHeight > l.clientHeight;})()"))
+
+        # the count of taught points rides each row - why it is offered at all
+        check("pick.shows_point_counts",
+              js(window, "document.querySelectorAll('.v3-pick-n').length") == n_shown)
+
+        # "show all" reaches the ones with nothing to draw, so nothing is hidden
+        js(window, """(function(){
+            var b=[...document.querySelectorAll('.v3-cat .btn')]
+                .find(function(x){return x.textContent==='show all';});
+            if (b) b.click();
+        })()""")
+        time.sleep(0.5)
+        n_every = js(window, "document.querySelectorAll('.v3-pick-item').length")
+        check("pick.show_all_reveals_the_rest", n_every == n_shown + N_LOGIC_ONLY,
+              f"(got {n_every}, wanted {n_shown + N_LOGIC_ONLY})")
+        js(window, """(function(){
+            var b=[...document.querySelectorAll('.v3-cat .btn')]
+                .find(function(x){return x.textContent==='with points';});
+            if (b) b.click();
+        })()""")
+        time.sleep(0.5)
+
+        # the filter narrows, and typing does not cost the caret
         js(window, "(function(){var f=document.querySelector('.v3-pick input');"
-                   "f.value='ZZZNOMATCH';f.dispatchEvent(new Event('input'));})()")
-        time.sleep(0.3)
-        check("prog.picker_filters",
-              js(window, "document.querySelectorAll('.v3-pick-item').length") == 0)
-        js(window, "document.body.click()")
-        time.sleep(0.3)
+                   "f.value='MOVER';f.dispatchEvent(new Event('input',{bubbles:true}));})()")
+        time.sleep(0.4)
+        check("pick.filter_narrows",
+              js(window, "document.querySelectorAll('.v3-pick-item').length") == 1)
+        check("pick.filter_keeps_its_text",
+              js(window, "document.querySelector('.v3-pick input').value") == "MOVER")
+        js(window, "(function(){var f=document.querySelector('.v3-pick input');"
+                   "f.value='ZZZNOMATCH';f.dispatchEvent(new Event('input',{bubbles:true}));})()")
+        time.sleep(0.4)
+        check("pick.no_match_is_said",
+              js(window, "document.querySelectorAll('.v3-pick-item').length") == 0 and
+              "no program matches" in
+              str(js(window, "document.querySelector('.v3-pick-note').textContent")))
+
+        # clicking one loads it
+        js(window, "(function(){var f=document.querySelector('.v3-pick input');"
+                   "f.value='';f.dispatchEvent(new Event('input',{bubbles:true}));})()")
+        time.sleep(0.4)
+        js(window, """(function(){
+            var b=[...document.querySelectorAll('.v3-pick-item')]
+                .find(function(x){return x.textContent.indexOf('MOVER')>=0;});
+            if (b) b.click();
+        })()""")
+        time.sleep(1.0)
+        check("pick.click_loads_the_program",
+              js(window, "BV.tabState('view3d').prog") == PROG)
+        poll(window, "document.querySelectorAll('.v3-step').length")
 
         # the toggles hide the path and the markers
         js(window, "[...document.querySelectorAll('#toolbar .btn')]"

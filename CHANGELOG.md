@@ -1,6 +1,22 @@
 # Changelog
 
 ## unreleased — the camera gets its 3d view, and the files tab extracts
+- **The program picker moved into the panel, and stopped listing programs it
+  cannot draw.** It was a dropdown under the toolbar button, which on a real
+  controller meant six hundred lines of crushed, clipped text covering the very
+  viewport you were picking a program to look at. It is a section in the side
+  panel now, at the bottom, with room to breathe: one row per program, its
+  comment beside it, and its taught-point count on the right.
+  It offers only listings that carry taught positions, because a program with
+  no `/POS` section has nothing to draw — on a typical controller that is most
+  of them. Nothing is hidden for good: "show all" lists the rest, the same way
+  "show disabled" reaches the empty zone slots, and a line underneath says how
+  many are being held back and why.
+  Counting the points is deliberately cheap — anchored at `/POS`, ids only,
+  about 19 ms across 660 programs against the 10 ms the existing header pass
+  already spends on the same text. It counts taught points, not references, so
+  a `P[1]` sitting in a motion line is read as the reference it is; counting
+  those would call every program positional and the filter would be a lie.
 - **Press play, and the robot runs the program.** The 3d view gained a player
   bar: play, pause, back to the start, a scrubber, and a quarter/one/four-times
   speed. The arm walks the taught path through the DCS zones, and clicking any

@@ -2291,16 +2291,35 @@ text.v3-ax-z { fill: var(--accent); }
 .v3-step-tags { display: flex; gap: 0.2rem; flex: none; align-items: center; }
 .v3-prog-detail { margin-bottom: 0.4rem; }
 
-/* ---- the program picker (a dropPanel: a filter over a long list) ---- */
-.v3-pick { display: flex; flex-direction: column; gap: 0.35rem; width: min(22rem, 80vw); }
-.v3-pick input[type="search"] { width: 100%; padding: 0.25rem 0.4rem; font-size: 0.82rem; }
-.v3-pick-list { max-height: 52vh; overflow-y: auto; display: flex; flex-direction: column; }
-.v3-pick-item {
-  text-align: left; background: none; border: 0; color: inherit;
-  padding: 0.25rem 0.4rem; font-size: 0.82rem; border-radius: var(--radius);
-  cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+/* ---- the program picker, in the side panel ----
+   The list is a BLOCK, not a flex column. As a flex column every row inherits
+   flex-shrink:1, so a library of six hundred programs inside a max-height box
+   crushed all six hundred rows into slivers of overlapping text. */
+.v3-pick { display: block; margin-bottom: 0.4rem; }
+.v3-pick input[type="search"] {
+  width: 100%; padding: 0.25rem 0.4rem; font-size: 0.82rem; margin-bottom: 0.3rem;
 }
+.v3-pick-list {
+  display: block; max-height: 40vh; overflow-y: auto;
+  border: 1px solid var(--edge); border-radius: var(--radius); background: var(--panel);
+}
+.v3-pick-item {
+  display: flex; align-items: baseline; gap: 0.4rem; width: 100%;
+  text-align: left; background: none; border: 0; color: inherit;
+  padding: 0.22rem 0.45rem; font-size: 0.78rem; cursor: pointer;
+  min-height: 1.5em;              /* a row is never shorter than its own text */
+  flex: none;
+}
+.v3-pick-item + .v3-pick-item { border-top: 1px solid var(--edge-soft); }
 .v3-pick-item:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.v3-pick-name { flex: none; font-family: var(--font-mono); }
+.v3-pick-cmt {
+  flex: 1 1 auto; min-width: 0; color: var(--sub); font-size: 0.72rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* the taught-point count: why this program is in the list at all */
+.v3-pick-n { flex: none; margin-left: auto; color: var(--sub-alt); font-size: 0.7rem; }
+.v3-pick-note { font-size: 0.72rem; line-height: 1.45; padding: 0.25rem 0.1rem; }
 /* the programs tab's jump-into-3d button, in the positions card header */
 .v3-jump { margin-left: auto; padding: 0.05rem 0.5rem; font-size: 0.72rem; }
 

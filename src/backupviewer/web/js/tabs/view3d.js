@@ -49,6 +49,8 @@
       s.showPoints = true;
       s.t = 0;           /* playhead, ms into the run */
       s.speed = 1;
+      s.progAll = false; /* false = only listings that carry taught points */
+      s.progFilter = "";
       /* deliberately NOT stored: whether it was playing. Coming back to a tab
          and finding the robot already moving is a jump scare, not a feature -
          the scrub position restores, the motion does not resume itself. */
@@ -908,10 +910,83 @@
     return row;
   }
 
+  /* The picker. Lives in the side panel rather than a dropdown under the
+     toolbar for two reasons: the panel has the room (a controller carries
+     hundreds of programs), and a dropdown that tall covers the very viewport
+     you are picking a program to look at.
+
+     Only listings that carry taught points are offered - a program with no
+     /POS section has nothing to draw - but the full list stays one click
+     away, the same way "show disabled" keeps empty zone slots reachable. */
+  function programPicker(side, s, progs, rebuild) {
+    var all = (progs || []).filter(function (r) { return !r.binary; });
+    var withPos = all.filter(function (r) { return r.positions > 0; });
+    var rows = s.progAll ? all : withPos;
+    side.appendChild(catHead("program", withPos.length, all.length, [
+      miniBtn(s.progAll ? "with points" : "show all",
+        s.progAll ? "list only the programs that carry taught points"
+                  : "list every program, including the ones with nothing to draw",
+        function () { s.progAll = !s.progAll; rebuild(); }),
+    ]));
+    if (!progs) {
+      side.insertAdjacentHTML("beforeend",
+        '<div class="dim v3-pick-note">reading the program list…</div>');
+      return;
+    }
+
+    var wrap = BV.el("div", { class: "v3-pick" });
+    var filter = BV.el("input", { type: "search", placeholder: "filter programs…" });
+    filter.value = s.progFilter || "";
+    var list = BV.el("div", { class: "v3-pick-list" });
+    wrap.appendChild(filter);
+    wrap.appendChild(list);
+    side.appendChild(wrap);
+
+    /* repaint the LIST on every keystroke, never the whole panel - rebuilding
+       the side would take the focus and the caret with it */
+    function paint() {
+      s.progFilter = filter.value;
+      var q = filter.value.trim().toUpperCase();
+      var hits = rows.filter(function (r) {
+        return !q || (r.name + " " + (r.comment || "")).toUpperCase().indexOf(q) >= 0;
+      });
+      list.innerHTML = "";
+      hits.forEach(function (r) {
+        var b = BV.el("button", {
+          class: "v3-pick-item",
+          title: (r.comment || r.name) + " — " + r.positions + " taught point" +
+                 (r.positions === 1 ? "" : "s"),
+        });
+        b.innerHTML = '<span class="v3-pick-name">' + BV.esc(r.name) + "</span>" +
+          (r.comment ? '<span class="v3-pick-cmt">' + BV.esc(r.comment) + "</span>" : "") +
+          '<span class="v3-pick-n">' + (r.positions || 0) + "</span>";
+        b.addEventListener("click", function () {
+          location.hash = "#view3d/" + encodeURIComponent(r.file);
+        });
+        list.appendChild(b);
+      });
+      if (!hits.length) {
+        list.innerHTML = '<div class="dim v3-pick-note">' +
+          (q ? "no program matches “" + BV.esc(q) + "”"
+             : "no program in this backup carries taught points") + "</div>";
+      }
+    }
+    filter.addEventListener("input", paint);
+    paint();
+
+    if (!s.progAll && all.length > withPos.length) {
+      side.insertAdjacentHTML("beforeend",
+        '<div class="dim v3-pick-note">' + (all.length - withPos.length) +
+        " program" + (all.length - withPos.length === 1 ? " carries" : "s carry") +
+        " no taught points and " +
+        "would draw nothing — “show all” lists them anyway</div>");
+    }
+  }
+
   function programSection(side, s, path, pick, clear, pose) {
     var c = path.counts;
     side.appendChild(catHead("program", c.placed, c.steps, [
-      miniBtn("clear", "stop showing this program", clear),
+      miniBtn("change", "pick a different program", clear),
     ]));
     var head = BV.el("div", { class: "v3-prog-head" });
     head.innerHTML = '<span class="v3-prog-name">' + BV.esc(path.name) + "</span>" +
@@ -990,7 +1065,7 @@
   }
 
   function buildSide(side, data, s, colors, redraw, robot, reload, path, pick,
-                     clear, pose, dropProgram) {
+                     clear, pose, dropProgram, progs, rebuildSide) {
     side.innerHTML = "";
     var listed = function (arr) {
       return arr.filter(function (e) {
@@ -1119,7 +1194,7 @@
             rst.addEventListener("click", function () {
               s.pose = null;
               buildSide(side, data, s, colors, redraw, robot, reload, path, pick, clear,
-                pose, dropProgram);
+                pose, dropProgram, progs, rebuildSide);
               redraw();
             });
             body.appendChild(rst);
@@ -1129,11 +1204,6 @@
       }
     }
 
-    /* the loaded program: its moves and the evidence for the selected one.
-       Under the robot rows because it is about the arm; above the zones
-       because it is what you came here to watch. */
-    if (path) programSection(side, s, path, pick, clear, pose);
-
     /* cartesian zones - the drawable category, checkbox + swatch */
     var zs = listed(data.cpc);
     if (data.cpc.length) {
@@ -1142,12 +1212,12 @@
         miniBtn("all", "show every listed zone", function () {
           zs.forEach(function (z) { delete s.hidden[z.n]; });
           buildSide(side, data, s, colors, redraw, robot, reload, path, pick, clear,
-                pose, dropProgram); redraw();
+                pose, dropProgram, progs, rebuildSide); redraw();
         }),
         miniBtn("none", "hide every listed zone", function () {
           zs.forEach(function (z) { s.hidden[z.n] = true; });
           buildSide(side, data, s, colors, redraw, robot, reload, path, pick, clear,
-                pose, dropProgram); redraw();
+                pose, dropProgram, progs, rebuildSide); redraw();
         }),
       ]));
       zs.forEach(function (z) {
@@ -1232,6 +1302,12 @@
       });
     }
 
+    /* the program, last: the picker until one is loaded, then its moves and
+       the evidence for the selected one. At the bottom because that is where
+       the panel has room for a list this long. */
+    if (path) programSection(side, s, path, pick, clear, pose);
+    else programPicker(side, s, progs, rebuildSide);
+
     if (!side.children.length) {
       side.innerHTML = '<div class="dim" style="padding:.6rem .4rem">no DCS checks configured' +
         (s.showDisabled ? "" : " — “show disabled” lists the empty slots") + "</div>";
@@ -1276,6 +1352,7 @@
 
       var path = null;      /* the loaded program's resolved path, or null */
       var pose = null;      /* and the joint angles that walk it */
+      var progs = null;     /* the pickable program list, once it arrives */
 
       function redraw() {
         draw(svg, data, s, colors, robot, path, pose);
@@ -1287,7 +1364,7 @@
       }
       function rebuildSide() {
         buildSide(side, data, s, colors, redraw, robot, reload, path, pick, clear,
-                pose, dropProgram);
+                pose, dropProgram, progs, rebuildSide);
       }
       function pick(i) {
         /* selecting a move IS seeking to it: the playhead and the highlight
@@ -1371,45 +1448,19 @@
       });
 
       /* toolbar: program · path · points · fit · perspective · show-disabled
-         · group filter. The picker is a dropPanel rather than a menu because
-         a controller carries hundreds of programs and you need to type at
-         them - "a filter + a list" is what dropPanel exists for. */
+         · group filter. The picker itself is in the side panel; this button
+         is the signpost to it, because on a backup with thirty zones the
+         section sits well below the fold. */
       var progBtn = BV.el("button", {
-        class: "btn", title: "draw a program's taught path among the zones",
+        class: "btn", title: "the program picker, in the panel on the right",
       }, "program ▾");
       progBtn.addEventListener("click", function () {
-        var wrap = BV.el("div", { class: "v3-pick" });
-        var filter = BV.el("input", { type: "search", placeholder: "filter programs…" });
-        var list = BV.el("div", { class: "v3-pick-list" });
-        wrap.appendChild(filter);
-        wrap.appendChild(list);
-        var handle = BV.dropPanel(progBtn, wrap);
-        if (!handle) return;
-        BV.api.call("get_programs").then(function (rows) {
-          var progs = rows.filter(function (r) { return !r.binary; });
-          function paint() {
-            var q = filter.value.trim().toUpperCase();
-            list.innerHTML = "";
-            progs.filter(function (r) {
-              return !q || (r.name + " " + (r.comment || "")).toUpperCase().indexOf(q) >= 0;
-            }).forEach(function (r) {
-              var b = BV.el("button", { class: "v3-pick-item", title: r.comment || "" });
-              b.innerHTML = BV.esc(r.name) +
-                (r.comment ? '<span class="dim"> ' + BV.esc(r.comment) + "</span>" : "");
-              b.addEventListener("click", function () {
-                handle.close();
-                location.hash = "#view3d/" + encodeURIComponent(r.file);
-              });
-              list.appendChild(b);
-            });
-            if (!list.children.length) {
-              list.innerHTML = '<div class="dim" style="padding:.4rem">no match</div>';
-            }
-          }
-          filter.addEventListener("input", paint);
-          paint();
-          filter.focus();
-        });
+        var f = side.querySelector(".v3-pick input");
+        var target = f || side.querySelector(".v3-prog-head");
+        if (target && target.scrollIntoView) {
+          try { target.scrollIntoView({ block: "nearest" }); } catch (err) { /* noop */ }
+        }
+        if (f) f.focus();
       });
       toolbar.appendChild(progBtn);
       /* these two only mean anything while a program is loaded, so they are
@@ -1623,6 +1674,14 @@
       redraw();
       syncPlayer();
       wireViewport(svg, s, redraw);
+
+      /* the program list is a whole-library read, so it lands on its own and
+         repaints the panel - the viewport never waits for it */
+      BV.api.call("get_programs").then(function (rows) {
+        if (!document.contains(side)) return;   /* routed away mid-flight */
+        progs = rows;
+        rebuildSide();
+      }).catch(function () { progs = []; });
 
       /* #view3d/<FILE.LS> deep-links a program; with no fragment the tab
          restores whatever it was showing when you left it */

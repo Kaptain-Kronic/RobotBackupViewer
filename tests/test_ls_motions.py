@@ -6,7 +6,7 @@ import pytest
 
 from backupviewer.parsers import ls_motion
 from backupviewer.parsers.ls_motion import parse_motions, step_duration_ms
-from backupviewer.parsers.ls_program import mn_stream, parse_ls_program
+from backupviewer.parsers.ls_program import count_positions, mn_stream, parse_ls_program
 
 
 def prog(*body: str) -> str:
@@ -280,3 +280,34 @@ def test_masked_position_values_stay_none():
     assert grp["masked"] is True
     assert [grp[k] for k in "xyzwpr"] == [None] * 6
     assert parse_motions(text)[0]["target"]["id"] == 1
+
+
+# ---- the taught-point census ---------------------------------------------
+
+POS_BLOCK = (
+    "/PROG  MOVER\n/ATTR\n/MN\n   1:J P[1] 100% FINE ;\n/POS\n"
+    "P[1]{\n   GP1:\n\tUF : 0, UT : 1,\n"
+    "\tX =  1.000  mm,\tY =  2.000  mm,\tZ =  3.000  mm,\n"
+    "\tW =  0.000 deg,\tP =  0.000 deg,\tR =  0.000 deg\n};\n"
+    'P[2:"HOME"]{\n   GP1:\n\tUF : 0, UT : 1,\n\tJ1=  0.000 deg\n};\n'
+    "/END\n"
+)
+
+
+def test_count_positions_agrees_with_the_full_parse():
+    """The cheap census exists so the 3D view can ask which of a controller's
+    several hundred listings have anything to draw without decoding them all.
+    It is only allowed to be cheap if it agrees with the real parser."""
+    assert count_positions(POS_BLOCK) == len(parse_ls_program(POS_BLOCK)["positions"]) == 2
+
+
+def test_count_positions_ignores_references_in_motion_lines():
+    """A P[1] in a MOTION line is a reference, not a taught point. Counting
+    those would call every program positional and the filter would be a lie."""
+    assert count_positions(prog("   1:J P[1] 100% FINE ;",
+                                "   2:L P[2] 500mm/sec FINE ;")) == 0
+
+
+def test_count_positions_survives_a_listing_with_nothing_in_it():
+    assert count_positions("/PROG X\n/ATTR\n/MN\n   1:  DO[1]=ON ;\n/END\n") == 0
+    assert count_positions("") == 0

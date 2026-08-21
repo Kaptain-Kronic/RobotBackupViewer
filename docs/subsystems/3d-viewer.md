@@ -55,6 +55,19 @@ placement. It gets a provenance paragraph in §2 and nothing more.
 
 ---
 
+> **2026-08-20d — the picker moved.** It was a dropdown under the toolbar
+> button; on a real controller's library (660 listings) it was an unreadable
+> wall that also covered the viewport you were picking a program to look at.
+> It is a **side-panel section** now, at the bottom, and it offers only
+> listings that carry taught points — a program with no `/POS` section has
+> nothing to draw. `ls_program.count_positions` is the census behind that
+> filter: anchored at `/POS`, ids only, ~19 ms across 660 programs against the
+> ~10 ms `parse_ls_header` already costs, and it rides `get_programs` as
+> `positions`. Nothing is hidden for good — "show all" lists the rest, the way
+> "show disabled" reaches empty zone slots. The toolbar button remains as the
+> signpost, since on a backup with thirty zones the section sits below the
+> fold.
+
 > **2026-08-20c — playback.** The tab has an animation loop now, which makes
 > one sentence in §6 that stood since the doc was written **false**: it is no
 > longer true that "the tab renders statically per draw call". That row is
@@ -321,6 +334,8 @@ note.
 | Substeps are `ceil(dist/25 mm) + ceil(ori/5°)`, capped at 40 per move and 4000 per program, and the cap is **reported** (`budget.scaled`) rather than silently applied | `program_path` |
 | A move's duration is **derived** where the listing proves it (a linear feedrate over the computed distance, or a time-specified move) and **assumed** where it does not (a percentage move, priced at `ASSUMED_JOINT_DEG_S` over the joint travel the solve revealed). A register-driven speed stays **unknown** and the viewport says the run is a path preview, not a cycle time | `ls_motion.step_duration_ms` + `program_path._price`; `timing` counts ride the payload |
 | No acceleration, no deceleration, no CNT blending. Said on screen, every time, next to the arm | the viewport note |
+| The picker offers only listings with taught points, counted by `count_positions` — anchored at `/POS`, so a `P[1]` in a *motion* line is read as the reference it is and not as a taught point (counting those would call every program positional and the filter would be a lie). The rest stay one "show all" click away | test-enforced (`test_ls_motions.py` census trio); probe-enforced both ways (`pick.only_programs_with_points`, `pick.show_all_reveals_the_rest`) |
+| A binary `.TP` reports `positions: null`, not `0` — its listing was never decoded, so the count is **unknown**, and `0` would read as "nothing here" | `api._build_programs` |
 | Selecting a move and the playhead are **one state**: picking a step seeks to that move's arrival, so a full redraw cannot leave the highlight and the clock disagreeing | `pick`/`endOfStep`; probe-enforced |
 | A playhead exactly on a boundary belongs to the segment that **ends** there — "arrived at this move", not "starting the next". The two segments agree on the joints at that instant, so nothing jumps | `segAt`; this was a real bug, found by the probe |
 
@@ -555,7 +570,7 @@ the code this pass, held by nothing.
 ## 8. Coverage
 
 Counted 2026-08-01, re-counted 2026-08-20. Full-suite anchor: `python -m
-pytest tests -m "probe or not probe"` → **865 passed, 2 skipped** on
+pytest tests -m "probe or not probe"` → **917 passed, 2 skipped** on
 2026-08-20 (the two skips are the private-fixture gate reporting itself
 absent on a clean clone, which is the behaviour it exists to have). The
 2026-08-01 anchor was 701 passed / 0 skipped.
@@ -587,7 +602,7 @@ the rich pin; zero drawable zones honestly reported on the DG-only pins).
 
 **The viewport is under test now — 2026-08-20.** `tests/ui_view3d_probe.py`
 (registered in `test_probes.py`) boots the tab in a hidden WebView2 on three
-fabricated backups and asserts on real DOM: **57 checks**. The baseline this
+fabricated backups and asserts on real DOM: **68 checks**. The baseline this
 doc used to call untested — zones drawn, arm posed with real geometry, the
 five-group layer order, the cube snapping *and* refitting, elevation
 clamping to exactly 90 however it got out of range, and per-tab state

@@ -956,7 +956,9 @@ class Api:
             seen_stems = set()
             for p in sorted(s.program_files, key=lambda p: p.name.upper()):
                 try:
-                    h = ls_program.parse_ls_header(read_text(p))
+                    text = read_text(p)
+                    h = ls_program.parse_ls_header(text)
+                    npos = ls_program.count_positions(text)
                 except Exception:
                     log.exception("header parse failed: %s", p.name)
                     continue
@@ -981,6 +983,11 @@ class Api:
                     "styles": style_by_prog.get(name.upper(), []),
                     "system": a.get("owner", "") == "BACKGRND" or name.startswith("-"),
                     "binary": False,
+                    # taught points the listing carries. The 3D view offers only
+                    # programs that have some - a listing with none has nothing
+                    # to draw - and the count is cheap enough to take here
+                    # (~19 ms across 660 programs, on text already read).
+                    "positions": npos,
                 })
             # program files that exist only in binary form (.TP/.PC/.MR with no
             # .LS listing) - shown so the program list is truly complete.
@@ -996,6 +1003,9 @@ class Api:
                     "name": p.stem, "file": p.name,
                     "prog_type": ext + " (binary)",
                     "comment": "", "owner": "", "create": "", "modified": "",
+                    # a binary .TP is never decoded, so its point count is not
+                    # zero - it is unknown, and 0 would read as "nothing here"
+                    "positions": None,
                     "line_count": None, "prog_size": p.stat().st_size, "protect": "",
                     "styles": style_by_prog.get(p.stem.upper(), []),
                     "system": p.stem.startswith("-"),

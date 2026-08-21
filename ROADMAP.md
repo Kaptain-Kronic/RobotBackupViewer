@@ -114,6 +114,10 @@ Each of these is deliberately scoped to land on its own. Good places to start.
   satisfies exactly. Timing is the programmed feedrate where the listing
   proves it and a stated assumption where it cannot; the viewport says "path
   preview — not a cycle-time simulation" throughout.
+- 📋 **Say how much of a program the view could not draw, before you open it**
+  — the picker lists a program's taught-point count, but not how many of its
+  moves resolve. A listing whose points are all masked, or all behind runtime
+  offsets, looks as promising as one that draws perfectly until you pick it.
 - 📋 **Cycle time for real** — acceleration and deceleration ramps, CNT
   blending between moves, and the per-model maximum joint rates a percentage
   move is actually a percentage OF. The first two are motion-planner work; the
