@@ -55,6 +55,17 @@ placement. It gets a provenance paragraph in §2 and nothing more.
 
 ---
 
+> **2026-08-20e — one tool at a time.** A move's utool decides where its TCP
+> physically is, so a program that changes tool part-way is two paths in two
+> frames pretending to be one — and playing it straight through makes the arm
+> lurch between them. Each step row now carries its `uf`/`ut`, and a program
+> using more than one tool gets a checkbox per tool: unchecked tools leave the
+> path, the markers, the timeline and the fit, while their moves stay LISTED
+> and struck through, because they are still evidence about the program. The
+> honest catch is in §4: skipping a move means the next one is joined
+> **directly**, which is not a path the robot ever takes, and the panel says
+> so. The last tool cannot be unchecked — an empty run is not a filter.
+
 > **2026-08-20d — the picker moved.** It was a dropdown under the toolbar
 > button; on a real controller's library (660 listings) it was an unreadable
 > wall that also covered the viewport you were picking a program to look at.
@@ -336,6 +347,10 @@ note.
 | Substeps are `ceil(dist/25 mm) + ceil(ori/5°)`, capped at 40 per move and 4000 per program, and the cap is **reported** (`budget.scaled`) rather than silently applied | `program_path` |
 | A move's duration is **derived** where the listing proves it (a linear feedrate over the computed distance, or a time-specified move) and **assumed** where it does not (a percentage move, priced at `ASSUMED_JOINT_DEG_S` over the joint travel the solve revealed). A register-driven speed stays **unknown** and the viewport says the run is a path preview, not a cycle time | `ls_motion.step_duration_ms` + `program_path._price`; `timing` counts ride the payload |
 | No acceleration, no deceleration, no CNT blending. Said on screen, every time, next to the arm | the viewport note |
+| A move's **utool defines its TCP**, so a program that changes tool part-way describes two paths in two frames. The tool filter runs one at a time; excluded moves stay listed (struck through) rather than vanishing, and the last remaining tool cannot be turned off | `toolsUsed`/`toolOn` in `view3d.js`; probe-enforced incl. the can't-empty-it case |
+| Skipping a move makes the next one a **direct join**, not the taught path: its interior knots were solved along a straight line from the point now being skipped, so they would bow through space the run no longer visits. `timeline` drops those interior knots and keeps only the destination, and the panel says the joins are not a path the robot takes | `timeline`'s `gap` handling; probe-enforced that the note appears |
+| The filter is a **view** concern, applied in JS over the cached payload — never baked into `get_program_path`/`get_program_pose`, whose caches are per program and would otherwise be invalidated by every click | `retool`/`rebuildRun` |
+| A program on one tool gets **no filter at all** — a checkbox that cannot change anything is noise. Its rows still carry the `uf`/`ut` cell | probe-enforced both halves |
 | The picker offers only listings with taught points, counted by `count_positions` — anchored at `/POS`, so a `P[1]` in a *motion* line is read as the reference it is and not as a taught point (counting those would call every program positional and the filter would be a lie). The rest stay one "show all" click away | test-enforced (`test_ls_motions.py` census trio); probe-enforced both ways (`pick.only_programs_with_points`, `pick.show_all_reveals_the_rest`) |
 | A binary `.TP` reports `positions: null`, not `0` — its listing was never decoded, so the count is **unknown**, and `0` would read as "nothing here" | `api._build_programs` |
 | Selecting a move and the playhead are **one state**: picking a step seeks to that move's arrival, so a full redraw cannot leave the highlight and the clock disagreeing | `pick`/`endOfStep`; probe-enforced |
@@ -604,7 +619,7 @@ the rich pin; zero drawable zones honestly reported on the DG-only pins).
 
 **The viewport is under test now — 2026-08-20.** `tests/ui_view3d_probe.py`
 (registered in `test_probes.py`) boots the tab in a hidden WebView2 on three
-fabricated backups and asserts on real DOM: **69 checks**. The baseline this
+fabricated backups and asserts on real DOM: **82 checks**. The baseline this
 doc used to call untested — zones drawn, arm posed with real geometry, the
 five-group layer order, the cube snapping *and* refitting, elevation
 clamping to exactly 90 however it got out of range, and per-tab state

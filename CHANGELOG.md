@@ -1,6 +1,24 @@
 # Changelog
 
 ## unreleased — the camera gets its 3d view, and the files tab extracts
+- **Every move shows the frame and tool it was taught in, and a program can be
+  played one tool at a time.** A move's utool is what decides where its TCP
+  physically is, so a program that changes tool part-way — most of a drop on
+  one tool, a couple of points on another — is really two paths in two
+  different frames, and playing it straight through makes the arm lurch
+  between them.
+  So each row in the step list now carries its `uf`/`ut`, and a program that
+  uses more than one tool gets a checkbox per tool above the list. Unchecked
+  tools leave the drawn path, the point markers, the run and the framing;
+  their moves stay in the list, struck through, because they are still
+  evidence about the program. A program that only uses one tool gets no
+  checkboxes at all, and the last tool cannot be unchecked — an empty run is
+  not a filter.
+  The honest part: skipping a move means the next one is joined **directly**,
+  which is not a path the robot ever takes. Its interior waypoints were solved
+  along a straight line from the point now being skipped, so keeping them
+  would bow the arm through space the run no longer visits; they are dropped,
+  and the panel says plainly that the joins are not real path.
 - **The program picker moved into the panel, and stopped listing programs it
   cannot draw.** It was a dropdown under the toolbar button, which on a real
   controller meant six hundred lines of crushed, clipped text covering the very

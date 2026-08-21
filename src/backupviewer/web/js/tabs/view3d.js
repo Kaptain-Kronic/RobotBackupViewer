@@ -51,6 +51,7 @@
       s.speed = 1;
       s.progAll = false; /* false = only listings that carry taught points */
       s.progFilter = "";
+      s.utOff = {};      /* utool number -> true when its moves are excluded */
       /* deliberately NOT stored: whether it was playing. Coming back to a tab
          and finding the robot already moving is a jump scare, not a feature -
          the scrub position restores, the motion does not resume itself. */
@@ -224,10 +225,31 @@
     return out;
   }
 
-  /* the placed steps of the loaded program, in program order */
-  function pathPoints(path) {
+  /* Which tools this program's placed moves use, in first-seen order, with
+     a count each. The TCP is defined BY the tool, so a program that changes
+     tool part-way is really two paths in two different frames - which is why
+     they can be run one at a time. */
+  function toolsUsed(path) {
+    var out = [], seen = {};
+    (path ? path.steps : []).forEach(function (st) {
+      if (!st.ok || st.ut === null || st.ut === undefined) return;
+      if (!seen[st.ut]) { seen[st.ut] = { ut: st.ut, n: 0 }; out.push(seen[st.ut]); }
+      seen[st.ut].n++;
+    });
+    return out;
+  }
+
+  function toolOn(s, ut) {
+    return !(ut !== null && ut !== undefined && s.utOff[ut]);
+  }
+
+  /* the placed steps of the loaded program that the current tool filter
+     keeps, in program order */
+  function pathPoints(path, s) {
     if (!path) return [];
-    return path.steps.filter(function (st) { return st.ok; });
+    return path.steps.filter(function (st) {
+      return st.ok && (!s || toolOn(s, st.ut));
+    });
   }
 
   function draw(svg, data, s, colors, robot, path, pose) {
@@ -264,7 +286,7 @@
        the arm inside a view that was sized for the entire run - otherwise
        the auto-fit pumps on every frame, the same way fitting the projected
        bounding box made it breathe while orbiting. */
-    var placed = pathPoints(path);
+    var placed = pathPoints(path, s);
     placed.forEach(function (st) { wpts.push(st.world); });
     /* and every pose the arm will take while playing, so the fit is sized for
        the whole run before the first frame. Eight AABB corners, computed once
@@ -648,24 +670,36 @@
   var UNTIMED_MS = 700;
   var MIN_SEG_MS = 40;
 
-  function timeline(pose) {
+  function timeline(pose, path, s) {
     if (!pose || !pose.steps) return null;
-    var segs = [], t = 0, prev = null, untimed = 0;
+    var segs = [], t = 0, prev = null, untimed = 0, joins = 0, gap = false;
     pose.steps.forEach(function (r) {
       if (!r.solved || !r.knots.length) return;
+      var st = path && path.steps[r.i];
+      if (st && s && !toolOn(s, st.ut)) { gap = true; return; }
+      var knots = r.knots;
+      if (gap && knots.length > 1) {
+        /* this move's interior knots were solved along a straight line from
+           the point we are now skipping, so they bow through space the run no
+           longer visits. Keep the destination and join to it directly - and
+           the panel says the joins are not a path the robot takes. */
+        knots = [knots[knots.length - 1]];
+      }
+      if (gap) { joins++; gap = false; }
       var ms = r.dur_ms;
       if (ms === null || ms === undefined) { ms = UNTIMED_MS; untimed++; }
       ms = Math.max(ms, MIN_SEG_MS);
-      var from = prev || r.knots[0];
-      var per = ms / r.knots.length;
-      r.knots.forEach(function (k) {
+      var from = prev || knots[0];
+      var per = ms / knots.length;
+      knots.forEach(function (k) {
         segs.push({ t0: t, t1: t + per, a: from, b: k, step: r.i });
         t += per;
         from = k;
       });
-      prev = r.knots[r.knots.length - 1];
+      prev = knots[knots.length - 1];
     });
-    return segs.length ? { segs: segs, total: t, untimed: untimed } : null;
+    return segs.length
+      ? { segs: segs, total: t, untimed: untimed, joins: joins } : null;
   }
 
   /* the segment a playhead sits in. A time exactly ON a boundary belongs to
@@ -704,11 +738,13 @@
 
   /* the eight corners of the box every pose in the run fits inside. Computed
      once per loaded program: one fk per step, not per frame. */
-  function reachCorners(robot, pose) {
+  function reachCorners(robot, pose, path, s) {
     if (!poseGate(robot) || !pose || !pose.steps) return null;
     var lo = null, hi = null;
     pose.steps.forEach(function (r) {
       if (!r.solved || !r.q) return;
+      var st = path && path.steps[r.i];
+      if (st && s && !toolOn(s, st.ut)) return;
       skeletonOf(robot, BV.fk.chain(robot.kin, r.q, robot.flange_dz || 0))
         .forEach(function (p) {
           if (!lo) { lo = p.slice(); hi = p.slice(); return; }
@@ -900,11 +936,21 @@
          it is still evidence about the program. Two states, two classes. */
       class: "v3-step" + (st.i === s.step ? " sel" : "") +
         (st.ok ? "" : " dim") +
-        (st.ok && pr && !pr.solved ? " unreached" : ""),
+        (st.ok && pr && !pr.solved ? " unreached" : "") +
+        (st.ok && !toolOn(s, st.ut) ? " offtool" : ""),
       title: st.note || (pr && pr.note) || st.text,
     });
+    /* the frame and tool the point was taught in. Neither number means
+       anything without the other, and a move's tool decides where its TCP
+       physically is - so it belongs on the row, not two clicks away. */
+    var ft = "";
+    if (st.uf !== null && st.uf !== undefined) {
+      ft = '<span class="v3-step-ft" title="uframe ' + BV.esc(st.uf) +
+        " / utool " + BV.esc(st.ut) + '">uf' + BV.esc(st.uf) +
+        "/ut" + BV.esc(st.ut) + "</span>";
+    }
     row.innerHTML = '<span class="v3-step-n">' + st.line + "</span>" +
-      '<span class="v3-step-t">' + BV.esc(st.text) + "</span>" +
+      '<span class="v3-step-t">' + BV.esc(st.text) + "</span>" + ft +
       '<span class="v3-step-tags">' + tags + "</span>";
     row.addEventListener("click", function () { onPick(st.i); });
     return row;
@@ -983,7 +1029,7 @@
     }
   }
 
-  function programSection(side, s, path, pick, clear, pose) {
+  function programSection(side, s, path, pick, clear, pose, retool) {
     var c = path.counts;
     side.appendChild(catHead("program", c.placed, c.steps, [
       miniBtn("change", "pick a different program", clear),
@@ -996,19 +1042,60 @@
     /* every assumption this drawing rests on, stated once, before the steps */
     var notes = (path.assumptions || []).map(function (a) { return a.text; });
     if (pose && pose.counts.solved) {
-      notes.push(pose.counts.exact + " of " + (pose.counts.exact + pose.counts.solved) +
-        " poses come straight from taught joints; the rest are solved from the " +
-        "cartesian point, and the taught CONFIG is not decoded — so a solved " +
-        "posture may differ from the one the robot used");
+      var tot = pose.counts.exact + pose.counts.solved;
+      notes.push((pose.counts.exact
+        ? pose.counts.exact + " of " + tot + " poses come straight from taught " +
+          "joints; the rest are"
+        : "every one of these " + tot + " poses is") +
+        " solved from the cartesian point, and the taught CONFIG is not " +
+        "decoded — so a solved posture may differ from the one the robot used");
     }
     if (c.refused) {
       notes.push(c.refused + " of " + c.steps + " moves could not be placed — " +
         "each one says why in the list below");
     }
+    var off = toolsUsed(path).filter(function (t) { return !toolOn(s, t.ut); });
+    if (off.length) {
+      notes.push("skipping the moves taught with " +
+        off.map(function (t) { return "ut" + t.ut; }).join(" and ") +
+        " — the arm joins across each gap directly, which is not a path the " +
+        "robot ever takes");
+    }
     if (notes.length) {
       var nb = BV.el("div", { class: "v3-prog-notes" });
       nb.innerHTML = notes.map(function (t) { return "<div>" + BV.esc(t) + "</div>"; }).join("");
       side.appendChild(nb);
+    }
+
+    /* One tool at a time. Only offered when the program actually uses more
+       than one - a single checkbox that can never change anything is noise. */
+    var tools = toolsUsed(path);
+    if (tools.length > 1) {
+      var tb = BV.el("div", { class: "v3-tools" });
+      tb.insertAdjacentHTML("beforeend", '<span class="v3-tools-lab">tool</span>');
+      tools.forEach(function (t) {
+        var lab = BV.el("label", {
+          /* data-ut, not the label text: "ut1" is a prefix of "ut11", so
+             anything matching on the text alone picks the wrong tool */
+          class: "v3-tool", "data-ut": String(t.ut),
+          title: "moves taught with utool " + t.ut,
+        });
+        var cb = BV.el("input", { type: "checkbox" });
+        cb.checked = toolOn(s, t.ut);
+        cb.addEventListener("change", function () {
+          if (cb.checked) delete s.utOff[t.ut]; else s.utOff[t.ut] = true;
+          /* never leave every tool off - that is an empty path, not a filter */
+          if (!toolsUsed(path).some(function (x) { return toolOn(s, x.ut); })) {
+            delete s.utOff[t.ut];
+          }
+          retool();
+        });
+        lab.appendChild(cb);
+        lab.insertAdjacentHTML("beforeend",
+          "ut" + BV.esc(t.ut) + '<span class="v3-tool-n">' + t.n + "</span>");
+        tb.appendChild(lab);
+      });
+      side.appendChild(tb);
     }
 
     var poseRows = (pose && pose.steps) || [];
@@ -1065,7 +1152,7 @@
   }
 
   function buildSide(side, data, s, colors, redraw, robot, reload, path, pick,
-                     clear, pose, dropProgram, progs, rebuildSide) {
+                     clear, pose, dropProgram, progs, rebuildSide, retool) {
     side.innerHTML = "";
     var listed = function (arr) {
       return arr.filter(function (e) {
@@ -1194,7 +1281,7 @@
             rst.addEventListener("click", function () {
               s.pose = null;
               buildSide(side, data, s, colors, redraw, robot, reload, path, pick, clear,
-                pose, dropProgram, progs, rebuildSide);
+                pose, dropProgram, progs, rebuildSide, retool);
               redraw();
             });
             body.appendChild(rst);
@@ -1212,12 +1299,12 @@
         miniBtn("all", "show every listed zone", function () {
           zs.forEach(function (z) { delete s.hidden[z.n]; });
           buildSide(side, data, s, colors, redraw, robot, reload, path, pick, clear,
-                pose, dropProgram, progs, rebuildSide); redraw();
+                pose, dropProgram, progs, rebuildSide, retool); redraw();
         }),
         miniBtn("none", "hide every listed zone", function () {
           zs.forEach(function (z) { s.hidden[z.n] = true; });
           buildSide(side, data, s, colors, redraw, robot, reload, path, pick, clear,
-                pose, dropProgram, progs, rebuildSide); redraw();
+                pose, dropProgram, progs, rebuildSide, retool); redraw();
         }),
       ]));
       zs.forEach(function (z) {
@@ -1305,7 +1392,7 @@
     /* the program, last: the picker until one is loaded, then its moves and
        the evidence for the selected one. At the bottom because that is where
        the panel has room for a list this long. */
-    if (path) programSection(side, s, path, pick, clear, pose);
+    if (path) programSection(side, s, path, pick, clear, pose, retool);
     else programPicker(side, s, progs, rebuildSide);
 
     if (!side.children.length) {
@@ -1364,7 +1451,24 @@
       }
       function rebuildSide() {
         buildSide(side, data, s, colors, redraw, robot, reload, path, pick, clear,
-                pose, dropProgram, progs, rebuildSide);
+                pose, dropProgram, progs, rebuildSide, retool);
+      }
+      function retool() {
+        /* the filter changed: rebuild the run from the moves it keeps, keep
+           the playhead inside it, and re-fit, because dropping a tool's moves
+           usually changes how much space the run covers */
+        pauseQuietly();
+        rebuildRun();
+        s.box = null;
+        rebuildSide();
+        redraw();
+      }
+      function rebuildRun() {
+        tl = timeline(pose, path, s);
+        if (pose) pose._reach = reachCorners(robot, pose, path, s);
+        if (tl && s.t > tl.total) s.t = tl.total;
+        if (!tl) s.t = 0;
+        syncPlayer();
       }
       function pick(i) {
         /* selecting a move IS seeking to it: the playhead and the highlight
@@ -1414,12 +1518,10 @@
           return BV.api.call("get_program_pose", file).then(function (pr) {
             if (s.prog !== file) return;    /* a later pick won the race */
             pose = pr;
-            pose._reach = reachCorners(robot, pose);
-            tl = timeline(pose);
             s.t = 0;
+            rebuildRun();
             rebuildSide();
             redraw();
-            syncPlayer();
           }).catch(function () { /* the path still stands on its own */ });
         }).catch(function (e) {
           BV.toast("could not read " + file + " — " + e.message);
