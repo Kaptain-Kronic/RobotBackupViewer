@@ -64,9 +64,11 @@ placement. It gets a provenance paragraph in §2 and nothing more.
 > filter: anchored at `/POS`, ids only, ~19 ms across 660 programs against the
 > ~10 ms `parse_ls_header` already costs, and it rides `get_programs` as
 > `positions`. Nothing is hidden for good — "show all" lists the rest, the way
-> "show disabled" reaches empty zone slots. The toolbar button remains as the
-> signpost, since on a backup with thirty zones the section sits below the
-> fold.
+> "show disabled" reaches empty zone slots. The toolbar's `program` button went
+> with the dropdown: the panel section is the only door into the list, because
+> two doors into one list is one door too many. Measured on a real controller:
+> 58 of 400 listings carry taught points, so the filter is doing most of the
+> work of making the list usable at all.
 
 > **2026-08-20c — playback.** The tab has an animation loop now, which makes
 > one sentence in §6 that stood since the doc was written **false**: it is no
@@ -602,7 +604,7 @@ the rich pin; zero drawable zones honestly reported on the DG-only pins).
 
 **The viewport is under test now — 2026-08-20.** `tests/ui_view3d_probe.py`
 (registered in `test_probes.py`) boots the tab in a hidden WebView2 on three
-fabricated backups and asserts on real DOM: **68 checks**. The baseline this
+fabricated backups and asserts on real DOM: **69 checks**. The baseline this
 doc used to call untested — zones drawn, arm posed with real geometry, the
 five-group layer order, the cube snapping *and* refitting, elevation
 clamping to exactly 90 however it got out of range, and per-tab state

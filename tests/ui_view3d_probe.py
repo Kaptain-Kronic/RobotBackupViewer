@@ -516,6 +516,13 @@ def probe(window):
               js(window, "BV.tabState('view3d').prog") == PROG)
         poll(window, "document.querySelectorAll('.v3-step').length")
 
+        # the picker is the panel's job alone - a program button back in the
+        # toolbar would be a second door into the same list
+        tools = js(window, "[...document.querySelectorAll('#toolbar .btn')]"
+                           ".map(function(b){return b.textContent;}).join('|')")
+        check("pick.no_second_door_in_the_toolbar",
+              "program" not in str(tools).lower(), f"({tools})")
+
         # the toggles hide the path and the markers
         js(window, "[...document.querySelectorAll('#toolbar .btn')]"
                    ".find(function(b){return b.textContent==='points';}).click()")

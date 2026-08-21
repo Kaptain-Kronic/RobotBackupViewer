@@ -1405,7 +1405,6 @@
           s.pose = null;      /* the program owns the arm now - see st() */
           path = r;
           s.box = null;       /* refit: a path usually reaches past the zones */
-          progBtn.textContent = r.name + " ▾";
           syncTools();
           rebuildSide();
           redraw();
@@ -1447,24 +1446,11 @@
         redraw();
       });
 
-      /* toolbar: program · path · points · fit · perspective · show-disabled
-         · group filter. The picker itself is in the side panel; this button
-         is the signpost to it, because on a backup with thirty zones the
-         section sits well below the fold. */
-      var progBtn = BV.el("button", {
-        class: "btn", title: "the program picker, in the panel on the right",
-      }, "program ▾");
-      progBtn.addEventListener("click", function () {
-        var f = side.querySelector(".v3-pick input");
-        var target = f || side.querySelector(".v3-prog-head");
-        if (target && target.scrollIntoView) {
-          try { target.scrollIntoView({ block: "nearest" }); } catch (err) { /* noop */ }
-        }
-        if (f) f.focus();
-      });
-      toolbar.appendChild(progBtn);
-      /* these two only mean anything while a program is loaded, so they are
-         absent until then rather than sitting there greyed */
+      /* toolbar: path · points · fit · perspective · show-disabled · group
+         filter. No program button: the picker is a section in the side panel,
+         and a second door into the same list is one door too many.
+         The two toggles below only mean anything while a program is loaded,
+         so they are absent until then rather than sitting there greyed. */
       function toggleBtn(key, label, title) {
         var b = BV.el("button", {
           class: "btn" + (s[key] ? " primary" : ""), title: title,

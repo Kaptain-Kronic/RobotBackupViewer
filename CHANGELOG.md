@@ -8,10 +8,12 @@
   panel now, at the bottom, with room to breathe: one row per program, its
   comment beside it, and its taught-point count on the right.
   It offers only listings that carry taught positions, because a program with
-  no `/POS` section has nothing to draw — on a typical controller that is most
-  of them. Nothing is hidden for good: "show all" lists the rest, the same way
+  no `/POS` section has nothing to draw — on a real controller that turned out
+  to be 58 of 400. Nothing is hidden for good: "show all" lists the rest, the same way
   "show disabled" reaches the empty zone slots, and a line underneath says how
   many are being held back and why.
+  The toolbar's `program` button went with the dropdown. The picker is in the
+  panel; a second door into the same list is one door too many.
   Counting the points is deliberately cheap — anchored at `/POS`, ids only,
   about 19 ms across 660 programs against the 10 ms the existing header pass
   already spends on the same text. It counts taught points, not references, so
