@@ -1,6 +1,116 @@
 # Changelog
 
-## unreleased — the camera gets its 3d view, backups drag in, and the statusbar finds the switch
+## unreleased — the camera gets its 3d view, backups drag in, the statusbar finds the switch, and a program plays in 3d
+- **The program picker moved into the panel, and stopped listing programs it
+  cannot draw.** It was a dropdown under the toolbar button, which on a real
+  controller meant six hundred lines of crushed, clipped text covering the very
+  viewport you were picking a program to look at. It is a section in the side
+  panel now, at the bottom, with room to breathe: one row per program, its
+  comment beside it, and its taught-point count on the right.
+  It offers only listings that carry taught positions, because a program with
+  no `/POS` section has nothing to draw — on a real controller that turned out
+  to be 58 of 400. Nothing is hidden for good: "show all" lists the rest, the same way
+  "show disabled" reaches the empty zone slots, and a line underneath says how
+  many are being held back and why.
+  The toolbar's `program` button went with the dropdown. The picker is in the
+  panel; a second door into the same list is one door too many.
+  Counting the points is deliberately cheap — anchored at `/POS`, ids only,
+  about 19 ms across 660 programs against the 10 ms the existing header pass
+  already spends on the same text. It counts taught points, not references, so
+  a `P[1]` sitting in a motion line is read as the reference it is; counting
+  those would call every program positional and the filter would be a lie.
+- **Press play, and the robot runs the program.** The 3d view gained a player
+  bar: play, pause, back to the start, a scrubber, and a quarter/one/four-times
+  speed. The arm walks the taught path through the DCS zones, and clicking any
+  move in the list jumps it there.
+  Between two taught points it interpolates in joint space, which is exactly
+  what a FANUC joint move does — all axes starting and stopping together — so
+  a J move is not an approximation of anything. A linear or circular move is
+  walked in substeps along the drawn line, so the arm follows the path instead
+  of bowing off it.
+  Timing is the programmed speed wherever the listing proves it: a feedrate
+  over a computed distance, or a time-specified move. A percentage move is a
+  percentage of an axis speed no backup file anywhere records, so that one is
+  an assumption and is labelled one. There is no acceleration, no
+  deceleration, and no CNT blending, and the viewport says so the whole time
+  it is running: this is a path preview, not a cycle time.
+  It works with no `requestAnimationFrame` at all — the same fallback a plant
+  PC on the software-rendering rescue path may need — and the playhead runs
+  off the wall clock in both paths, so a throttled window advances by real
+  time rather than stalling.
+- **The arm goes where the program says.** Pick a step in the 3d view and the
+  robot poses at that point. A joint-recorded point uses its own taught angles
+  — exact, no solver involved, and labelled `exact` to say so. A cartesian
+  point is solved for, by a damped-least-squares inverse over the same chain
+  the forward pose has always used, and the answer is only accepted when
+  running it back forward reproduces the taught point inside half a
+  millimetre. When it doesn't, the point still draws and its row goes amber
+  with the residual the solver actually reached — "not reached", which is a
+  different finding from "not placed" and is kept a different one.
+  One thing the app cannot check and therefore says out loud: a robot can
+  reach the same point with its elbow up or down, and both are correct to
+  within nothing. The taught CONFIG string records which one the robot used,
+  but nothing in this app has ever proven what its letters mean, so it is
+  carried verbatim and not read. The solver instead starts from the previous
+  step, which keeps the posture continuous the way real motion is — and the
+  viewport says plainly that a solved posture may differ from the one the
+  robot used. Anything that would make that claim stronger needs a pendant.
+- **A program's path, drawn where it actually is.** The 3d view gained a
+  program picker in its toolbar (and a "view in 3d" button on the programs
+  tab's positions card): pick a program and its taught points draw among the
+  DCS zones, in the same millimetres, with the line between them. The side
+  panel lists every move — line number, the instruction verbatim, and what we
+  could make of it — and the selected one opens its evidence: the raw CONFIG
+  string, the taught numbers, the uf/ut as written, the world position we
+  computed, the distance and how long the move takes.
+  A cartesian point is a pose *in its user frame, measured to the tool*, so
+  neither number means anything alone; the composition is the inverse of the
+  one the flange measurement already proves against a controller's own report,
+  reused rather than re-derived. A joint-recorded point needs no frames at all
+  — forward kinematics places it exactly, through the same chain the arm poses
+  on, and it is labelled `exact` to say so.
+  Nothing is placed that cannot be proven, and nothing that cannot be placed
+  is dropped. A move whose position the program never recorded, an anonymous
+  `P[...]`, an indirect `P[R[4]]`, a masked value, an uninitialized position
+  register or one a running program overwrites, a missing or uninitialized
+  frame, `uf: F` resolved to whatever was current, a point taught for a
+  different motion group — each stays in the list, dimmed, saying which of
+  those it is. The viewport prints how many.
+  The contradiction gate extends to it: a backup whose kinematics disagree
+  with its own position report already refuses to draw the arm, and now
+  refuses to place joint-recorded points too — while its cartesian path still
+  draws, because that composition never touched the kinematics.
+- **The 3d view has a test at last.** Its own subsystem doc called the
+  unprobed viewport "the uncomfortable part" — the forward-kinematics probe
+  pinned the *math* while nothing pinned the pixels. `ui_view3d_probe.py` now
+  boots the tab hidden on two fabricated backups and asserts on real DOM: the
+  zones draw, the arm poses, the scene layers stay in paint order, the view
+  cube snaps and refits, elevation stops exactly at the pole, per-tab state
+  survives leaving and coming back, and the whole program-path surface behaves
+  — including the contradiction case, end to end.
+- **A program's moves are read as structure, not text.** A new parser
+  (`parsers/ls_motion.py`) turns the `/MN` instruction stream into moves: type
+  (J/L/C/A), destination, speed with its unit, termination (FINE, CNT, or a
+  register-driven CNT whose value a listing cannot know), and the option
+  tokens. Nothing shows this on screen yet — it is the groundwork for drawing a
+  program's path in the 3D view.
+  Two rules it exists to get right. The destination is the reference
+  **immediately after the motion letter**, never "the first `P[..]` in the
+  line": options carry references of their own (`Offset,PR[7]`, `Skip,LBL[3]`,
+  `TIME BEFORE 0.5sec,DO[1]=ON`), and reading one of those as the destination
+  would put the arm somewhere the robot never went. And bracket contents nest,
+  so `P[R[4]]` is scanned by bracket depth rather than by a character class
+  that would quietly truncate it. A circular move collapses into one move: the
+  numbered line names the via point, its continuation row names the end point.
+  Durations say how well they are known. A linear feedrate over a computed
+  distance, and a time-specified move (`3sec`), are **derived**. A percentage
+  move is **assumed** — no `.VA`, `.DG` or listing in a FANUC backup records
+  per-model maximum joint rates, so the number rests on an assumption and says
+  so. A register-driven speed is **unknown** and yields no number at all.
+  Alongside it, the `/MN` scan itself moved into the parser that owns the
+  format (`ls_program.mn_stream`) — numbered lines plus the continuation rows
+  of circular moves, remark state inherited. The health scan now reads that
+  instead of its own copy; it was the third place needing the same scan.
 - **Every robot's actions ride its backup tab.** Right-clicking an open
   backup's tab offered exactly two things — pop out and close — so acting on
   the robot you were already looking at meant going back to the library first:

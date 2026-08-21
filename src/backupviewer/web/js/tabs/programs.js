@@ -799,6 +799,17 @@
       if (p.positions.length) {
         var pc = BV.el("div", { class: "card" });
         pc.innerHTML = '<h3>positions <span class="count">' + p.positions.length + "</span></h3>";
+        /* the same points, drawn where they are. Only offered when the 3D
+           view exists for this backup - no DCS files, no viewport to draw in. */
+        var v3 = BV.tabs.filter(function (t) { return t.id === "view3d"; })[0];
+        if (v3 && BV.tabEnabled(v3)) {
+          var see = BV.el("button", { class: "btn v3-jump",
+            title: "draw this program's taught path in the 3d view" }, "view in 3d");
+          see.addEventListener("click", function () {
+            location.hash = "#view3d/" + encodeURIComponent(file);
+          });
+          pc.querySelector("h3").appendChild(see);
+        }
         /* one row per group; the P[] cell shows only on a position's first group */
         var posRows = [];
         p.positions.forEach(function (pos) {

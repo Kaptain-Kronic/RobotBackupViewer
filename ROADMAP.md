@@ -105,9 +105,56 @@ Each of these is deliberately scoped to land on its own. Good places to start.
   usable it is here: it is ONE fused mesh at its saved pose, not per-link
   parts, so it cannot be posed by joint angles without a split — fine as a
   static body, not a substitute for per-link geometry.
-- 📋 **Program points in 3D** — plot a program's Cartesian positions among
-  the zones (compose their UFRAME); joint-rep points can now use the same
-  forward kinematics the posed arm runs on.
+- ✅ **Program points in 3D** — pick a program in the 3D view (toolbar picker,
+  or "view in 3d" from the programs tab) and its taught path draws among the
+  zones: cartesian points composed through their own UFRAME, joint-recorded
+  ones placed by the same pendant-proven forward kinematics the arm poses on,
+  and every move that cannot be placed listed with the reason. Needs no
+  kinematics for the cartesian half. The slice also landed the viewport's
+  first tracked probe (`ui_view3d_probe.py`), which is why 3d-viewer.md §8
+  no longer opens with "the viewport renders under no test at all".
+- ✅ **Play the path** — pick a program, press play, and the arm walks it
+  through the zones. Joint-recorded points pose by their own taught angles
+  (exact, no solver); cartesian points go through a damped-least-squares
+  solve accepted only when the forward chain reproduces the taught pose.
+  Linear and circular moves are walked in substeps along the drawn line so
+  the arm follows the path rather than bowing off it, and playback is one
+  uniform rule — lerp in joint space between knots — which a joint move
+  satisfies exactly. Timing is the programmed feedrate where the listing
+  proves it and a stated assumption where it cannot; the viewport says "path
+  preview — not a cycle-time simulation" throughout.
+- 📋 **Say how much of a program the view could not draw, before you open it**
+  — the picker lists a program's taught-point count, but not how many of its
+  moves resolve. A listing whose points are all masked, or all behind runtime
+  offsets, looks as promising as one that draws perfectly until you pick it.
+- 📋 **Cycle time for real** — acceleration and deceleration ramps, CNT
+  blending between moves, and the per-model maximum joint rates a percentage
+  move is actually a percentage OF. The first two are motion-planner work; the
+  third is data no FANUC backup file carries, so it would have to come from a
+  table like the kinematics one, with the same validated/unvalidated honesty.
+- 📋 **Runtime offsets and INC** — a move carrying `Offset,PR[n]`,
+  `Tool_Offset,PR[n]` or `INC` is drawn at its taught point today and labelled
+  as such. Composing the register would place them properly, when the register
+  is one the backup can actually prove (an initialised PR nothing writes).
+- 📋 **Decode the taught CONFIG, and select the IK branch with it** — the
+  config string (`N U T, 0, 0, 0`) names the wrist flip, elbow up/down,
+  front/back and the J1/J4/J6 turn counts, and nothing in this repo has
+  pendant-paired any of it, so today it is carried verbatim and never read.
+  Until it is, a cartesian point poses at a **solver-chosen** branch: same
+  TCP, possibly a mirrored elbow, and the residual is ~0 so no runtime check
+  can catch it. Two things make this cheap when someone takes it. `CURPOS.DG`
+  prints joint angles **and** the config string the controller computed for
+  them, so every backup carries one free ground-truth pair (`parse_curpos`
+  reads the six world floats today and drops the string — a two-line change).
+  And with the letters proven, the closed-form **OPW** solution
+  (Brandstötter/Angerer/Hofbaur, the one the vendor's own SDK dispatches to)
+  enumerates all 8 branches so the taught one can be *chosen* rather than
+  labelled. Measured against the shipped table: 121 of 228 chains reduce to
+  OPW as written — 167 are 6-joint, 152 of those have a spherical wrist (the
+  15 misses are exactly the CRX family, which the vendor also solves
+  separately), and 36 more fail only because a side-slung or undersling mount
+  rotates the base. So OPW would need a numerical fallback either way, which
+  is why the numerical solver goes in first.
 - 📋 **Rail + mount variants** — the pose validator exposed them: rail
   robots miss by exactly their carriage travel (pure translation, perfect
   orientation) and some mounts by a constant rotation. Both refuse to pose

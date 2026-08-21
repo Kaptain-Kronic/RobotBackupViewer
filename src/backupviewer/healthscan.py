@@ -49,10 +49,7 @@ _ENDIS = re.compile(r"\b(ENABLE|DISABLE)D?\b")
 _SXX = re.compile(r"^S\d{2}")
 _BLAL = re.compile(r"\bBLAL\b", re.I)
 
-# /MN instruction stream: numbered lines ("   5:J P[1]... ;") and the unnumbered
-# continuation lines of circular moves ("    :  P[3] 500mm/sec FINE ;") — a
-# continuation belongs to the numbered line above it, remark state included
-_MN_LINE = re.compile(r"^\s*(\d+)?\s*:\s{0,2}(.*?)\s*;?\s*$")
+# the /MN instruction stream itself lives in ls_program.mn_stream()
 _REMARK_MOTION = re.compile(r"^//\s*[JLCA]\s")          # //J P[6] 50% CNT100
 _MOTION = re.compile(r"^[JLCA]\s")                      # a live motion instruction
 # CNT termination: CNT100 / CNT1 / register-driven CNT R[282] (value unknowable
@@ -269,24 +266,9 @@ class _RobotData:
         the owning numbered line; active is False on ! comment lines, //
         remarked lines, and the continuations of a remarked line."""
         def build():
-            out = {}
-            for name, text in self.program_texts().items():
-                rows, n, active = [], 0, True
-                mn = text.split("/MN", 1)
-                body = mn[1] if len(mn) > 1 else ""
-                for sec in ("/POS", "/END"):
-                    body = body.split(sec, 1)[0]
-                for raw in body.splitlines():
-                    m = _MN_LINE.match(raw)
-                    if not m or not m.group(2):
-                        continue
-                    t = m.group(2).lstrip()   # listings pad remarks unevenly
-                    if m.group(1):                     # numbered: sets the state
-                        n = int(m.group(1))
-                        active = not (t.startswith("!") or t.startswith("//"))
-                    rows.append((n, t, active and not t.startswith("//")))
-                out[name] = rows
-            return out
+            return {name: [(r["n"], r["text"], r["active"])
+                           for r in ls_program.mn_stream(text)]
+                    for name, text in self.program_texts().items()}
         return self.s.cached("hs_mnlines", build)
 
     def posreg(self) -> list | None:

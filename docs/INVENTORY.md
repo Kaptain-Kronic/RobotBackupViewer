@@ -23,7 +23,7 @@ batch lands, or with `--check` to hear about drift).
 > When per-subsystem docs land, they supersede this file for their own area. This
 > map's remaining job is breadth: what exists, and where.
 
-**Scope.** 278 files / ~82,831 lines. Covers everything in the working tree except: the
+**Scope.** 284 files / ~86,686 lines. Covers everything in the working tree except: the
 `.git` internals, build outputs (`dist/`, `build/`, `__pycache__/`), the private
 `SampleBackup/` fixture tree, the `.rmd` model corpus (61 binary robot-model blobs
 that are input data, not source), and the two local-only real-plant reference files
@@ -43,27 +43,27 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 |---|---|---|---|---|
 | `.gitignore` | 21 | ignore rules for pycache/build/dist plus the local-only sample backup, real ip list and diag folders | build/config | active |
 | `build_exe.log` | 106 | pyinstaller transcript of one successful onefile build on store python 3.13 with pyinstaller 6.20 *(untracked, local-only)* | build/config | generated |
-| `CHANGELOG.md` | 1386 | prose changelog newest-first: a large unreleased section over v1.4 back to v0.1, feature by feature | docs | active |
+| `CHANGELOG.md` | 1496 | prose changelog newest-first: a large unreleased section over v1.4 back to v0.1, feature by feature | docs | active |
 | `CLAUDE.md` | 273 | the build contract: locked stack, layer map, composition/honesty rules and the plant-identifier firewall | docs | active |
 | `CVX_FTP_LAYOUT.md` | 108 | field notes on the cv-x ftp tree and simulator workspace layout, and what env.dat cannot prove | docs | active |
 | `LICENSE` | 620 | verbatim gnu gpl v3 license text, the license the readme points at | docs | vendored |
 | `pyproject.toml` | 31 | project metadata (v1.4, pywebview), the pytest pythonpath=src a fresh clone needs to collect tests, and the `probe` marker + `addopts` that keep the default run fast | build/config | active |
 | `README.md` | 255 | public readme: feature tour, tab-to-source-file table, run/package/test commands, theme json shape | docs | active |
-| `ROADMAP.md` | 373 | lane-claiming roadmap: shipped/building/decided/open items per subsystem, plus the 2.0 editing principles | docs | active |
+| `ROADMAP.md` | 420 | lane-claiming roadmap: shipped/building/decided/open items per subsystem, plus the 2.0 editing principles | docs | active |
 | `run.py` | 10 | dev launcher and pyinstaller entry script: puts src on sys.path, calls backupviewer.app.main | build/config | active |
 | `run_libraryimporter.py` | 10 | dev launcher and pyinstaller entry script for the companion libraryimporter app | LibraryImporter | active |
-| `docs/INVENTORY.md` | 647 | this file: dated file-level map of the repo plus the findings from the phase-1 documentation pass, with resolved items marked inline | docs | active |
-| `docs/proposals/home-split.md` | 284 | investigation of tabs/home.js (2,277 lines) by responsibility, where the real seams are, what must become shared components first, and a phased sequence â€” no code changed | docs | active |
-| `docs/subsystems/3d-viewer.md` | 560 | subsystem doc #3 (the 3D viewer): the pendant-proven FK solve and its JS twin, the 228-type table's validated-vs-not honesty, flange residuals re-measured on the pins, the zone degradation ladder, and the unprobed-viewport gap said plainly | docs | active |
+| `docs/INVENTORY.md` | 653 | this file: dated file-level map of the repo plus the findings from the phase-1 documentation pass, with resolved items marked inline | docs | active |
+| `docs/proposals/home-split.md` | 284 | investigation of tabs/home.js (2,277 lines) by responsibility, where the real seams are, what must become shared components first, and a phased sequence — no code changed | docs | active |
+| `docs/subsystems/3d-viewer.md` | 738 | subsystem doc #3 (the 3D viewer): the pendant-proven FK solve and its JS twin, the 228-type table's validated-vs-not honesty, flange residuals re-measured on the pins, the zone degradation ladder, and the unprobed-viewport gap said plainly | docs | active |
 | `docs/subsystems/backup-capture.md` | 731 | subsystem doc #2 (the backup/discovery jobs + shared plumbing): transport ground truth tagged live-run-vs-assumed, the gentle-with-equipment invariants, a dedicated failure-modes section, and the batch-flow coverage gap said plainly | docs | active |
-| `docs/subsystems/parsing.md` | 619 | subsystem doc #1 (parsers/ + session.py): ground truth marked verified-vs-assumed per fact, cross-file invariants, paid-for traps, honest coverage gaps â€” and the template later subsystem docs follow | docs | active |
+| `docs/subsystems/parsing.md` | 638 | subsystem doc #1 (parsers/ + session.py): ground truth marked verified-vs-assumed per fact, cross-file invariants, paid-for traps, honest coverage gaps — and the template later subsystem docs follow | docs | active |
 | `docs/subsystems/remote-mobile.md` | 761 | subsystem doc #4 (CV-X/Matrox remotes + phone view): the reverse-engineered CV-X wire protocol whose reference client is gone, the vendor-reflected mouse enum, the only listening socket's trust posture, and the app's one UAC elevation | docs | active |
 | `packaging/backupviewer.ico` | *75 KB* | multi-resolution app icon embedded in the exe and inherited by the pywebview window | build/config | active |
 | `packaging/backupviewer.spec` | 58 | pyinstaller onefile spec: bundles web/ and cvx_handshake/, edgechromium hidden imports, excludes paramiko | build/config | active |
 | `packaging/libraryimporter.spec` | 41 | pyinstaller onefile spec for libraryimporter.exe, bundling src/libraryimporter/web, no icon | build/config | active |
 | `src/backupviewer/__init__.py` | 1 | package marker holding the single source of the app version string (1.4) | shared/infra | active |
 | `src/backupviewer/__main__.py` | 6 | python -m backupviewer entry point delegating to app.main | shared/infra | active |
-| `src/backupviewer/api.py` | 4719 | the pywebview bridge class: 117 @_endpoint methods returning {ok,data} envelopes across every feature area | shared/infra | active |
+| `src/backupviewer/api.py` | 4825 | the pywebview bridge class: 131 @_endpoint methods returning {ok,data} envelopes across every feature area | shared/infra | active |
 | `src/backupviewer/app.py` | 268 | window boot: arg parsing, resource_path, pywebview window, and the one-shot webview2 failure rescue relaunch | shared/infra | active |
 | `src/backupviewer/backuplog.py` | 144 | durable backup-run log in %appdata%: per-run job rows, retry attempt counting, failed-spec list, never a password | backup capture | active |
 | `src/backupviewer/compare.py` | 527 | pure two-backup diff functions: io/registers/frames/payloads/programs rows plus tp-line alignment | compare engine | active |
@@ -73,7 +73,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/cvx_remote.py` | 590 | cv-x remote-desktop client: handshake replay on 3 sockets, jpeg frame harvest, mouse events, mjpeg server | remote/mobile | active |
 | `src/backupviewer/discover.py` | 992 | subnet scan job finding fanuc/keyence over ftp and matrox via ethernet/ip, plus adapter list and live name probe | backup capture | active |
 | `src/backupviewer/ftpbackup.py` | 627 | ftp backup engine: gentle md: pull, dated+latest tree, .part/complete-marker crash safety, shared job base | backup capture | active |
-| `src/backupviewer/healthscan.py` | 1185 | fleet health-scan engine: 17-check registry, lazy per-robot parse context, threaded job, fleet-wide verdict passes | flag scanning | active |
+| `src/backupviewer/healthscan.py` | 1167 | fleet health-scan engine: 17-check registry, lazy per-robot parse context, threaded job, fleet-wide verdict passes | flag scanning | active |
 | `src/backupviewer/keyence_workspace.py` | 374 | cv-x simulator workspace.xml writer/reader plus flat-folder export guarded by a we-created-this ledger | cameras | active |
 | `src/backupviewer/keyencebackup.py` | 359 | cv-x camera backup job over anonymous ftp, plus pre-flight probe, read-only diagnose and self-naming | cameras | active |
 | `src/backupviewer/kinematics_builtin.py` | 247 | built-in kinematics table: one chain (joint placements + faceplate) per fanuc robot type, some validated | 3D viewer | active |
@@ -96,15 +96,17 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/parsers/frames.py` | 77 | builds the tool/jog/uframe model from SYSFRAME.VA positions, FRAMEVAR.VA comments and active frame numbers | backup parsing | active |
 | `src/backupviewer/parsers/gmwizlog.py` | 83 | parses the setup-wizard log GMWIZLOG.DT into header fields plus ordered q&a / event / failure entries | backup parsing | active |
 | `src/backupviewer/parsers/io_dg.py` | 179 | parses IOCONFIG.DG definitions and IOSTATE.DG states and merges them into per-type tables with rack/slot/port | backup parsing | active |
-| `src/backupviewer/parsers/kinematics.py` | 148 | forward kinematics over a parsed .def chain: joint frames, faceplate pose and flange-offset measurement | 3D viewer | active |
+| `src/backupviewer/parsers/kinematics.py` | 414 | forward kinematics over a parsed .def chain: joint frames, faceplate pose and flange-offset measurement | 3D viewer | active |
 | `src/backupviewer/parsers/ls_edit.py` | 345 | byte-faithful .LS edit engine: split/emit body records, splice /ATTR and /POS values, latin-1 round-trip | program editor | active |
-| `src/backupviewer/parsers/ls_program.py` | 197 | parses a .LS tp program: /PROG and /ATTR header, body lines, /POS points and lbl/jmp label cross-reference | backup parsing | active |
+| `src/backupviewer/parsers/ls_motion.py` | 282 | reads the /MN instruction stream as moves: type J/L/C/A, destination (P/PR/anon/indirect), speed with its unit, FINE/CNT termination, option tokens, and how honestly a duration is known | backup parsing | active |
+| `src/backupviewer/parsers/ls_program.py` | 253 | parses a .LS tp program: /PROG and /ATTR header, body lines, /POS points and lbl/jmp label cross-reference | backup parsing | active |
 | `src/backupviewer/parsers/macros.py` | 44 | parses $MACROTABLE from SYSMACRO.VA into the macro list, a fallback for SUMMARY.DG's friendlier macro section | backup parsing | active |
 | `src/backupviewer/parsers/magnet.py` | 68 | detects a magnet gripper from MAG*.PC karel programs and groups its R[800-899] config registers | backup parsing | active |
 | `src/backupviewer/parsers/mastering.py` | 41 | parses $DMR_GRP from SYSMAST.VA into per-group master/reference encoder counts and mastered flags | backup parsing | active |
 | `src/backupviewer/parsers/mhvalves.py` | 209 | rebuilds the pendant mh valve menus from MHGRIPDT.VA, resolving *_SN slots through signal tables to DI/DO | backup parsing | active |
 | `src/backupviewer/parsers/mtx_portal.py` | 67 | scrapes a matrox camera portal's html for DesignAssistant operator page urls (hrefs or prj-name rows) | cameras | active |
 | `src/backupviewer/parsers/mtx_saved_image.py` | 169 | parses matrox SavedImages .txt sidecars and groups jpg/png/txt photo triples into sorted grid records | cameras | active |
+| `src/backupviewer/parsers/program_path.py` | 509 | resolves a program's taught points to world mm: uframe/utool composition, forward kinematics for joint-recorded points, and a named reason for every point it will not place | 3D viewer | active |
 | `src/backupviewer/parsers/payloads.py` | 51 | builds payload schedules per motion group from $PLST_GRPn in SYMOTN.VA, flagging empty slots uninit | backup parsing | active |
 | `src/backupviewer/parsers/registers.py` | 48 | parses NUMREG.VA, POSREG.VA and STRREG.VA into r / pr / sr register lists with comments | backup parsing | active |
 | `src/backupviewer/parsers/roboguidedef.py` | 104 | parses a roboguide .def xml into joint chain, faceplate and zero offset, plus robot-type name normalization | 3D viewer | active |
@@ -120,10 +122,10 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/settings.py` | 103 | settings.json under %appdata% with atomic locked writes, plus app_dir, library_root, sim_root and logging setup | shared/infra | active |
 | `src/backupviewer/updatecheck.py` | 109 | github releases/latest check with version compare and a policy that only lets the frozen exe auto-check | shared/infra | active |
 | `src/backupviewer/web/css/base.css` | 555 | root css: theme variable contract (--bg/--accent/--edge/--panel), app shell layout, chrome bars, bgfx layers | theming | active |
-| `src/backupviewer/web/css/components.css` | 2438 | the app's single component stylesheet: cards, tables, pills, modals, plus per-tab styles for every subsystem | theming | active |
+| `src/backupviewer/web/css/components.css` | 2534 | the app's single component stylesheet: cards, tables, pills, modals, plus per-tab styles for every subsystem | theming | active |
 | `src/backupviewer/web/fonts/Orbitron-VariableFont_wght.ttf` | *38 KB* | bundled orbitron variable font, loaded by base.css @font-face and offered as the 'rog' ui font in settings | theming | vendored |
 | `src/backupviewer/web/index.html` | 152 | the single page: the two chrome rows (topbar with the screens button, per-screen toolbar), #view, jobstrip, statusbar, and the ordered script list | shared/infra | active |
-| `src/backupviewer/web/js/api.js` | 148 | promise wrapper over the pywebview bridge: {ok,data} envelope, solo/cvx-window sid injection, slow-call dedupe | shared/infra | active |
+| `src/backupviewer/web/js/api.js` | 153 | promise wrapper over the pywebview bridge: {ok,data} envelope, solo/cvx-window sid injection, slow-call dedupe | shared/infra | active |
 | `src/backupviewer/web/js/bgfx.js` | 2080 | canvas/css background-effects engine: 18 themed looks (16 canvas) with global and per-effect sliders | theming | active |
 | `src/backupviewer/web/js/components/backuptabs.js` | 257 | BV.session plus the #sessionbar browser-style backup tab strip: switch, close, reorder, pop out, tear off; the active tab is the breadcrumb hosting the screens menu | shared/infra | active |
 | `src/backupviewer/web/js/components/builders.js` | 84 | BV.kv / BV.card / BV.hero: dom builders for key-value lists, the card shell and the identity hero line | shared/infra | active |
@@ -149,8 +151,8 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/web/js/cvx3d.js` | 389 | the camera 3d view: model rail (parts/scans/hand/robot/calibration), meshview stage, info cards, stl extract flow | cameras | active |
 | `src/backupviewer/web/js/highlight_tp.js` | 73 | regex tokenizer that wraps FANUC TP program lines in tp-* spans for themed syntax highlighting | shared/infra | active |
 | `src/backupviewer/web/js/jobs.js` | 299 | BV.jobs: 500ms backup-job poller, run-wide progress jobstrip with live details panel, global busy indicator | backup capture | active |
-| `src/backupviewer/web/js/keys.js` | 154 | global keydown map (number-row tabs, ctrl+k/e, j/k, esc, backspace) plus the shortcuts help modal | shared/infra | active |
-| `src/backupviewer/web/js/manage_ui.js` | 277 | the last-backup report modal: run log with retry-failed, partial-snapshot review, stale list (the tidy actions ride the library's functionsâ€¦ menu now) | library | active |
+| `src/backupviewer/web/js/keys.js` | 155 | global keydown map (number-row tabs, ctrl+k/e, j/k, esc, backspace) plus the shortcuts help modal | shared/infra | active |
+| `src/backupviewer/web/js/manage_ui.js` | 277 | the last-backup report modal: run log with retry-failed, partial-snapshot review, stale list (the tidy actions ride the library's functions… menu now) | library | active |
 | `src/backupviewer/web/js/mtxremote.js` | 168 | matrox remote overlay: sandboxed iframe tabs of the camera's own web ui, window fallback if unframeable | remote/mobile | active |
 | `src/backupviewer/web/js/phoneview.js` | 212 | qr handoff modal that mirrors this window (or a camera feed) to a phone, with a firewall-fix help panel | remote/mobile | active |
 | `src/backupviewer/web/js/router.js` | 496 | hash router and app boot: the screens dropdown + breadcrumb feed, chrome edge hairlines, cubes, status bar, boot sequence | shared/infra | active |
@@ -172,13 +174,13 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/web/js/tabs/overview.js` | 834 | overview dashboard: hero plus draggable persisted cards (mastering, memory, ethernet, tasks) + date picker | backup parsing | active |
 | `src/backupviewer/web/js/tabs/pdiff.js` | 86 | hidden #pdiff route wrapping BV.pdiffView: program-vs-program line diff, jump buttons, workspace add buttons | compare engine | active |
 | `src/backupviewer/web/js/tabs/photos.js` | 466 | photos tab: camera image viewer (hero + lazy grid + zoom lightbox, cv-x height blend) and linked-camera list | cameras | active |
-| `src/backupviewer/web/js/tabs/programs.js` | 960 | programs tab: tp/karel list with filters, style table, source detail, call tree, label xref, workspace picks | program editor | active |
+| `src/backupviewer/web/js/tabs/programs.js` | 971 | programs tab: tp/karel list with filters, style table, source detail, call tree, label xref, workspace picks | program editor | active |
 | `src/backupviewer/web/js/tabs/registers.js` | 200 | registers tab: r/pr/sr sub-tabs in split or vs tables, hide-empty toggle, click-through to backup search | backup parsing | active |
 | `src/backupviewer/web/js/tabs/search.js` | 158 | hidden #search route rendering backup-wide hits grouped by programs, io, registers, frames, macros, files | backup parsing | active |
 | `src/backupviewer/web/js/tabs/sysvars.js` | 193 | system vars tab: lazy collapsible $-variable tree with source-file tags; exports treeNode for other tabs | backup parsing | active |
-| `src/backupviewer/web/js/tabs/view3d.js` | 956 | 3d view tab: svg-projected dcs zones, orbit/pan/zoom + snap cube, posed fk arm, per-check side panel | 3D viewer | active |
-| `src/backupviewer/web/js/netstatus.js` | 419 | plant-link pill + drop panel: 4-state link chip, segment device list merged with the library, gentle arp recheck | backup capture | active |
+| `src/backupviewer/web/js/tabs/view3d.js` | 1684 | 3d view tab: svg-projected dcs zones, orbit/pan/zoom + snap cube, posed fk arm, per-check side panel | 3D viewer | active |
 | `src/backupviewer/web/js/theme.js` | 441 | theme data + apply layer: maps 9 theme colors onto css vars, hex/contrast math, the custom-theme color editor | theming | active |
+| `src/backupviewer/web/js/netstatus.js` | 419 | plant-link pill + drop panel: 4-state link chip, segment device list merged with the library, gentle arp recheck | backup capture | active |
 | `src/backupviewer/web/js/theme_ui.js` | 269 | the theme picker row + drop panel: categories, credits, filter, hover-preview, edit/delete of custom themes | theming | active |
 | `src/backupviewer/web/js/update.js` | 135 | release-check UI: boot autocheck toast, statusbar update pill, about-box updates row with skip-version | shared/infra | active |
 | `src/backupviewer/web/js/util.js` | 451 | boots window.BV: esc/el/fmt/toast/copy, host-window fullscreen, modal+dirtyGuard, menu/dropPanel, collapsible | shared/infra | active |
@@ -239,7 +241,9 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/test_libraryimporter_app.py` | 135 | pytest for the LibraryImporter second app: its WebView2 failure-watch/relaunch ladder and the Api bridge envelope, seed and drag-drop handlers | tests | active |
 | `tests/test_libraryimporter_core.py` | 209 | pytest for the importer's parse -> plan -> seed pipeline, full-name expansion, schema-2 sidecar shape and destination sanity warnings | tests | active |
 | `tests/test_libraryimporter_integration.py` | 63 | pytest proving a tree seeded by libraryimporter.core is adopted by BackupViewer's scanner with path identity, IPs and stable ids | tests | active |
+| `tests/test_ik.py` | 220 | pytest for the inverse solve: the coupling rule against _thetas, the analytic jacobian against finite differences over every distinct chain shape, round-trip pose AND branch recovery, honest refusals | tests | active |
 | `tests/test_ls_edit.py` | 343 | pytest for the .LS edit/export engine: byte-faithful decode/encode, section split, emit renumbering, /ATTR and /POS splices, program rename | tests | active |
+| `tests/test_ls_motions.py` | 313 | pytest for the /MN motion grammar: the instruction stream incl. circular continuations, destination-after-the-motion-letter, nested P[R[n]], option tokens, speed units, derived vs assumed durations | tests | active |
 | `tests/test_macros.py` | 21 | pytest for the SYSMACRO.VA macro table: names, program names and DI assignments *(untracked, local-only)* | tests | active |
 | `tests/test_magnet.py` | 67 | pytest for magnet-EOAT detection from MAG*.PC programs and the R[800-899] register grouping | tests | active |
 | `tests/test_mhvalves.py` | 151 | pytest for MH valve signal-table resolution and the no-phantom-vacuum guard on controller defaults | tests | active |
@@ -248,13 +252,14 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/test_mtxbackup.py` | 383 | pytest for the Matrox SMB camera pull end-to-end against a temp camera home via an injected mount, incl. MAX_PATH copy/index and camera self-naming | tests | active |
 | `tests/test_payloads.py` | 43 | pytest for payload schedules out of $PLST_GRP: mass/cg/inertia plus uninit and -9999 sentinel flagging | tests | active |
 | `tests/test_phone_view.py` | 343 | pytest driving PhoneShare over real loopback HTTP with the camera fetch faked, plus address ranking and the phone_view_* endpoints and firewall helper | tests | active |
-| `tests/test_probes.py` | 106 | the wiring that makes pytest run the probe roster: one subprocess each, timeout, `probe` marker (deselected by default in pyproject) | tests | active |
+| `tests/test_program_path.py` | 297 | pytest for the taught-point resolver: uframe composition, the utool inverse round-tripped against measure_flange, joint-rep forward placement, and every refusal reason | tests | active |
+| `tests/test_probes.py` | 107 | the wiring that makes pytest run the ten probes: one subprocess each, timeout, `probe` marker (deselected by default in pyproject) | tests | active |
 | `tests/test_programs.py` | 82 | pytest for .ls header/body/position parsing, call hops, and KAREL .PC listing over the private fixture *(untracked, local-only)* | tests | active |
 | `tests/test_qr.py` | 218 | pytest pinning the hand-rolled QR encoder: Reed-Solomon syndromes, BCH format info, spec geometry, and a from-scratch reader that re-reads the payload | tests | active |
 | `tests/test_registers.py` | 48 | pytest for NUMREG/POSREG/STRREG parsing: counts, joint vs cartesian PRs, uninit slots *(untracked, local-only)* | tests | active |
 | `tests/test_screengrab.py` | 125 | pytest decoding the app's own PNG output by hand plus Windows GDI window-capture smoke tests and a pointer-sized HWND prototype guard | tests | active |
 | `tests/test_session.py` | 74 | pytest for BackupSession: manifest, .ls program-vs-report split, case-insensitive find, karel detection *(untracked, local-only)* | tests | active |
-| `tests/test_sessions.py` | 199 | pytest for the multi-session registry behind backup tabs: open/switch/close, per-entry compare, session cap, pop-out drop, sid/side parameter-order guard | tests | active |
+| `tests/test_sessions.py` | 201 | pytest for the multi-session registry behind backup tabs: open/switch/close, per-entry compare, session cap, pop-out drop, sid/side parameter-order guard | tests | active |
 | `tests/test_settings.py` | 48 | pytest that settings._write retries a transient Windows PermissionError on the atomic replace and still raises when the lock never clears | tests | active |
 | `tests/test_sim_export.py` | 201 | pytest for loading camera workspaces into the CV-X simulator's flat folder: what is offered, naming, blocking hand-made workspaces, sim_root setting | tests | active |
 | `tests/test_summary.py` | 67 | pytest for parse_summary over a real SUMMARY.DG: identity, options, memory, ethernet, tasks, macros *(untracked, local-only)* | tests | active |
@@ -272,6 +277,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/ui_cvxremote_probe.py` | 205 | hidden-window probe of the cv-x remote bar, top-bar phone button and pop-out session adoption | tests | active |
 | `tests/ui_edit_probe.py` | 1753 | hidden-window probe of the #edit workspace: panes, tab strips, find/replace, pane diff, per-robot export | tests | active |
 | `tests/ui_files_extract_probe.py` | 234 | hidden-window probe of the files-tab extract flow: tick/range/header selection against the filter, the extract modal, and the landed tree's shape | tests | active |
+| `tests/ui_view3d_probe.py` | 620 | hidden-window probe for the 3d view: zones drawn, arm posed, layer order, cube snap, el clamp, state restore, a program's path and refusals, and the contradiction gate | tests | active |
 | `tests/ui_fk_probe.py` | 135 | hidden-window probe holding BV.fk.chain equal to kinematics.chain_frames within 1e-6 across builtin chains plus the synthetic parallel-link arm | tests | active |
 | `tests/ui_import_probe.py` | 204 | hidden-window probe of the drop-import flow: simulated native drop, pre-ticked results, plant/line step, summary toast, landed tree byte-checked; --drop-probe keeps a visible window for a real drag | tests | active |
 | `tests/ui_logic_probe.py` | 227 | hidden-window probe of the camera logic tab: tab lights only on a script-bearing backup, calculation units lead the rail, the show-other toggle, script text renders whole | tests | active |
@@ -299,23 +305,23 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 
 | subsystem | files | ~lines |
 |---|---:|---:|
-| tests | 87 | 24,781 |
-| shared/infra | 27 | 8,969 |
-| docs | 12 | 6,617 |
-| theming | 34 | 6,231 |
-| backup parsing | 31 | 6,031 |
+| tests | 91 | 26,234 |
+| shared/infra | 27 | 9,081 |
+| docs | 12 | 6,977 |
+| backup parsing | 32 | 6,369 |
+| theming | 34 | 6,327 |
 | library | 5 | 5,804 |
-| program editor | 5 | 4,929 |
+| 3D viewer | 17 | 5,339 |
+| program editor | 5 | 4,940 |
 | cameras | 15 | 4,524 |
-| 3D viewer | 16 | 3,836 |
 | backup capture | 6 | 2,811 |
 | remote/mobile | 10 | 2,114 |
-| flag scanning | 2 | 2,080 |
+| flag scanning | 2 | 2,062 |
 | LibraryImporter | 11 | 1,395 |
 | compare engine | 5 | 1,355 |
 | tools/scripts | 5 | 1,087 |
 | build/config | 7 | 267 |
-| **total** | **278** | **82,831** |
+| **total** | **284** | **86,686** |
 
 > Counts are by *primary* subsystem only â€” a file appears once, so these add up to the
 > whole repo. The `tests` row is the largest because every probe and unit suite counts as

@@ -64,6 +64,7 @@ PROBES = [
     "ui_tabs_probe.py",
     "ui_theme_palette_probe.py",
     "ui_updatecheck_probe.py",
+    "ui_view3d_probe.py",
 ]
 
 # The slowest today is ui_edit at ~57s. Generous, because this is a hang
