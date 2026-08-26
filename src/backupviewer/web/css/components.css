@@ -1524,6 +1524,13 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .home-lib-selacts { display: flex; align-items: center; gap: 0.35rem; }
 .lib-sel-count { font-size: 0.78rem; text-align: right; }
 .home-lib-actions { display: flex; align-items: center; gap: 0.4rem; flex: none; }
+/* the CV-X switch sits at the far right of the same bar as "+ add robot" —
+   margin-left:auto rather than a spacer element, so a wrapped toolbar still
+   pushes it to the end of whatever row it lands on */
+.lib-cvx-live { margin-left: auto; flex: none; }
+.lib-cvx-live[aria-pressed="true"] { color: var(--ok); }
+/* off is a STATE, not a disabled button: it still reads as clickable */
+.lib-cvx-live.is-off { color: var(--sub); }
 .lib-cancel-all { color: var(--error); }
 .lib-cancel-all:hover { color: var(--error); background: color-mix(in srgb, var(--error) 14%, var(--bg2)); }
 .empty-lib { color: var(--sub); font-size: 0.9rem; padding: 0.8rem 0.2rem; }
@@ -1559,6 +1566,10 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .cam-tile .cam-live + .cam-tile-note { display: none; }
 .cam-tile.cam-off .cam-live { visibility: hidden; position: absolute; inset: 0; }
 .cam-tile.cam-off .cam-live + .cam-tile-note { display: block; }
+/* ...and the same for a tile that has not had its first picture YET. A tile
+   the tick has not reached is not a broken camera, but a blank black box
+   cannot say so - which is precisely how a starved tile used to read. */
+.cam-tile.cam-wait .cam-live + .cam-tile-note { display: block; }
 .cam-tile-main { padding: 0.45rem 0.6rem 0.55rem; }
 
 /* plant/line combo: input + a "▾" picker of existing values */

@@ -155,6 +155,47 @@
   is added and the rest are named in the toast, the way the other batch flows
   report. A backup that simply holds no TP programs now says so, instead of
   claiming they were "already in the workspace".
+## unreleased — the camera gets its 3d view, and the files tab extracts
+- **The camera wall stops going dark past the twelfth tile.** On a wall of
+  fifteen cameras the first nine showed pictures and the last six were black
+  rectangles with no message on them at all — while every one of those cameras
+  was up and serving a picture, several of them *newer* than the ones the wall
+  was showing. Nothing was wrong with the cameras or the network. The wall
+  starts at most six new pictures every two seconds, which is a deliberate
+  kindness to the plant network, but it handed those six out by starting at the
+  top of the list every single time. A picture takes about a second and a tile
+  wants a fresh one every two, so the same twelve tiles at the top used up the
+  whole allowance forever and the thirteenth onward was **never asked for a
+  picture at all** — with 56 cameras in the library, 44 of them could never
+  appear. Never being asked is also why they had nothing to say: a tile only
+  knows it is in trouble when a request fails, and no request was ever made,
+  so it sat there blank, which looks exactly like a dead camera. The allowance
+  now goes **round the wall** instead of restarting at the top: a tile that has
+  never shown a picture jumps the queue (so a row you have just scrolled to
+  fills in on the next beat), and the ordinary refresh picks up where the last
+  one left off, so every tile gets its turn. A bigger wall now means each tile
+  refreshes a little less often — never that some of them never refresh at all.
+  Two smaller things came with it: the wall no longer spends its allowance on
+  tiles up to two screens away that nobody is looking at, and a tile still
+  waiting for its first picture now says **"waiting for its first frame…"**
+  instead of showing an empty black box. This was hidden by a test that used
+  nine cameras (fewer than the twelve that worked), drove the tiles by hand
+  instead of letting the wall's own timer do it, and only ever tested Keyence
+  cameras — which are the one kind this never affected, because a Keyence tile
+  only spends the allowance once, when it first connects. Matrox tiles pay
+  every time, and Matrox is where the wall went dark. The test now uses
+  twenty-four cameras of both makes, lets the real timer drive, and refuses to
+  run at all if fewer than thirteen tiles are on screen.
+- **A "CV-X live" switch on the library toolbar.** On the right-hand end of the
+  same bar as "+ add robot", while you are on the camera wall: one click takes
+  every Keyence camera off the wall, and another puts them back. It is not just
+  a filter — mirroring a CV-X takes that controller's *single* remote slot for
+  as long as its tile is on screen, so a wall left open on a Keyence line is a
+  terminal nobody at the HMI can use. Switching them off hangs up every one of
+  those sessions immediately rather than waiting out the eight-second lease, so
+  the slots go back at once. Matrox tiles are unaffected and keep running. The
+  setting is remembered, and if switching them off empties the wall it says so
+  ("… CV-X cameras are switched off") instead of reading as an empty library.
 - **The camera wall sorts by camera type.** The sort button gains a fourth
   option while you are on the wall — name, IP, last backup, and now **camera
   type** — which groups the Keyence tiles together and the Matrox tiles
