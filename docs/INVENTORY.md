@@ -13,7 +13,7 @@ recounted by `tools/update_inventory.py`, which now owns the derived numbers
 (the `~lines` column, the subsystem totals, the Scope line — run it after a
 batch lands, or with `--check` to hear about drift).
 
-> **âš ï¸ This is a dated snapshot, not a live document.** `~lines` and every file
+> **⚠️ This is a dated snapshot, not a live document.** `~lines` and every file
 > description are as of generation. A repair pass ran straight afterwards
 > (`b47b4bc`..`da10c92`, 2026-07-28) and acted on several findings below; those are
 > marked **✅ RESOLVED** inline with the commit that closed them. The original
@@ -596,7 +596,7 @@ Findings only — nothing here was acted on. Line references are to the working 
   rewritten to the dialed IP at connect time. The git-excluded tests *do* assert on real robot
   names and F-numbers — correctly firewalled, and anything merging them into the public suite has
   to scrub the assertions, not just swap the fixture.
-  âš ï¸ One gap: `test_cvx_remote.py` checks only that the `TCP:` field parses and can be replaced,
+  ⚠️ One gap: `test_cvx_remote.py` checks only that the `TCP:` field parses and can be replaced,
   **not** that its contents are TEST-NET — a future re-capture from live hardware could reintroduce
   a real address into an opaque binary without failing a test.
   > **✅ RESOLVED `f3b8ebd`.** `test_bundled_handshakes_carry_no_real_address` now requires every
