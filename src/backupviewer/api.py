@@ -293,6 +293,17 @@ def _watch_step(last: str | None, pending: bool, sig: str) -> tuple[str, bool, b
 # chains. "" is the FANUC robot default row; job rows get the common
 # (host, root, plant, line, robot, note, run_id, on_complete) plus their job_kw.
 
+def _mtx_photo_count() -> int:
+    """How many photos a Matrox pull carries back - the `mtx_photos` setting, or
+    the module default when it is unset or junk. Never 0: a stray value in
+    settings.json must not quietly turn a camera backup into a photo-less one."""
+    try:
+        n = int(settings.get("mtx_photos", mtxbackup.MAX_PHOTOS))
+    except (TypeError, ValueError):
+        return mtxbackup.MAX_PHOTOS
+    return n if n > 0 else mtxbackup.MAX_PHOTOS
+
+
 _DEVICE_REGISTRY = {
     "camera-mtx": {   # SMB - no port/passive; blank creds -> burned-in camera login
         "probe": lambda host, spec: mtxbackup.probe_camera(
@@ -306,6 +317,7 @@ _DEVICE_REGISTRY = {
             "cameras": spec.get("cameras"),
             "user": spec.get("user") or mtxbackup.MTX_USER,
             "passwd": spec.get("passwd") or mtxbackup.MTX_PASS,
+            "max_photos": _mtx_photo_count(),
         },
     },
     "camera-keyence": {   # anonymous FTP

@@ -134,24 +134,31 @@ def retrieve(ftp, retr_arg: str, dest: Path, *, retries: int = RETRIES) -> int:
 
 
 def mirror_latest(dated: Path, latest: Path, *, label: str = "") -> Path | None:
-    """Overwrite `latest` with a copy of the `dated` snapshot, built in a sibling
+    r"""Overwrite `latest` with a copy of the `dated` snapshot, built in a sibling
     .__tmp dir then atomically swapped, so a half-written mirror is never visible
     and a failure here leaves the (good) dated snapshot untouched. Returns the
-    mirror path, or None on failure (logged)."""
+    mirror path, or None on failure (logged).
+
+    Every path goes through \\?\ : the SOURCE side is a dated camera snapshot,
+    which is the deepest tree this app ever makes (`<lib>\<plant>\<line>\<robot>\
+    <date>\<time>\CAM1\Documents\Matrox Design Assistant\SavedImages\<date>\` plus
+    a long inspection filename), and copytree opens each file by its full path.
+    Past 260 chars a plain copy fails with 'cannot find the path' - which this
+    function catches and logs, so the symptom is a Latest mirror that quietly
+    stops tracking while every dated snapshot looks perfect."""
     tmp = latest.with_name(latest.name + ".__tmp")
+    tmp_l, latest_l = long_path(tmp), long_path(latest)
     try:
-        latest.parent.mkdir(parents=True, exist_ok=True)
-        if tmp.exists():
-            shutil.rmtree(tmp, ignore_errors=True)
-        shutil.copytree(dated, tmp)
-        if latest.exists():
-            shutil.rmtree(latest, ignore_errors=True)
-        os.replace(tmp, latest)
+        os.makedirs(long_path(latest.parent), exist_ok=True)
+        shutil.rmtree(tmp_l, ignore_errors=True)
+        shutil.copytree(long_path(dated), tmp_l)
+        shutil.rmtree(latest_l, ignore_errors=True)
+        os.replace(tmp_l, latest_l)
         return latest
     except OSError:
         log.exception("Latest mirror failed for %s (dated snapshot is intact)",
                       label or latest.name)
-        shutil.rmtree(tmp, ignore_errors=True)
+        shutil.rmtree(tmp_l, ignore_errors=True)
         return None
 
 
@@ -231,6 +238,9 @@ class _JobBase:
 
         self._cancel = threading.Event()
         self._lock = threading.Lock()
+        # Overrides for the library row, when a transport's _settle moved this
+        # run's evidence somewhere the plain progress numbers no longer describe.
+        self._record_extra: dict = {}
         self._p = {
             "id": self.id, "run_id": self.run_id, "status": "pending", "host": host,
             "robot": self.robot, "line": self.line, "plant": self.plant,
@@ -314,6 +324,14 @@ class _JobBase:
         latest = latest_dir(self.dest_root, self.plant, self.line, self.robot)
         return mirror_latest(dated, latest, label=self.robot)
 
+    def _settle(self, dated: Path, when: _dt.datetime) -> Path:
+        """Where a finished pull's evidence finally lives. The default is exactly
+        where it was pulled; the Matrox camera job overrides it to fold a
+        photos-only re-run into the snapshot it matches (mtxbackup._settle). Runs
+        AFTER the snapshot is complete on disk, and a transport that moves the
+        evidence sets _record_extra so the library row describes where it went."""
+        return dated
+
     # -- library record ------------------------------------------------------
 
     def _ips(self) -> list:
@@ -331,11 +349,16 @@ class _JobBase:
 
     def library_backup(self) -> dict:
         s = self.snapshot()
-        return {
+        rec = {
             "path": s["dated_path"], "taken": s["started"],
             "type": self.TYPE_STR, "files": s["done"], "bytes": s["bytes"],
             "source": self.SOURCE, "note": self.note,
         }
+        # A settled run describes the folder it landed in, not the transfer: a
+        # top-up's row must carry that snapshot's own taken/files/bytes, or the
+        # library and the backup.json beside it would tell two different stories.
+        rec.update(self._record_extra)
+        return rec
 
 
 class CameraJobBase(_JobBase):
@@ -399,6 +422,8 @@ class CameraJobBase(_JobBase):
                 return self._finish("error", error=errors[0] if errors else "no files pulled")
 
             self._write_sidecars(dated, when, done, nbytes, errors)
+            dated = self._settle(dated, when)      # may fold this run into an
+            self._set(dated_path=str(dated))       # earlier snapshot (mtxbackup)
             latest = self._mirror_latest(dated)
             self._set(latest_path=str(latest) if latest else "")
             result = self._finish("done", error="; ".join(errors))

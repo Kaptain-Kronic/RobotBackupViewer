@@ -80,7 +80,14 @@ model).
 ## Honesty rules — the trust contract
 
 - **Backups are read-only evidence.** Nothing in the app writes into a
-  backup folder, ever.
+  backup folder — with exactly one ruled exception, and it stays one: a
+  Matrox re-run whose `da/` tree is unchanged folds its new photos into the
+  snapshot they match instead of stacking a 400-file near-twin beside it
+  (`mtxbackup._settle`). It only ever ADDS files the camera itself produced,
+  never rewrites or removes one, keeps the snapshot's original `taken` and
+  records the visit as `updated` + `topups`, and runs only after this pull
+  has already landed as a complete snapshot of its own. Nothing else may
+  write into a backup folder; a second exception needs the same ruling.
 - **Files are law.** The folder tree is the source of truth; sidecar JSON
   (`robot.json`, `backup.json`) carries identity + config only, never
   claims that contradict what's on disk. Presence = existence. A backup is

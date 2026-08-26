@@ -14,8 +14,20 @@ credentials (both case-sensitive - see MTX_USER/MTX_PASS below). The `mtxuser` s
       SavedImages/<YYYY-MM-DD>/          runtime inspection photos (jpg+png+txt
                                          triples), one dated folder per day
 
-Backup scope (confirmed with the user): the WHOLE `da/` tree plus ONLY the newest
-SavedImages date folder - small, fast snapshots that still carry the latest photo.
+Backup scope (confirmed with the owner): the WHOLE `da/` tree plus the newest N
+photos from SavedImages (N = the `mtx_photos` setting, default 25) - newest date
+folder first, then back through the older ones until the count is met. Only the
+newest day's photos come whole (jpg + png + txt); older ones come as jpg + txt,
+since the png is the same 1920x1200 frame at ~2.3 MB against the jpeg's ~213 KB
+and the photos tab renders either. Small, fast snapshots that carry a RUN of
+recent photos rather than the one the camera happened to be holding.
+
+A re-run whose `da/` tree is unchanged does not stack a second near-identical
+snapshot: its new photos are folded into the snapshot they match, which records
+the top-up as `updated` + `topups` in its own backup.json (see _settle). That is
+the single place this app writes into an existing backup folder, it only ever
+ADDS the camera's own new evidence, and it never rewrites a byte of what was
+already pulled - the ruling is recorded in docs/subsystems/backup-capture.md.
 
 Because SMB makes the share a normal filesystem path once authenticated, this is
 the simplest transport in the app: authenticate with WNetAddConnection2, then
@@ -63,7 +75,12 @@ MTX_SHARE = "mtxuser"
 # SavedImages path under the share, as path segments (contains a space).
 IMAGES_PARTS = ("Documents", "Matrox Design Assistant", "SavedImages")
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")     # SavedImages/<YYYY-MM-DD>
-BACKUP_TYPE = "matrox da + latest images"
+BACKUP_TYPE = "matrox da + recent images"
+
+# How many photos a pull carries back. The default a site never changes; the
+# `mtx_photos` setting is what the settings screen writes (api hands it to the
+# job). A photo is a triple, so this is a count of INSPECTIONS, not of files.
+MAX_PHOTOS = 25
 
 
 # -- SMB session (native Windows, via mpr.dll) -----------------------------------
@@ -248,19 +265,80 @@ def smb_mount(host: str, user: str, passwd: str):
 
 # -- enumerate + copy ------------------------------------------------------------
 
-def _enumerate_files(base: Path) -> list[Path]:
-    """Absolute paths (under `base`) to pull: the whole `da/` tree + only the
-    newest SavedImages date folder. `base` is a mounted share, walked as a normal
-    filesystem."""
+def _mtime(p: Path) -> int:
+    """A file's mtime, 0 when it can't be read - the tie-break under a filename
+    stamp, never a reason to fail."""
+    try:
+        return int(os.stat(ftpbackup.long_path(p)).st_mtime)
+    except OSError:
+        return 0
+
+
+def _shot_name(group: dict) -> str:
+    """The one file that IS the photo: the jpg when the camera wrote one, else
+    the png. "" for a group that is only a sidecar."""
+    return group.get("jpg") or group.get("png") or ""
+
+
+def _photo_files(si: Path, limit: int) -> list[Path]:
+    """The newest `limit` photos under a SavedImages folder, newest first.
+
+    Walks the `<YYYY-MM-DD>` date folders newest-first and stops the moment the
+    count is met, so a camera holding a year of images is listed for a handful of
+    days, not walked whole. Within a day the camera's own filename timestamp
+    orders the shots (mtime breaks ties).
+
+    The newest day yields whole triples; every older photo yields its jpg + txt
+    and leaves the png behind - same 1920x1200 frame, a tenth of the bytes. A
+    photo with no jpg falls back to its png rather than vanishing: a listed photo
+    the snapshot cannot show would be the dishonest kind of small."""
+    from .parsers import mtx_saved_image      # the triple grouping + sort key
+
+    if limit <= 0 or not si.is_dir():
+        return []
+    try:
+        dates = sorted((d for d in si.iterdir() if d.is_dir() and _DATE_RE.match(d.name)),
+                       key=lambda d: d.name, reverse=True)
+    except OSError:
+        return []
+
+    out: list[Path] = []
+    taken = 0
+    for rank, day in enumerate(dates):
+        if taken >= limit:
+            break
+        try:                       # scandir's stat comes free with the listing
+            with os.scandir(day) as it:
+                stamped = {e.name: int(e.stat().st_mtime) for e in it if e.is_file()}
+        except OSError:            # a day folder that vanished mid-listing
+            continue
+        groups = mtx_saved_image.group_photo_files(list(stamped))
+        order = sorted(groups, key=lambda s: mtx_saved_image.photo_sort_key(
+            s, stamped.get(_shot_name(groups[s]), 0)), reverse=True)
+        for stem in order:
+            if taken >= limit:
+                break
+            g = groups[stem]
+            shot = _shot_name(g)
+            if not shot:
+                continue           # a stray sidecar with no image is not a photo
+            taken += 1
+            wanted = (g.get("jpg"), g.get("png"), g.get("txt")) if rank == 0 \
+                else (shot, g.get("txt"))
+            out.extend(day / n for n in wanted if n)
+    return out
+
+
+def _enumerate_files(base: Path, max_photos: int = MAX_PHOTOS) -> list[Path]:
+    """Absolute paths (under `base`) to pull: the whole `da/` tree + the newest
+    `max_photos` photos out of SavedImages (see _photo_files). `base` is a
+    mounted share, walked as a normal filesystem. Photos come newest-first, so a
+    pull that is cancelled or dies partway still got the most useful ones."""
     out: list[Path] = []
     da = base / "da"
     if da.is_dir():
         out.extend(p for p in sorted(da.rglob("*")) if p.is_file())
-    si = base.joinpath(*IMAGES_PARTS)
-    if si.is_dir():
-        dates = sorted(d for d in si.iterdir() if d.is_dir() and _DATE_RE.match(d.name))
-        if dates:
-            out.extend(p for p in sorted(dates[-1].rglob("*")) if p.is_file())
+    out.extend(_photo_files(base.joinpath(*IMAGES_PARTS), max_photos))
     return out
 
 
@@ -291,6 +369,154 @@ def _copy_file(src: Path, dest: Path, *, retries: int = 2) -> int:
     raise last if last else OSError("copy failed: " + str(src))
 
 
+# -- topping up a snapshot instead of stacking a near-twin ------------------------
+# A camera's da/ tree barely ever changes; its SavedImages roll forward every
+# shift. Backing one up twice in a day therefore used to leave two ~360-file
+# folders differing by a single photo. So: pull exactly as before, then, if what
+# came back matches the camera's newest snapshot EVERYWHERE except the photos,
+# fold the new photos into that snapshot and drop the folder this run made.
+#
+# This is the one place the app writes inside an existing backup folder, so the
+# rules are narrow: it only ADDS files the camera itself produced, it never
+# rewrites or removes one, the snapshot keeps its original `taken` and records the
+# visit as `updated` + `topups`, and the fold happens only after this run has
+# already landed as a complete snapshot of its own - a crash mid-fold leaves two
+# honest folders, never a hole.
+
+SIDECARS = ("backup.json", "notes.txt")
+_DAY_RE = re.compile(r"^\d{4}_\d{2}_\d{2}$")      # <robot>/<YYYY_MM_DD>/
+_TIME_RE = re.compile(r"^\d{2}_\d{2}_\d{2}$")     #                     <HH_MM_SS>
+
+
+def _is_photo(rel: str) -> bool:
+    """True for a pulled rel-path sitting in a `SavedImages/<date>/` folder."""
+    parts = rel.split("/")
+    return (len(parts) >= 3 and parts[-3] == IMAGES_PARTS[-1]
+            and bool(_DATE_RE.match(parts[-2])))
+
+
+def _walk_rels(root: Path):
+    """(rel posix path, full long path) for every file in a snapshot, its
+    sidecars and any half-written `.part` aside. One walker, so "what is in this
+    snapshot" has a single answer. Long-path safe: a library tree plus a Matrox
+    SavedImages filename goes past MAX_PATH on its own."""
+    top = ftpbackup.long_path(root)
+    for dirpath, _dirs, names in os.walk(top):
+        for n in names:
+            if n.endswith(".part"):
+                continue
+            full = os.path.join(dirpath, n)
+            rel = os.path.relpath(full, top).replace(os.sep, "/")
+            if rel not in SIDECARS:
+                yield rel, full
+
+
+def _tree_sig(root: Path) -> dict:
+    """{rel-path: size} for a snapshot minus its photos - the part that must match
+    for two pulls to be the same snapshot holding different photos. An unreadable
+    file is -1: it is not absent, and it matches no real size either."""
+    out: dict[str, int] = {}
+    for rel, full in _walk_rels(root):
+        if _is_photo(rel):
+            continue
+        try:
+            out[rel] = os.stat(full).st_size
+        except OSError:
+            out[rel] = -1
+    return out
+
+
+def _fold_photos(dated: Path, prev: Path) -> tuple[int, int]:
+    """Copy the photos `dated` holds and `prev` does not into `prev`, oldest
+    first. Same rel-path = the same inspection (the camera stamps the filename to
+    the millisecond), so a photo already there is never rewritten. Returns
+    (files, bytes) added."""
+    have = {rel for rel, _full in _walk_rels(prev)}
+    added = nbytes = 0
+    for rel, full in sorted(_walk_rels(dated)):
+        if not _is_photo(rel) or rel in have:
+            continue
+        nbytes += _copy_file(Path(full), prev.joinpath(*rel.split("/")))
+        added += 1
+    return added, nbytes
+
+
+def _retop_meta(prev: Path, when, skipped=None) -> dict:
+    """Rewrite `prev`'s backup.json for a top-up: the original `taken` stands,
+    `updated` + `topups` record the visit, and files/bytes are RECOUNTED off the
+    folder rather than added up - files are law, and a recount also heals a count
+    that had drifted. Skips seen this run join the snapshot's own list. Returns
+    the meta as written, which is also the library's row for that folder."""
+    try:
+        meta = json.loads((prev / "backup.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        meta = {}
+    if not isinstance(meta, dict):
+        meta = {}
+    files = nbytes = 0
+    for _rel, full in _walk_rels(prev):
+        files += 1
+        try:
+            nbytes += os.stat(full).st_size
+        except OSError:
+            pass
+    meta["files"] = files
+    meta["bytes"] = nbytes
+    meta["updated"] = when.isoformat(timespec="seconds")
+    meta["topups"] = int(meta.get("topups") or 0) + 1
+    if skipped:
+        meta["skipped"] = sorted(set(meta.get("skipped") or []) | set(skipped))
+    tmp = prev / "backup.json.tmp"
+    tmp.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    tmp.replace(prev / "backup.json")
+    return meta
+
+
+def _complete_snapshot(d: Path) -> bool:
+    """A snapshot whose marker says the pull FINISHED. A partial (or unmarked)
+    folder is never topped up: adding today's photos to a tree that is missing
+    files would dress a half-backup as a fuller one."""
+    try:
+        meta = json.loads((d / "backup.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(meta, dict) and meta.get("complete") is True
+
+
+def _previous_snapshot(dated: Path) -> Path | None:
+    """The newest complete snapshot of this same device other than `dated`.
+    Layout is `<robot>/<YYYY_MM_DD>/<HH_MM_SS>`, so name order IS time order."""
+    robot = dated.parent.parent
+    try:
+        days = sorted((d for d in robot.iterdir() if d.is_dir() and _DAY_RE.match(d.name)),
+                      key=lambda p: p.name, reverse=True)
+    except OSError:
+        return None
+    for day in days:
+        try:
+            times = sorted((t for t in day.iterdir()
+                            if t.is_dir() and _TIME_RE.match(t.name)),
+                           key=lambda p: p.name, reverse=True)
+        except OSError:
+            continue
+        for t in times:
+            if t != dated and _complete_snapshot(t):
+                return t
+    return None
+
+
+def _discard(dated: Path) -> None:
+    """Remove the folder this run pulled into, once its photos are safe inside the
+    snapshot they belong to. Only ever the directory THIS job just created, and
+    only after the fold succeeded; the `<YYYY_MM_DD>` parent goes too if the run
+    was the only thing in it."""
+    shutil.rmtree(ftpbackup.long_path(dated), ignore_errors=True)
+    try:
+        os.rmdir(ftpbackup.long_path(dated.parent))
+    except OSError:
+        pass                        # the day holds other snapshots - leave it
+
+
 # -- the job ---------------------------------------------------------------------
 
 class CameraBackupJob(ftpbackup.CameraJobBase):
@@ -308,21 +534,24 @@ class CameraBackupJob(ftpbackup.CameraJobBase):
 
     def __init__(self, host, dest_root, plant, line, station, *,
                  cameras=None, user=MTX_USER, passwd=MTX_PASS,
-                 note="", run_id="", mount=smb_mount, throttle=0.0, on_complete=None):
+                 note="", run_id="", mount=smb_mount, throttle=0.0, on_complete=None,
+                 max_photos=MAX_PHOTOS, topup=True):
         super().__init__(host, dest_root, plant, line, station, cameras=cameras,
                          note=note, run_id=run_id, throttle=throttle,
                          on_complete=on_complete)
         self.user = user or ""
         self.passwd = passwd or ""
         self._mount = mount
+        self.max_photos = int(max_photos)
+        self.topup = bool(topup)
 
     def _pull_camera(self, host, label, dated: Path, done, nbytes):
-        """Mount one camera's share, enumerate da/ + newest images, and copy each
-        into <dated>/<label>/…."""
+        """Mount one camera's share, enumerate da/ + the newest photos, and copy
+        each into <dated>/<label>/…."""
         self._set(status="listing", current=f"{label} @ {host}")
         base, cleanup = self._mount(host, self.user, self.passwd)
         try:
-            files = _enumerate_files(base)
+            files = _enumerate_files(base, self.max_photos)
             with self._lock:
                 self._p["total"] += len(files)
             self._set(status="downloading")
@@ -347,6 +576,37 @@ class CameraBackupJob(ftpbackup.CameraJobBase):
             return done, nbytes
         finally:
             cleanup()
+
+    def _settle(self, dated: Path, when):
+        """Where this run's evidence finally lives: the camera's newest snapshot
+        when the only thing that changed was the photos (they get folded in and
+        this run's folder goes away), otherwise the folder just pulled.
+
+        Runs after the pull has already landed as a complete snapshot of its own,
+        so every failure mode here simply keeps that folder: a top-up is a
+        tidiness win, and a backup that exists twice beats one that exists
+        nowhere."""
+        if not self.topup:
+            return dated
+        try:
+            prev = _previous_snapshot(dated)
+            if prev is None or _tree_sig(dated) != _tree_sig(prev):
+                return dated
+            added, _nbytes = _fold_photos(dated, prev)
+            meta = _retop_meta(prev, when, skipped=self.snapshot()["skipped"])
+            _discard(dated)
+            self._record_extra = {
+                "files": meta.get("files", 0), "bytes": meta.get("bytes", 0),
+                "updated": meta.get("updated", ""),
+            }
+            if meta.get("taken"):
+                self._record_extra["taken"] = meta["taken"]
+            self._set(topup_path=str(prev), photos_added=added)
+            log.info("mtx top-up: %d new photo file(s) folded into %s", added, prev)
+            return prev
+        except OSError:
+            log.exception("photo top-up failed - keeping this run's own snapshot")
+            return dated
 
 # -- probe / diagnose / name (all over SMB) --------------------------------------
 
@@ -426,8 +686,11 @@ def name_from_backup(snapshot) -> dict:
                 if p.parent.parent.name == IMAGES_PARTS[-1] and _DATE_RE.match(p.parent.name)]
         if not txts:
             return out
-        txts.sort(key=lambda p: (p.parent.name, p.name))     # newest date, newest file
         from .parsers import mtx_saved_image
+        # newest date, then the camera's own stamp inside the filename - sorting
+        # those names as plain text would hand back a 9am shot over a 1pm one
+        txts.sort(key=lambda p: (p.parent.name,
+                                 mtx_saved_image.photo_sort_key(p.name, _mtime(p))))
         info = mtx_saved_image.parse_saved_image(
             Path(ftpbackup.long_path(txts[-1])).read_text(encoding="cp1252", errors="replace"))
         cam = info.get("camera") or {}
@@ -454,10 +717,11 @@ def resolve_camera_name(host, *, user=MTX_USER, passwd=MTX_PASS, mount=smb_mount
         dates = sorted(d for d in si.iterdir() if d.is_dir() and _DATE_RE.match(d.name))
         if not dates:
             return out
-        txts = sorted(p for p in dates[-1].glob("*.txt"))
+        from .parsers import mtx_saved_image
+        txts = sorted(dates[-1].glob("*.txt"),
+                      key=lambda p: mtx_saved_image.photo_sort_key(p.name, _mtime(p)))
         if not txts:
             return out
-        from .parsers import mtx_saved_image
         info = mtx_saved_image.parse_saved_image(
             txts[-1].read_text(encoding="cp1252", errors="replace"))
         cam = info.get("camera") or {}

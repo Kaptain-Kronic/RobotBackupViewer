@@ -1,6 +1,43 @@
 # Changelog
 
 ## unreleased — the camera gets its 3d view, and the files tab extracts
+- **A Matrox backup now brings home the last 25 photos, not the last one.**
+  The pull used to take the newest `SavedImages/<date>/` folder, which on a
+  real shop-floor camera is usually a single inspection — a 367-file backup
+  whose photos tab had exactly one photo in it. It now walks the date folders
+  newest-first until it has 25 photos (a slider in ⚙ → preferences → matrox
+  cameras, 1–100), so a camera arrives with a run of recent inspections to
+  scroll back through. Photos, not files: a photo is the camera's jpg + png +
+  txt triple. Only the newest day's come whole — an older photo brings its jpg
+  and its sidecar and leaves the png behind, because the two images are the
+  same 1920×1200 frame and the png is ten times the size (measured on a real
+  pull: 2.29 MB against 213 KB). A photo the camera saved as a png only still
+  comes, as its png: a photo listed but not showable is the dishonest kind of
+  small.
+- **Backing a camera up again adds to the snapshot instead of cloning it.**
+  Two pulls of one camera minutes apart used to leave two ~400-file folders
+  differing by a single photo (there are two such pairs in the field library
+  right now). A re-run whose `da/` tree matches the camera's newest complete
+  snapshot file-for-file now folds its new photos into that snapshot and
+  removes the folder it just pulled into, so a camera's photo history
+  accumulates in one place. The snapshot keeps its own `taken` and records the
+  visit as `updated` + `topups`; the library reads "last backup" from the
+  top-up, so a camera pulled this morning never reads as weeks stale. This is
+  the one place the app writes inside a backup folder and it stays one — it
+  only ADDS files the camera itself produced, never rewrites or deletes one,
+  never touches a partial snapshot, and runs only after the pull has already
+  landed as a complete snapshot of its own, so a death mid-fold leaves two
+  honest folders and never a hole. A real `da/` change still earns its own
+  dated snapshot, exactly as before.
+- **Two old bugs fell out of building it.** The `Latest/` mirror copied with
+  plain paths, so a deep Matrox tree tripped Windows' 260-char limit and the
+  mirror silently stopped tracking while every dated snapshot looked perfect —
+  it now uses the same `\\?\` prefix the downloads have used since v0.99h. And
+  the camera writes hours before 10:00 with no leading zero
+  (`…-2026_07_07-9.14.30.020`), so sorting those filenames as text called a 9am
+  shot the newest of the day: that decided the photos grid's order and which
+  sidecar a camera was named from, and now the timestamp parts are padded
+  before they are compared.
 - **The files tab extracts to USB.** Every row grew a checkbox — tick one,
   shift-click a range, or take the header box, which selects exactly what the
   filter shows (the `tp` chip plus one click is every TP file in the backup).
