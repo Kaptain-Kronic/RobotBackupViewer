@@ -42,10 +42,70 @@ BUDGET = {
     # density landed.
     "editor_open": 110,   # double-click a note -> box is there
     "editor_close": 80,
-    "star_toggle": 500,   # pins the row + rebuilds the strip
+    # star_toggle/star_off are the best of STAR_REPS pairs, not one sample -
+    # see STAR_REPS for why, and for the numbers these two are set from.
+    "star_toggle": 700,   # pins the row + rebuilds the tree under it
+    "star_off": 700,      # and unpinning it rebuilds the tree again
     "shift_range": 800,   # selecting ~900 rows at once
     "picker_open": 900,   # the link/compare picker builds its own tree
 }
+
+
+# Starring is the noisiest thing this probe measures - it rebuilds all 2400
+# rows - so the budget sees the BEST of a few pairs rather than one sample.
+# Measured 2026-08-26, and every part of this is the measurement talking:
+#
+#   * one sample spread 390-532ms across seven runs, against a 500 budget that
+#     went red on a warm machine. Not a regression, just whatever else the box
+#     was doing - the 532 landed straight after ui_camwall_probe and its 16
+#     local HTTP servers.
+#   * the noise is ONE-SIDED. A scheduler slice, a GC pause or the probe before
+#     us still cooling only ever ADD time, so the fastest of a few is the
+#     honest estimate, and a real regression lifts the floor along with
+#     everything else - a cliff detector loses nothing by taking the minimum.
+#   * a MEDIAN would have been worse than one sample: the 2nd and later
+#     toggles cost 100-200ms more than the first (sample 0 was the cheapest in
+#     3 of 4 ten-pair runs; over 40 pairs the first-of-run median was 348ms
+#     against 530ms for the rest). Repeated 2400-row rebuilds never settle
+#     back down, so a median folds that in and reports ~530 where the toggle
+#     costs ~400. For the same reason there is NO warm-up here: warming this
+#     metric up raises it.
+#   * each pair is its own evaluate_js. Twelve pairs inside ONE js call ramped
+#     320 -> 924ms; the browser needs to return to its event loop between them.
+#
+# What the 700 is: best-of-5 measured 373-458ms (star_toggle) and 361-473ms
+# (star_off) over eight runs - five idle, two straight after ui_camwall_probe,
+# one with 12 of 16 cores pinned by a busy loop. Same eight runs, single-sample:
+# 373-503 and 412-543 - the old 500 would have gone red once more on
+# star_toggle, and twice on star_off had anything been asserting it. 700 is
+# ~1.5x the worst of those, in line with the headroom the other budgets here
+# carry, and still under the 814ms this used to cost before the fix (and far
+# under the regression it actually guards: a lib_list from the star handler is
+# SECONDS at plant scale, see home.js). Load the box hard enough to threaten
+# 700 and the probe fails earlier anyway - at 24 busy processes the tree never
+# rendered and tree.rendered caught it.
+STAR_REPS = 5
+
+# One on/off pair. Re-queried each time on purpose: the favourites strip
+# renders its own copy of the row, so while a robot is starred every index
+# below it shifts by one - and the pair puts that back, which is what
+# star.pair_is_its_own_undo below checks rather than assumes.
+STAR_PAIR = """(function(){
+  var row = document.querySelectorAll('.lib-robot')[1200];
+  var on = window.__time(function () { row.querySelector('.lib-fav').click(); });
+  var off = window.__time(function () {
+    document.querySelector('.lib-favs .lib-fav').click();
+  });
+  return {id: row.getAttribute('data-robot-id'), on: on, off: off,
+          rows: document.querySelectorAll('.lib-robot').length};
+})()"""
+
+
+def best(samples, key):
+    """The fastest `key` across the samples, or None if none of them reported
+    one (a budget() with None fails loudly rather than skipping)."""
+    vals = [s.get(key) for s in samples if isinstance(s.get(key), (int, float))]
+    return min(vals) if vals else None
 
 
 def budget(name, ms):
@@ -135,12 +195,6 @@ def probe(window, rows):
           out.editor_close = window.__time(function () {
             ta.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
           });
-          out.star_toggle = window.__time(function () {
-            document.querySelectorAll('.lib-robot')[1200].querySelector('.lib-fav').click();
-          });
-          out.star_off = window.__time(function () {
-            document.querySelector('.lib-favs .lib-fav').click();
-          });
           return out;
         })()""")
         print("  " + json.dumps(t))
@@ -150,9 +204,21 @@ def probe(window, rows):
         budget("editor_open", t.get("editor_open"))
         budget("keystroke", t.get("keystroke"))
         budget("editor_close", t.get("editor_close"))
-        budget("star_toggle", t.get("star_toggle"))
         check("editor.newline_cheap", t.get("newline", 999) <= BUDGET["keystroke"] * 2,
               f"({t.get('newline')}ms)")
+
+        star = [js(window, STAR_PAIR) or {} for _ in range(STAR_REPS)]
+        print("  " + json.dumps({"star_on": [s.get("on") for s in star],
+                                 "star_off": [s.get("off") for s in star]}))
+        # the samples are only comparable if each pair left the tree where it
+        # found it - same robot every time, same row count afterwards
+        check("star.pair_is_its_own_undo",
+              len({s.get("id") for s in star}) == 1 and
+              all(s.get("rows") == rows for s in star),
+              f"({sorted({s.get('id') for s in star})}, "
+              f"{sorted({s.get('rows') for s in star})} rows)")
+        budget("star_toggle", best(star, "on"))
+        budget("star_off", best(star, "off"))
 
         # your place in the list survives a rebuild. Rows off screen have
         # ESTIMATED heights, so restoring a raw pixel offset drifts (measured

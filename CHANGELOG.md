@@ -1,6 +1,35 @@
 # Changelog
 
 ## unreleased — the camera gets its 3d view, and the files tab extracts
+- **The star budget stops flunking the suite for being on a warm machine.**
+  `perf_probe`'s favourite-star check was a single sample of a 2400-row
+  rebuild against a 500 ms line — about 7% above the typical measurement and
+  25% above the fastest — so a run that landed behind something heavy went red
+  with nothing wrong. Four consecutive runs gave 532, 466, 397 and 463 ms;
+  only the first failed, and it followed `ui_camwall_probe` and its sixteen
+  local HTTP servers. A suite people learn to re-run is a suite people stop
+  trusting.
+  It takes the **best of five** on/off pairs now. The noise here is one-sided
+  — a scheduler slice, a GC pause, the probe before it still cooling — so the
+  fastest of a few is the honest estimate, and a real regression lifts the
+  floor along with everything else, which is all a cliff detector needs.
+  A median would have been *worse* than the single sample: the second and
+  later toggles cost 100–200 ms more than the first (over 40 pairs, 348 ms
+  first-of-run against 530 ms for the rest), because repeated full-tree
+  rebuilds never settle back down. That is also why there is no warm-up here —
+  warming this metric up raises it, which is the opposite of the usual story.
+  Each pair is its own `evaluate_js` for the same reason: twelve of them
+  inside one JS call ramped 320 → 924 ms, the browser never getting back to
+  its event loop between them.
+  The budget moved 500 → 700 with the measurements that justify it written
+  down beside it — best-of-five ran 373–458 ms across eight runs, five idle,
+  two straight after `ui_camwall_probe`, one with 12 of 16 cores pinned by a
+  busy loop. `star_off`, measured all along and asserted never, was running
+  closer to the old line than `star_toggle` was; it gets the same budget
+  rather than staying a number nobody checks. And the pair now asserts that it
+  is its own undo — same robot every time, same row count afterwards — because
+  the strip renders its own copy of the row, which shifts every index below
+  it, and the samples are only comparable if that puts itself back.
 - **Every move shows the frame and tool it was taught in, and a program can be
   played one tool at a time.** A move's utool is what decides where its TCP
   physically is, so a program that changes tool part-way — most of a drop on
