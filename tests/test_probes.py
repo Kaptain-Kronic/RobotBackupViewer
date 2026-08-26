@@ -67,7 +67,10 @@ PROBES = [
     "ui_view3d_probe.py",
 ]
 
-# The slowest today is ui_edit at ~57s. Generous, because this is a hang
+# Measured 2026-08-26: ui_edit ~70s, ui_camwall ~50s, the rest under 30s.
+# ui_camwall is the deliberate long one - it watches a real wall rotate over
+# several beats, and there is no way to be sure a tile is being refreshed
+# except to wait for the next fetch. Generous, because this is a hang
 # detector, not a benchmark - a plant PC is slower than a dev box.
 TIMEOUT = 300
 
