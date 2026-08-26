@@ -1,23 +1,23 @@
-﻿# INVENTORY â€” file-level map of this repo
+# INVENTORY — file-level map of this repo
 
 *Documentation pass, phase 1. Breadth, not depth: every file below was opened and
-skimmed for purpose. Nothing was edited, renamed or fixed to produce this map â€”
+skimmed for purpose. Nothing was edited, renamed or fixed to produce this map —
 problems found are noted, not acted on.*
 
 Generated 2026-07-28 against `main` @ `e594785` plus the then-uncommitted working
 tree (11 modified files and the then-untracked `components/icons.js`).
-**Re-anchored 2026-07-31 against `main` @ `63f7196`, clean tree** â€” the two
+**Re-anchored 2026-07-31 against `main` @ `63f7196`, clean tree** — the two
 UI-chrome batches (`bcf34f8`..`7939cf7`, `f60bfb9`..`63f7196`) landed since;
 descriptions were refreshed for the files they touched and every count was
 recounted by `tools/update_inventory.py`, which now owns the derived numbers
-(the `~lines` column, the subsystem totals, the Scope line â€” run it after a
+(the `~lines` column, the subsystem totals, the Scope line — run it after a
 batch lands, or with `--check` to hear about drift).
 
 > **âš ï¸ This is a dated snapshot, not a live document.** `~lines` and every file
 > description are as of generation. A repair pass ran straight afterwards
 > (`b47b4bc`..`da10c92`, 2026-07-28) and acted on several findings below; those are
-> marked **âœ… RESOLVED** inline with the commit that closed them. The original
-> wording is kept deliberately â€” the record of what was found is the point â€” but a
+> marked **✅ RESOLVED** inline with the commit that closed them. The original
+> wording is kept deliberately — the record of what was found is the point — but a
 > resolved item is history, not a to-do. Everything unmarked still stands.
 >
 > When per-subsystem docs land, they supersede this file for their own area. This
@@ -33,7 +33,7 @@ that are input data, not source), and the two local-only real-plant reference fi
 theme JSONs are one collapsed row). `status` is `active` unless a reader grepped and
 found nothing referencing the file (`possibly-dead`), it is a build/tool product
 (`generated`), it is third-party (`vendored`), or it could not be confidently placed
-(`unclear` â€” reason given inline).
+(`unclear` — reason given inline).
 
 ---
 
@@ -129,14 +129,14 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/web/js/bgfx.js` | 2080 | canvas/css background-effects engine: 18 themed looks (16 canvas) with global and per-effect sliders | theming | active |
 | `src/backupviewer/web/js/components/backuptabs.js` | 257 | BV.session plus the #sessionbar browser-style backup tab strip: switch, close, reorder, pop out, tear off; the active tab is the breadcrumb hosting the screens menu | shared/infra | active |
 | `src/backupviewer/web/js/components/builders.js` | 84 | BV.kv / BV.card / BV.hero: dom builders for key-value lists, the card shell and the identity hero line | shared/infra | active |
-| `src/backupviewer/web/js/components/checklist.js` | 135 | BV.checklist: the one multiselect controller â€” shift-click ranges, tri-state group boxes, rebind-safe selection | shared/infra | active |
+| `src/backupviewer/web/js/components/checklist.js` | 135 | BV.checklist: the one multiselect controller — shift-click ranges, tri-state group boxes, rebind-safe selection | shared/infra | active |
 | `src/backupviewer/web/js/components/dragreorder.js` | 162 | BV.dragReorder: generic drag-to-reorder across drop zones with insertion markers, edge auto-scroll, click guard | shared/infra | active |
-| `src/backupviewer/web/js/components/fk.js` | 110 | BV.fk: js twin of the FANUC forward-kinematics chain â€” 4x4 matrix math over an imported .def joint chain | 3D viewer | active |
-| `src/backupviewer/web/js/components/framecard.js` | 43 | BV.frameCard: the tool/uframe card â€” title, status pills, subtitle, xyzwpr list and config line | shared/infra | active |
+| `src/backupviewer/web/js/components/fk.js` | 110 | BV.fk: js twin of the FANUC forward-kinematics chain — 4x4 matrix math over an imported .def joint chain | 3D viewer | active |
+| `src/backupviewer/web/js/components/framecard.js` | 43 | BV.frameCard: the tool/uframe card — title, status pills, subtitle, xyzwpr list and config line | shared/infra | active |
 | `src/backupviewer/web/js/components/icons.js` | 57 | BV.icon: 6 inline stroke-svg glyphs (phone/gear/help/remote/lock/unlock) plus a boot sweep filling [data-icon] holders | shared/infra | active |
 | `src/backupviewer/web/js/components/libtree.js` | 231 | BV.libTree: plant to line to robot grouped collapsible library tree with filter, persisted folds, nested cameras | library | active |
-| `src/backupviewer/web/js/components/lseditor.js` | 518 | BV.lsEditor: single-layer contenteditable TP code editor â€” own undo stack, caret offsets, alignment gap blocks | program editor | active |
-| `src/backupviewer/web/js/components/multitable.js` | 249 | BV.MultiTable: two VTables driven as one â€” split halves or paired lists, lockable linked scroll, pane switching | shared/infra | active |
+| `src/backupviewer/web/js/components/lseditor.js` | 518 | BV.lsEditor: single-layer contenteditable TP code editor — own undo stack, caret offsets, alignment gap blocks | program editor | active |
+| `src/backupviewer/web/js/components/multitable.js` | 249 | BV.MultiTable: two VTables driven as one — split halves or paired lists, lockable linked scroll, pane switching | shared/infra | active |
 | `src/backupviewer/web/js/components/pdiffview.js` | 150 | BV.pdiffView: aligned side-by-side program-line diff renderer with equiv rows, stats pills and prev/next jumps | compare engine | active |
 | `src/backupviewer/web/js/components/pill.js` | 29 | BV.pill plus .node/.map: the rounded status badge as an html string, a live node, or a status-to-variant map | shared/infra | active |
 | `src/backupviewer/web/js/components/proj3d.js` | 122 | BV.proj3d: turntable orbit projection, xyzwpr frame transform and polygon-prism builder, pure math no dom | 3D viewer | active |
@@ -146,7 +146,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/web/js/components/segmented.js` | 66 | BV.segmented: the .seg sub-tab pill row, controlled or uncontrolled, with counts and multi-select | shared/infra | active |
 | `src/backupviewer/web/js/components/table.js` | 53 | BV.table: the small static .tbl html table for bounded row sets, kept deliberately out of keyboard nav | shared/infra | active |
 | `src/backupviewer/web/js/components/vsdiff.js` | 99 | BV.vsDiff: highlight-diffs toggle plus row-tint markers and io/register/program/macro field comparators | compare engine | active |
-| `src/backupviewer/web/js/components/vtable.js` | 423 | BV.VTable: the windowed table â€” sync data or async paging, sort, column resize/autofit, row menu, state persist | shared/infra | active |
+| `src/backupviewer/web/js/components/vtable.js` | 423 | BV.VTable: the windowed table — sync data or async paging, sort, column resize/autofit, row menu, state persist | shared/infra | active |
 | `src/backupviewer/web/js/cvxremote.js` | 313 | cv-x remote overlay: mjpeg screen mirror plus full mouse forwarding, session adopt/rebind for pop-outs | remote/mobile | active |
 | `src/backupviewer/web/js/cvx3d.js` | 389 | the camera 3d view: model rail (parts/scans/hand/robot/calibration), meshview stage, info cards, stl extract flow | cameras | active |
 | `src/backupviewer/web/js/highlight_tp.js` | 73 | regex tokenizer that wraps FANUC TP program lines in tp-* spans for themed syntax highlighting | shared/infra | active |
@@ -157,7 +157,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/web/js/phoneview.js` | 212 | qr handoff modal that mirrors this window (or a camera feed) to a phone, with a firewall-fix help panel | remote/mobile | active |
 | `src/backupviewer/web/js/router.js` | 496 | hash router and app boot: the screens dropdown + breadcrumb feed, chrome edge hairlines, cubes, status bar, boot sequence | shared/infra | active |
 | `src/backupviewer/web/js/scan_ui.js` | 895 | the fleet-scan modal: check picker built from the backend registry, find chips, live progress, grouped report | flag scanning | active |
-| `src/backupviewer/web/js/settings_ui.js` | 474 | the gear dialog (display/preferences tabs) and BV.uiPrefs.apply â€” fonts, sizes, glass/frost fills, bgfx dials | shared/infra | active |
+| `src/backupviewer/web/js/settings_ui.js` | 474 | the gear dialog (display/preferences tabs) and BV.uiPrefs.apply — fonts, sizes, glass/frost fills, bgfx dials | shared/infra | active |
 | `src/backupviewer/web/js/sim_export.js` | 188 | the load-cameras picker: copies CV-X workspaces from backups into the simulator folder, foreign-dir guard | cameras | active |
 | `src/backupviewer/web/js/state.js` | 65 | BV.state: open-backup manifest, per-backup tabData buckets, pub/sub, BV.tabState and BV.persistScroll | shared/infra | active |
 | `src/backupviewer/web/js/tabs/alarms.js` | 119 | alarm-history section embedded in overview: 15-row snapshot per ERR*.LS file, expandable to a filtered vtable | backup parsing | active |
@@ -197,10 +197,10 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/libraryimporter/web/js/importer.js` | 281 | the importer page logic: renders python's whole state, owns selection, runs seeding and the result panel | LibraryImporter | active |
 | `src/libraryimporter/web/js/util.js` | 41 | importer's BV namespace with just esc, el and toast, trimmed from the main app's util.js | LibraryImporter | active |
 | `tests/conftest.py` | 73 | pytest session fixtures pinning four exact snapshots inside the private library tree (primary/prev/secondary/partial), each through the fixtureutil gate, plus a text reader *(untracked, local-only)* | tests | active |
-| `tests/cvx_sim.py` | 214 | a loopback fake cv-x controller speaking the 850x framing: ctx per service type, op1/op6 replies the replay blocks on, push_frame down the video channel, inputs() decode â€” a wire-shape fake, not an emulator | tests | active |
+| `tests/cvx_sim.py` | 214 | a loopback fake cv-x controller speaking the 850x framing: ctx per service type, op1/op6 replies the replay blocks on, push_frame down the video channel, inputs() decode — a wire-shape fake, not an emulator | tests | active |
 | `tests/fixtureutil.py` | 70 | tracked half of the private-fixture plumbing: the require-or-error gate (missing fixture = error where the tree is expected, visible skip elsewhere) and runtime backup-root discovery | tests | active |
 | `tests/libraryimporter_probe.py` | 240 | end-to-end probe of the libraryimporter app: drop, checklist ranges, import, sidecars on disk | tests | active |
-| `tests/perf_probe.py` | 278 | plant-scale timing probe: 2400 stubbed rows with ms budgets for notes, stars, shift-range and picker â€” the library screen's only performance-cliff guard | tests | active |
+| `tests/perf_probe.py` | 278 | plant-scale timing probe: 2400 stubbed rows with ms budgets for notes, stars, shift-range and picker — the library screen's only performance-cliff guard | tests | active |
 | `tests/probeutil.py` | 87 | the probes' shared preamble: temp-APPDATA/watcher isolation before any app import, plus check/js/poll and the FAILURES list all nine used to carry their own copy of | tests | active |
 | `tests/test_alarms.py` | 41 | pytest for the alarm-history parser over the private fixture's ERRALL/ERRACT/ERRHIST/ERRMOT dumps *(untracked, local-only)* | tests | active |
 | `tests/test_backup_formats.py` | 192 | pytest for backup-format detection on synthetic trees: MD vs maintenance vs all-above, dupe-basename priority, per-format tabs, io-from-summary fallback (tracked successor to the retired real-corpus format tests) | tests | active |
@@ -214,7 +214,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/test_cvx_models.py` | 691 | pytest for the cv-x model decoder: containers, zlib-stl gate, calibration self-validation, and the models/export endpoints | tests | active |
 | `tests/test_cvx_program.py` | 498 | pytest for the cv-x inspection-program reader: st-magic gate, recovery-copy fold, name-table and script-grammar refusals, plus the logic tab requirement and the cvx_logic endpoint | tests | active |
 | `tests/test_cvx_remote.py` | 417 | pytest for the cv-x remote wire protocol: framing, ctx echo, jpeg harvest, frame-ack, mouse encode and reorder, plus the firewall assertion that the bundled handshake blobs carry only documentation addresses | tests | active |
-| `tests/test_cvx_stream.py` | 219 | pytest for the mjpeg bridge's flush behavior: a real session against the loopback sim, a raw http client reading the stream â€” one frame in, the frame plus its idle flush out, and never a third | tests | active |
+| `tests/test_cvx_stream.py` | 219 | pytest for the mjpeg bridge's flush behavior: a real session against the loopback sim, a raw http client reading the stream — one frame in, the frame plus its idle flush out, and never a third | tests | active |
 | `tests/test_cvx_tiles.py` | 192 | pytest for the cam-lens tile sessions at the api: view-only leases (mouse refused), per-ip idempotent dials, busy vs overlay, the ttl reaper, and adopt-never-redials | tests | active |
 | `tests/test_cvx_window.py` | 273 | pytest for cv-x remote session lifecycle at the api: adopt, reload, pop-out window, host-window fullscreen | tests | active |
 | `tests/test_dcs.py` | 173 | pytest for parse_dcs_report over real DCSVRFY/DCSCHGD dumps: sections, signatures, frames, user models *(untracked, local-only)* | tests | active |
@@ -222,7 +222,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/test_discover.py` | 634 | pytest for backup-folder detection and the offline network scan: fanuc ftp, matrox ethernet/ip, adapters | tests | active |
 | `tests/test_export_endpoint.py` | 299 | pytest for the path-addressed ws_* workspace endpoints: listing, reading, diffing, all-or-nothing export | tests | active |
 | `tests/test_netlink.py` | 71 | pytest for the ip-helper bindings: oui/iftype/mac helpers, the full neighbour-state vocabulary, degrade-don't-raise | tests | active |
-| `tests/test_files_extract.py` | 153 | pytest for the files-tab USB extract endpoint: byte-exact copies, .part â†’ rename landing, per-robot folder nesting, mtime preservation, never-into-a-backup refusal | tests | active |
+| `tests/test_files_extract.py` | 153 | pytest for the files-tab USB extract endpoint: byte-exact copies, .part → rename landing, per-robot folder nesting, mtime preservation, never-into-a-backup refusal | tests | active |
 | `tests/test_fixture_gate.py` | 60 | the absence reporter (a clean clone says "0 backup roots" in its summary instead of nothing) plus unit tests of the fixture gate's own error/skip branches | tests | active |
 | `tests/test_frames.py` | 55 | pytest for the tool/user/jog frame model built from SYSFRAME.VA plus FRAMEVAR.VA comments *(untracked, local-only)* | tests | active |
 | `tests/test_ftpbackup.py` | 272 | pytest for the fanuc ftp pull against a fake controller: disk layout, completion marker, library register | tests | active |
@@ -281,7 +281,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/ui_fk_probe.py` | 135 | hidden-window probe holding BV.fk.chain equal to kinematics.chain_frames within 1e-6 across builtin chains plus the synthetic parallel-link arm | tests | active |
 | `tests/ui_import_probe.py` | 204 | hidden-window probe of the drop-import flow: simulated native drop, pre-ticked results, plant/line step, summary toast, landed tree byte-checked; --drop-probe keeps a visible window for a real drag | tests | active |
 | `tests/ui_logic_probe.py` | 227 | hidden-window probe of the camera logic tab: tab lights only on a script-bearing backup, calculation units lead the rail, the show-other toggle, script text renders whole | tests | active |
-| `tests/ui_netstatus_probe.py` | 381 | hidden-window probe of the plant-link pill: stateâ†’word table, panel open/close, and the honesty locks (absent is hollow, strangers are flagged, an unread probe dims) | tests | active |
+| `tests/ui_netstatus_probe.py` | 381 | hidden-window probe of the plant-link pill: state→word table, panel open/close, and the honesty locks (absent is hollow, strangers are flagged, an unread probe dims) | tests | active |
 | `tests/ui_probe.py` | 2108 | the original full-app probe: boots a real local backup and walks every tab, primitive and compare view *(untracked, local-only)* | tests | active |
 | `tests/ui_sim_export_probe.py` | 286 | hidden-window probe of the cv-x simulator-folder settings row and the load-cameras picker guard | tests | active |
 | `tests/ui_tabs_probe.py` | 424 | hidden-window probe of backup tabs: strip, per-backup memory, tear-off, and the solo pop-out window | tests | active |
@@ -323,9 +323,9 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | build/config | 7 | 267 |
 | **total** | **284** | **87,380** |
 
-> Counts are by *primary* subsystem only â€” a file appears once, so these add up to the
+> Counts are by *primary* subsystem only — a file appears once, so these add up to the
 > whole repo. The `tests` row is the largest because every probe and unit suite counts as
-> `tests` rather than as the feature it exercises â€” each test row in the map names its own
+> `tests` rather than as the feature it exercises — each test row in the map names its own
 > target. Read the other rows as *production* size: `shared/infra` is inflated by `api.py`
 > alone (3,512 lines), and `theming` by `components.css` (2,023), which is really the whole
 > app's stylesheet.
@@ -334,11 +334,11 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 
 ## 2. Files that belong to more than one subsystem
 
-These 73 source files genuinely straddle two areas â€” either they serve two features,
+These 73 source files genuinely straddle two areas — either they serve two features,
 or they sit in one layer's folder while doing another layer's job. Sorted by primary.
 
 *(The 66 test files each also carry a "feature under test" tag. That is a test pointing at
-its target, not dual membership, so they are omitted here â€” the map above has each one.)*
+its target, not dual membership, so they are omitted here — the map above has each one.)*
 
 | path | primary | also | what it is |
 |---|---|---|---|
@@ -347,47 +347,47 @@ its target, not dual membership, so they are omitted here â€” the map above
 | `run_libraryimporter.py` | LibraryImporter | build/config | dev launcher and pyinstaller entry script for the companion libraryimporter app |
 | `packaging/libraryimporter.spec` | build/config | LibraryImporter | pyinstaller onefile spec for libraryimporter.exe, bundling src/libraryimporter/web, no icon |
 | `src/backupviewer/__init__.py` | shared/infra | build/config | package marker holding the single source of the app version string (1.4) |
-| `src/backupviewer/api.py` | shared/infra | backup parsing | the pywebview bridge class: 131 @_endpoint methods returning {ok,data} envelopes across everyâ€¦ |
+| `src/backupviewer/api.py` | shared/infra | backup parsing | the pywebview bridge class: 131 @_endpoint methods returning {ok,data} envelopes across every… |
 | `src/backupviewer/compare.py` | compare engine | program editor | pure two-backup diff functions: io/registers/frames/payloads/programs rows plus tp-line alignment |
-| `src/backupviewer/cvx_handshake/chan8502_tx.bin` | remote/mobile | cameras | captured cv-x 8502 control-channel client handshake: 13 messages incl. six 16 kb blobs, replayed atâ€¦ |
+| `src/backupviewer/cvx_handshake/chan8502_tx.bin` | remote/mobile | cameras | captured cv-x 8502 control-channel client handshake: 13 messages incl. six 16 kb blobs, replayed at… |
 | `src/backupviewer/cvx_handshake/chan8503_tx.bin` | remote/mobile | cameras | captured cv-x 8503 aux-channel handshake: a single channel-open message replayed to open the aux socket |
-| `src/backupviewer/cvx_handshake/chan8504_tx.bin` | remote/mobile | cameras | captured cv-x 8504 video-channel handshake: channel-open, video-service open and the frame-ack primeâ€¦ |
-| `src/backupviewer/cvx_remote.py` | remote/mobile | cameras | cv-x remote-desktop client: handshake replay on 3 sockets, jpeg frame harvest, mouse events, mjpegâ€¦ |
-| `src/backupviewer/discover.py` | backup capture | cameras | subnet scan job finding fanuc/keyence over ftp and matrox via ethernet/ip, plus adapter list andâ€¦ |
-| `src/backupviewer/ftpbackup.py` | backup capture | cameras | ftp backup engine: gentle md: pull, dated+latest tree, .part/complete-marker crash safety, sharedâ€¦ |
-| `src/backupviewer/healthscan.py` | flag scanning | backup parsing | fleet health-scan engine: 17-check registry, lazy per-robot parse context, threaded job, fleet-wideâ€¦ |
+| `src/backupviewer/cvx_handshake/chan8504_tx.bin` | remote/mobile | cameras | captured cv-x 8504 video-channel handshake: channel-open, video-service open and the frame-ack prime… |
+| `src/backupviewer/cvx_remote.py` | remote/mobile | cameras | cv-x remote-desktop client: handshake replay on 3 sockets, jpeg frame harvest, mouse events, mjpeg… |
+| `src/backupviewer/discover.py` | backup capture | cameras | subnet scan job finding fanuc/keyence over ftp and matrox via ethernet/ip, plus adapter list and… |
+| `src/backupviewer/ftpbackup.py` | backup capture | cameras | ftp backup engine: gentle md: pull, dated+latest tree, .part/complete-marker crash safety, shared… |
+| `src/backupviewer/healthscan.py` | flag scanning | backup parsing | fleet health-scan engine: 17-check registry, lazy per-robot parse context, threaded job, fleet-wide… |
 | `src/backupviewer/keyencebackup.py` | cameras | backup capture | cv-x camera backup job over anonymous ftp, plus pre-flight probe, read-only diagnose and self-naming |
 | `src/backupviewer/libimport.py` | library | backup capture | drop-import engine: dropped trees scanned into drafts and copied into the library through the capture layer's path rules |
-| `src/backupviewer/library.py` | library | backup capture | persistent robot library in %appdata%: folder-tree-as-truth scan, robot.json sidecars,â€¦ |
-| `src/backupviewer/mtxbackup.py` | cameras | backup capture | matrox camera backup job over smb: wnet+credential login, da tree and newest images copy, probe andâ€¦ |
+| `src/backupviewer/library.py` | library | backup capture | persistent robot library in %appdata%: folder-tree-as-truth scan, robot.json sidecars,… |
+| `src/backupviewer/mtxbackup.py` | cameras | backup capture | matrox camera backup job over smb: wnet+credential login, da tree and newest images copy, probe and… |
 | `src/backupviewer/parsers/__init__.py` | backup parsing | shared/infra | parsers package init holding TAB_REQUIREMENTS, the map of which backup files make each ui tab available |
 | `src/backupviewer/parsers/callgraph.py` | backup parsing | flag scanning | extracts CALL/RUN/macro edges from .LS bodies into a call graph plus per-line clickable jump hops |
 | `src/backupviewer/parsers/curpos.py` | 3D viewer | backup parsing | parses CURPOS.DG per-group joint/world pose and FRAME.DG tool-frame rows used to pose the 3d robot |
-| `src/backupviewer/parsers/cvx_inspect.py` | cameras | library | reads the inspection program name from a cv-x inspect.dat (two copies must agree) and elects aâ€¦ |
-| `src/backupviewer/parsers/dcs.py` | backup parsing | 3D viewer | parses DCSVRFY/DCSCHGD/DCSDIFF .DG verify reports into classified sections, signatures andâ€¦ |
-| `src/backupviewer/parsers/dcszones.py` | 3D viewer | backup parsing | builds the 3d zone payload from DCSPOS.VA shadow tables plus the DCSVRFY.DG report: zones, frames,â€¦ |
-| `src/backupviewer/parsers/ls_program.py` | backup parsing | program editor | parses a .LS tp program: /PROG and /ATTR header, body lines, /POS points and lbl/jmp labelâ€¦ |
+| `src/backupviewer/parsers/cvx_inspect.py` | cameras | library | reads the inspection program name from a cv-x inspect.dat (two copies must agree) and elects a… |
+| `src/backupviewer/parsers/dcs.py` | backup parsing | 3D viewer | parses DCSVRFY/DCSCHGD/DCSDIFF .DG verify reports into classified sections, signatures and… |
+| `src/backupviewer/parsers/dcszones.py` | 3D viewer | backup parsing | builds the 3d zone payload from DCSPOS.VA shadow tables plus the DCSVRFY.DG report: zones, frames,… |
+| `src/backupviewer/parsers/ls_program.py` | backup parsing | program editor | parses a .LS tp program: /PROG and /ATTR header, body lines, /POS points and lbl/jmp label… |
 | `src/backupviewer/parsers/mtx_portal.py` | cameras | remote/mobile | scrapes a matrox camera portal's html for DesignAssistant operator page urls (hrefs or prj-name rows) |
-| `src/backupviewer/parsers/summary_dg.py` | backup parsing | backup capture | parses SUMMARY.DG pseudo-html into identity, options, motors, memory, tasks, safety, positions,â€¦ |
-| `src/backupviewer/parsers/sysvars.py` | backup parsing | compare engine | merges [*SYSTEM*] records across the ~two dozen carrier .VA files and expands one into a tree orâ€¦ |
+| `src/backupviewer/parsers/summary_dg.py` | backup parsing | backup capture | parses SUMMARY.DG pseudo-html into identity, options, motors, memory, tasks, safety, positions,… |
+| `src/backupviewer/parsers/sysvars.py` | backup parsing | compare engine | merges [*SYSTEM*] records across the ~two dozen carrier .VA files and expands one into a tree or… |
 | `src/backupviewer/qr.py` | remote/mobile | shared/infra | hand-rolled qr encoder (byte mode, ec level l, versions 1-5) returning a 0/1 module matrix |
-| `src/backupviewer/search.py` | backup parsing | flag scanning | backup-wide search: type[n] signal queries vs free text across programs, io, registers, frames,â€¦ |
-| `src/backupviewer/session.py` | backup parsing | cameras | BackupSession: recursive case-insensitive file index, lazy parse cache, ls/karel classify,â€¦ |
-| `src/backupviewer/web/css/base.css` | theming | shared/infra | root css: theme variable contract (--bg/--accent/--edge/--panel), app shell layout, chrome bars,â€¦ |
-| `src/backupviewer/web/css/components.css` | theming | shared/infra | the app's single component stylesheet: cards, tables, pills, modals, plus per-tab styles for everyâ€¦ |
-| `src/backupviewer/web/fonts/Orbitron-VariableFont_wght.ttf` | theming | build/config | bundled orbitron variable font, loaded by base.css @font-face and offered as the 'rog' ui font inâ€¦ |
-| `src/backupviewer/web/js/components/checklist.js` | shared/infra | library | BV.checklist: the one multiselect controller â€” shift-click ranges, tri-state group boxes,â€¦ |
-| `src/backupviewer/web/js/components/framecard.js` | shared/infra | backup parsing | BV.frameCard: the tool/uframe card â€” title, status pills, subtitle, xyzwpr list and config line |
-| `src/backupviewer/web/js/components/icons.js` | shared/infra | theming | BV.icon: 6 inline stroke-svg glyphs (phone/gear/help/lock/unlock/remote) plus a boot sweep filling [data-icon]â€¦ |
-| `src/backupviewer/web/js/components/pdiffview.js` | compare engine | program editor | BV.pdiffView: aligned side-by-side program-line diff renderer with equiv rows, stats pills andâ€¦ |
+| `src/backupviewer/search.py` | backup parsing | flag scanning | backup-wide search: type[n] signal queries vs free text across programs, io, registers, frames,… |
+| `src/backupviewer/session.py` | backup parsing | cameras | BackupSession: recursive case-insensitive file index, lazy parse cache, ls/karel classify,… |
+| `src/backupviewer/web/css/base.css` | theming | shared/infra | root css: theme variable contract (--bg/--accent/--edge/--panel), app shell layout, chrome bars,… |
+| `src/backupviewer/web/css/components.css` | theming | shared/infra | the app's single component stylesheet: cards, tables, pills, modals, plus per-tab styles for every… |
+| `src/backupviewer/web/fonts/Orbitron-VariableFont_wght.ttf` | theming | build/config | bundled orbitron variable font, loaded by base.css @font-face and offered as the 'rog' ui font in… |
+| `src/backupviewer/web/js/components/checklist.js` | shared/infra | library | BV.checklist: the one multiselect controller — shift-click ranges, tri-state group boxes,… |
+| `src/backupviewer/web/js/components/framecard.js` | shared/infra | backup parsing | BV.frameCard: the tool/uframe card — title, status pills, subtitle, xyzwpr list and config line |
+| `src/backupviewer/web/js/components/icons.js` | shared/infra | theming | BV.icon: 6 inline stroke-svg glyphs (phone/gear/help/lock/unlock/remote) plus a boot sweep filling [data-icon]… |
+| `src/backupviewer/web/js/components/pdiffview.js` | compare engine | program editor | BV.pdiffView: aligned side-by-side program-line diff renderer with equiv rows, stats pills and… |
 | `src/backupviewer/web/js/components/vsdiff.js` | compare engine | shared/infra | BV.vsDiff: highlight-diffs toggle plus row-tint markers and io/register/program/macro field comparators |
 | `src/backupviewer/web/js/cvxremote.js` | remote/mobile | cameras | cv-x remote overlay: mjpeg screen mirror plus full mouse forwarding, session adopt/rebind for pop-outs |
 | `src/backupviewer/web/js/highlight_tp.js` | shared/infra | program editor | regex tokenizer that wraps FANUC TP program lines in tp-* spans for themed syntax highlighting |
-| `src/backupviewer/web/js/jobs.js` | backup capture | shared/infra | BV.jobs: 500ms backup-job poller, run-wide progress jobstrip with live details panel, global busyâ€¦ |
-| `src/backupviewer/web/js/manage_ui.js` | library | backup capture | the manage-backups modal: last-run log with retry-failed, partial-snapshot review, stale list, tidyâ€¦ |
+| `src/backupviewer/web/js/jobs.js` | backup capture | shared/infra | BV.jobs: 500ms backup-job poller, run-wide progress jobstrip with live details panel, global busy… |
+| `src/backupviewer/web/js/manage_ui.js` | library | backup capture | the manage-backups modal: last-run log with retry-failed, partial-snapshot review, stale list, tidy… |
 | `src/backupviewer/web/js/mtxremote.js` | remote/mobile | cameras | matrox remote overlay: sandboxed iframe tabs of the camera's own web ui, window fallback if unframeable |
-| `src/backupviewer/web/js/scan_ui.js` | flag scanning | library | the fleet-scan modal: check picker built from the backend registry, find chips, live progress,â€¦ |
-| `src/backupviewer/web/js/settings_ui.js` | shared/infra | theming | the gear dialog (display/preferences tabs) and BV.uiPrefs.apply â€” fonts, sizes, glass/frost fills,â€¦ |
+| `src/backupviewer/web/js/scan_ui.js` | flag scanning | library | the fleet-scan modal: check picker built from the backend registry, find chips, live progress,… |
+| `src/backupviewer/web/js/settings_ui.js` | shared/infra | theming | the gear dialog (display/preferences tabs) and BV.uiPrefs.apply — fonts, sizes, glass/frost fills,… |
 | `src/backupviewer/web/js/tabs/dcs.js` | 3D viewer | compare engine | dcs tab: signature dashboard, section menu, pendant-style section pages; owns the shared status pill map |
 | `src/backupviewer/web/js/tabs/edit.js` | program editor | compare engine | the #edit multi-robot .ls workspace: split panes, working-set rail, find/replace, live pane diff, export |
 | `src/backupviewer/web/js/tabs/files.js` | backup parsing | remote/mobile | raw file browser tab: virtualized list with ext filter, text/hex preview, and a camera-remote button |
@@ -395,32 +395,32 @@ its target, not dual membership, so they are omitted here â€” the map above
 | `src/backupviewer/web/js/tabs/home.js` | library | backup capture | the #home library screen: plant/line/robot tree, per-row actions, batch ftp backup, discover, cam tiles |
 | `src/backupviewer/web/js/tabs/io.js` | backup parsing | compare engine | io tab: pendant-style signal browser by category, in/out panes, rack/slot/port config view, vs mode |
 | `src/backupviewer/web/js/tabs/macros.js` | backup parsing | compare engine | macro table (name, program, assignment) rendered inside the programs tab, with side-by-side vs mode |
-| `src/backupviewer/web/js/tabs/overview.js` | backup parsing | library | overview dashboard: hero plus draggable persisted cards (mastering, memory, ethernet, tasks) + dateâ€¦ |
-| `src/backupviewer/web/js/tabs/pdiff.js` | compare engine | program editor | hidden #pdiff route wrapping BV.pdiffView: program-vs-program line diff, jump buttons, workspace addâ€¦ |
-| `src/backupviewer/web/js/tabs/photos.js` | cameras | remote/mobile | photos tab: camera image viewer (hero + lazy grid + zoom lightbox, cv-x height blend) andâ€¦ |
-| `src/backupviewer/web/js/tabs/programs.js` | program editor | compare engine | programs tab: tp/karel list with filters, style table, source detail, call tree, label xref,â€¦ |
+| `src/backupviewer/web/js/tabs/overview.js` | backup parsing | library | overview dashboard: hero plus draggable persisted cards (mastering, memory, ethernet, tasks) + date… |
+| `src/backupviewer/web/js/tabs/pdiff.js` | compare engine | program editor | hidden #pdiff route wrapping BV.pdiffView: program-vs-program line diff, jump buttons, workspace add… |
+| `src/backupviewer/web/js/tabs/photos.js` | cameras | remote/mobile | photos tab: camera image viewer (hero + lazy grid + zoom lightbox, cv-x height blend) and… |
+| `src/backupviewer/web/js/tabs/programs.js` | program editor | compare engine | programs tab: tp/karel list with filters, style table, source detail, call tree, label xref,… |
 | `src/backupviewer/web/js/tabs/registers.js` | backup parsing | compare engine | registers tab: r/pr/sr sub-tabs in split or vs tables, hide-empty toggle, click-through to backup search |
-| `src/backupviewer/web/js/tabs/search.js` | backup parsing | shared/infra | hidden #search route rendering backup-wide hits grouped by programs, io, registers, frames, macros,â€¦ |
-| `src/backupviewer/web/js/theme.js` | theming | shared/infra | theme data + apply layer: maps 9 theme colors onto css vars, hex/contrast math, the custom-themeâ€¦ |
+| `src/backupviewer/web/js/tabs/search.js` | backup parsing | shared/infra | hidden #search route rendering backup-wide hits grouped by programs, io, registers, frames, macros,… |
+| `src/backupviewer/web/js/theme.js` | theming | shared/infra | theme data + apply layer: maps 9 theme colors onto css vars, hex/contrast math, the custom-theme… |
 | `src/libraryimporter/__init__.py` | LibraryImporter | build/config | version + APP_NAME for the separate Library Importer app, and the note on where its brand strings live |
 | `src/libraryimporter/api.py` | LibraryImporter | shared/infra | js_api bridge for the importer: pick source/dest, seed, and one canonical _state() payload per call |
 | `src/libraryimporter/app.py` | LibraryImporter | shared/infra | pywebview window boot for the importer incl. a slimmed WebView2 software-rendering rescue relaunch |
-| `src/libraryimporter/core.py` | LibraryImporter | library | stdlib seeding core: parse a robot list, plan it against a plant folder, write schema-2 robot.jsonâ€¦ |
+| `src/libraryimporter/core.py` | LibraryImporter | library | stdlib seeding core: parse a robot list, plan it against a plant folder, write schema-2 robot.json… |
 | `src/libraryimporter/web/css/importer.css` | LibraryImporter | theming | importer stylesheet: one hardcoded dark palette copied from the app's theme values, no themes or scaling |
-| `src/libraryimporter/web/js/api.js` | LibraryImporter | shared/infra | importer's promise wrapper over pywebview.api with the {ok,data} envelope, minus the app'sâ€¦ |
-| `src/libraryimporter/web/js/checklist.js` | LibraryImporter | shared/infra | importer's copy of BV.checklist: shift-range multiselect controller with tri-state select-all groupâ€¦ |
+| `src/libraryimporter/web/js/api.js` | LibraryImporter | shared/infra | importer's promise wrapper over pywebview.api with the {ok,data} envelope, minus the app's… |
+| `src/libraryimporter/web/js/checklist.js` | LibraryImporter | shared/infra | importer's copy of BV.checklist: shift-range multiselect controller with tri-state select-all group… |
 | `src/libraryimporter/web/js/util.js` | LibraryImporter | shared/infra | importer's BV namespace with just esc, el and toast, trimmed from the main app's util.js |
 | `tools/apply_ip_list.py` | tools/scripts | library | cli that stamps a {line:{robot:ip}} list onto library folders as robot.json sidecars, dry-run by default |
-| `tools/doc_coverage.py` | tools/scripts | docs | reads each subsystem doc's `Covers:` block and reports which shipped files no document claims yet; --check exitsâ€¦ |
-| `tools/restyle.py` | tools/scripts | program editor | standalone kit builder cloning s<from>*/style<from>* .ls programs to a new style number, rewritingâ€¦ |
-| `tools/seed_library.py` | tools/scripts | library | hand-out cli expanding a short-name robot list into library plant/line/robot folders with robot.jsonâ€¦ |
-| `robot modelas/_re/RMD-FORMAT.md` | 3D viewer | docs | reverse-engineered spec for keyence .rmd robot-model files: container, part records, bvh, mesh soup,â€¦ |
+| `tools/doc_coverage.py` | tools/scripts | docs | reads each subsystem doc's `Covers:` block and reports which shipped files no document claims yet; --check exits… |
+| `tools/restyle.py` | tools/scripts | program editor | standalone kit builder cloning s<from>*/style<from>* .ls programs to a new style number, rewriting… |
+| `tools/seed_library.py` | tools/scripts | library | hand-out cli expanding a short-name robot list into library plant/line/robot folders with robot.json… |
+| `robot modelas/_re/RMD-FORMAT.md` | 3D viewer | docs | reverse-engineered spec for keyence .rmd robot-model files: container, part records, bvh, mesh soup,… |
 
 ---
 
 ## 3. What surprised us
 
-Findings only â€” nothing here was acted on. Line references are to the working tree.
+Findings only — nothing here was acted on. Line references are to the working tree.
 
 ### A. Would break a fresh clone
 
@@ -429,39 +429,39 @@ Findings only â€” nothing here was acted on. Line references are to the wor
   and four shipped files call `BV.icon()` (`cvxremote.js:68`, `mtxremote.js:47`,
   `tabs/files.js:58`, `tabs/photos.js:500`). On a clean checkout the three topbar cubes and
   the phone/remote buttons render as empty boxes. Worse, the **tracked** `ui_cvxremote_probe.py`
-  (also modified in the tree) now asserts `svg.bv-ico` exists at lines 107-123 â€” so probe and
+  (also modified in the tree) now asserts `svg.bv-ico` exists at lines 107-123 — so probe and
   component have to land in the same commit or the tracked probe fails on a clean checkout.
-  > **âœ… RESOLVED `b47b4bc`.** Tracked. It was the only untracked file among all 57 assets
+  > **✅ RESOLVED `b47b4bc`.** Tracked. It was the only untracked file among all 57 assets
   > `index.html` references. Committed alone; the icon *wiring* (index.html, the CSS, the four
   > callers, the probe assertions) landed with the UI-chrome batch at `bcf34f8`.
 - **`ui_bgfx_probe.py` is stale against shipped code.** It asserts `BV.bgfx.EFFECTS.length == 13`
   (line 69) and 13 dropdown items (line 228); `bgfx.js` ships **19**. The six new effects landed
   in `e594785` on 2026-07-27, the probe was last touched 2026-07-25. Two checks fail today, and
   the per-effect param racks and real-`dt` work have no coverage at all.
-  > **âœ… RESOLVED `5285a17`** â€” and it was **four** stale checks, not two: the settings display
+  > **✅ RESOLVED `5285a17`** — and it was **four** stale checks, not two: the settings display
   > tab had also grown four global dials (speed / density / variance / hue drift) that
   > `display_rows` and `display_sliders` did not know about. `fx_menu_items` now compares
   > against `BV.bgfx.EFFECTS.length` live, since "the menu lists every effect" is the real
   > invariant; `boot.effect_count` keeps a literal as the deliberate did-we-lose-one anchor.
-  > The coverage gaps are now recorded in the probe's own docstring â€” including that real-`dt`
+  > The coverage gaps are now recorded in the probe's own docstring — including that real-`dt`
   > is unreachable from a probe window (no `requestAnimationFrame`, so no frames ever advance)
   > without an injectable step in `bgfx.js`.
 - **No probe is collected by pytest.** All nine are standalone `main()` scripts named
-  `ui_*_probe.py` / `perf_probe.py` / `libraryimporter_probe.py` â€” none match `test_*.py`. So
+  `ui_*_probe.py` / `perf_probe.py` / `libraryimporter_probe.py` — none match `test_*.py`. So
   `python -m pytest tests -q` never runs one; each needs its own process and a hand invocation.
-  > **âœ… RESOLVED `da10c92`.** `tests/test_probes.py` runs each in its own subprocess with a
+  > **✅ RESOLVED `da10c92`.** `tests/test_probes.py` runs each in its own subprocess with a
   > timeout, marked `probe`; `pyproject.toml` deselects that marker by default so the fast
   > suite stays fast. See **Verifying the app** in CLAUDE.md / README for the commands.
   > Three probes had rotted unnoticed and are now green: `ui_bgfx` (above), `ui_batch` (a
-  > `#photo-hero > div` selector that went one level stale when `c8b3584` wrapped the figure â€”
+  > `#photo-hero > div` selector that went one level stale when `c8b3584` wrapped the figure —
   > the app was fine, checked against a clean checkout), and `perf_probe`, which **hung
   > forever** on a `webview.start` argument bug and so had not run in weeks.
-- **Four git-excluded tests are fully synthetic and need no fixture** â€” `test_magnet.py`,
+- **Four git-excluded tests are fully synthetic and need no fixture** — `test_magnet.py`,
   `test_mhvalves.py`, `test_payloads.py` (plus roughly half of `test_va_tokenizer.py` and
   `test_sysvars.py`). They appear excluded by association with their real-data siblings rather
   than by need. That is free coverage a fresh clone is currently missing.
-  > **âœ… RESOLVED `85e147c`, partly â€” and the "roughly half" was optimistic.** The three named
-  > files are tracked (11 tests; a bare clone went 574 â†’ 585). They were swept against a
+  > **✅ RESOLVED `85e147c`, partly — and the "roughly half" was optimistic.** The three named
+  > files are tracked (11 tests; a bare clone went 574 → 585). They were swept against a
   > 5,012-term set built from `robots.json` + the `SampleBackup` tree + `conftest.py`: no IP,
   > F-number or robot-name shape. But `test_sysvars.py` takes the `sample_backup` fixture in
   > *every* test and asserts a real backup's record count (`len(recs) == 769`), and only one of
@@ -471,13 +471,13 @@ Findings only â€” nothing here was acted on. Line references are to the wor
 
 - **`bgfx.js` declares four helpers twice inside one IIFE.** `var _varCache` at both line 25 and
   128; `rgbOf` at 26 and 129; `drift` at 143 and 199; `rotHue` at 147 and 203; `hue2c` at 163 and
-  220 â€” and the hue-drift rationale comment is written out twice. Hoisting means the **second**
+  220 — and the hue-drift rationale comment is written out twice. Hoisting means the **second**
   copy wins for every caller, and the two `rotHue` bodies are *not* identical (the second adds an
   `if (!deg) return c;` fast path), so the first set is dead code. Reads like a merge leftover
   from the bgfx overhaul.
 - **`libraryimporter/web/js/checklist.js` is a stale copy, not a deliberate trim.** It is the main
   app's `components/checklist.js` at an earlier revision. The main app now stores `items[key]` as
-  an array of bound copies and uses `cb.checkVisibility()` â€” the fix for the 42-second plant-scale
+  an array of bound copies and uses `cb.checkVisibility()` — the fix for the 42-second plant-scale
   freeze; the importer copy still keeps a single `{cb, seq}` and reads `cb.offsetParent !== null`.
   Its two siblings (`util.js`, `api.js`) *are* honest trims with comments explaining the cuts.
   Only one of the two checklists got the perf lesson.
@@ -487,7 +487,7 @@ Findings only â€” nothing here was acted on. Line references are to the wor
   that it lifted the code and copies `library.py`'s `_skip_name` regexes rather than importing
   them. Deliberate (the importer ships standalone), but a schema change now needs three edits.
 - **The two camera remotes share ~60-70 of `mtxremote.js`'s 168 lines.** Same DOM shell, same CSS
-  classes, same bar layout, same one-session guard, same esc handling, same error panel â€” only the
+  classes, same bar layout, same one-session guard, same esc handling, same error panel — only the
   payload differs (CV-X streams MJPEG and forwards mouse; MTX builds sandboxed iframe tabs). The
   codebase's own third-occurrence rule points at a `BV.remoteOverlay` primitive. They have already
   drifted: `cvxremote.js` installs a capture-phase guard over the digit/`-`/`=` tab keys so they
@@ -495,7 +495,7 @@ Findings only â€” nothing here was acted on. Line references are to the wor
 - **Two 2,000+ line tab files are several screens each.** `edit.js` (2,343) holds a recursive pane-
   tree layout engine, the working-set rail, rename/duplicate flows, a whole find/replace match
   engine, the live inline pane diff, a CALL/LBL/JMP navigator, and two modals. `home.js` (2,277)
-  holds the library tree, the rich robot row, per-lens scroll memory, tidy/merge/move flows â€” plus
+  holds the library tree, the rich robot row, per-lens scroll memory, tidy/merge/move flows — plus
   a **multi-cam live-tile lens** (cameras) and **batch FTP backup + the two-step network discover
   flow** (backup capture) living inside the library tab.
 - **Smaller real duplications:** `vsdiff.js:17-29` hand-builds a `.seg` button row instead of
@@ -508,7 +508,7 @@ Findings only â€” nothing here was acted on. Line references are to the wor
 - **~40 lines of identical preamble in all nine probes** (`check()`/`js()`/`poll()`, temp-APPDATA +
   `BV_NO_WATCHER`, the `create_window(hidden=True)` tail). A `tests/probeutil.py` is the obvious
   promotion.
-  > **âœ… RESOLVED `8c094bf`** â€” `tests/probeutil.py`, âˆ’179 lines. `js()` had been byte-identical
+  > **✅ RESOLVED `8c094bf`** — `tests/probeutil.py`, −179 lines. `js()` had been byte-identical
   > in all nine; `check()` had drifted into two spellings of the same function and `poll()` into
   > four, differing only in patience (`poller()` keeps that where it was deliberate). **Window
   > creation deliberately did not move**: the probes differ in size, in whether they hand
@@ -521,29 +521,29 @@ Findings only â€” nothing here was acted on. Line references are to the wor
   and the `_JobBase`/`CameraJobBase` classes that the **Matrox (SMB)** and Keyence camera jobs
   inherit. Camera code and `library.py` both depend on a module named for FTP.
 - **`tabs/alarms.js` and `tabs/macros.js` register no tab.** They export `BV.alarms.renderInto`
-  and `BV.macros.render` â€” embedded panels inside overview and programs. Both say so in header
+  and `BV.macros.render` — embedded panels inside overview and programs. Both say so in header
   comments, so it is intentional demotion, but the directory name is a half-truth for 2 of 18.
 - **`sim_export.js` is not an export.** It is the "load cameras into the simulator" flow, reachable
   only from the preferences page in `settings_ui.js`.
-- **`components.css` (2,023 lines) is the whole app's stylesheet**, not shared components â€” it
+- **`components.css` (2,023 lines) is the whole app's stylesheet**, not shared components — it
   carries edit-workspace, DCS, sysvars, pdiff, library, cameras, CV-X remote, 3D and settings
   rules. It also has a hand-maintained invariant: the `html.frosted` selector list (lines 50-62)
   must be extended for every new `--panel` surface or the opacity and frost sliders describe
   different sets of surfaces.
 - **`backuptabs.js` is not a primitive.** It sits in `components/` but is a singleton bound to the
-  concrete `#sessionbar` element and `BV.session` â€” app shell, not a reusable piece.
+  concrete `#sessionbar` element and `BV.session` — app shell, not a reusable piece.
 - **Stale docstrings/comments found (code is right, prose is wrong):** `parsers/__init__.py` still
-  says "FANUC â€¦ text â†’ dict" though the folder now holds byte parsers (`cvx_image`, `cvx_inspect`)
+  says "FANUC … text → dict" though the folder now holds byte parsers (`cvx_image`, `cvx_inspect`)
   and one that parses live HTTP HTML (`mtx_portal`); `dcs.py`'s KINDS list omits the `frames` and
   `user_model` kinds the code emits; `healthscan.py`'s category list is one behind `CHECKS`
   (`positions`); `view3d.js` (~line 803) says user models are "still data-only in the viewport"
   while `posedElements()`/`draw()` place and draw them; `photos.js` points at a "Cameras tab" that
   is not a separate file; `theme_ui.js` says 29 themes when 28 ship; `cvx_remote.py`'s docstring
   cites `CvxRemote/mirror2.cs` and `CVX_REMOTE_HANDOFF.md`, neither of which is in the repo.
-- **README's module tree is partial** â€” it omits `compare.py`, `discover.py`, `search.py`,
+- **README's module tree is partial** — it omits `compare.py`, `discover.py`, `search.py`,
   `phoneview.py`, `qr.py`, `screengrab.py`, `keyence_workspace.py`, `kinematics_builtin.py` and
   `modeldb.py`. Nothing in it is wrong; a reader just underestimates the module count.
-- **`packaging/libraryimporter.spec` still warns off the Microsoft Store Python** â€” a warning the
+- **`packaging/libraryimporter.spec` still warns off the Microsoft Store Python** — a warning the
   sibling `backupviewer.spec` explicitly retired in `2d09bca`, and which `build_exe.log`
   independently disproves (clean Store-Python 3.13 / PyInstaller 6.20 build).
 
@@ -554,31 +554,31 @@ Findings only â€” nothing here was acted on. Line references are to the wor
   all three are superseded by shipped code (`components/lseditor.js`, `workspace.js` + `tabs/edit.js`,
   `components/pdiffview.js`). `edit_sandbox.html`'s own header says it "dies when the component is
   trusted". They are untracked, so they cost the public repo nothing.
-- **`BV.openPhoneView` (`phoneview.js:37`) has no callers** â€” grep returns only its definition and
+- **`BV.openPhoneView` (`phoneview.js:37`) has no callers** — grep returns only its definition and
   a comment saying it is "kept for callers that want it". Every live phone button goes through
   `BV.openViewfinder`. This confirms the earlier composition audit.
 - **Two layer inversions.** `session.py` (parsing) imports `long_path` from `ftpbackup.py`
   (capture) just for the `\\?\` helper; `healthscan.py` imports the private `_ScanJob` base from
   `discover.py`, dragging in ftplib, sockets, EtherNet/IP and subprocess for a progress/cancel base
   class that has nothing to do with networking.
-- **`api.py` is 3,512 lines and 117 endpoints** â€” the single hub, importing nearly every module and
+- **`api.py` is 3,512 lines and 117 endpoints** — the single hub, importing nearly every module and
   ~25 parsers. It touches every subsystem on this list except LibraryImporter, docs, tests and build.
 - **Two `.LS` readers coexist by design and say so:** `ls_program.py` decodes cp1252 for display
   (lossy), `ls_edit.py` decodes latin-1 for a lossless byte round-trip. Each carries its own
   body/POS regex set, so a format fix has to be made in both.
 - **Invisible load-order coupling.** `dcs.js:174-175` assigns `BV.dcsDetail` / `BV.dcsStatusPill`
-  and `view3d.js` consumes them in five places â€” `index.html` loads dcs at 119 and view3d at 127,
+  and `view3d.js` consumes them in five places — `index.html` loads dcs at 119 and view3d at 127,
   so swapping those two `<script>` tags breaks the 3D side panel. Separately, the **order of the
   `tabs/*.js` tags is the number-key map**: `router.js` badges tabs 1-9 then `-`/`=` in `BV.tabs`
   order, so reordering script tags silently re-maps keyboard shortcuts.
 - **Cross-test imports.** `test_discover.py` imports `_make_camera`/`_mount_factory` from
   `test_mtxbackup`, and `test_modeldb.py` imports `_DEF` from `test_kinematics.py`. Both resolve
   only because pytest puts `tests/` on `sys.path`.
-- **Near-identical test names testing different things:** `test_sessions.py` (tracked â€” Api's
-  multi-session registry) vs `test_session.py` (git-excluded â€” `BackupSession`'s file index against
+- **Near-identical test names testing different things:** `test_sessions.py` (tracked — Api's
+  multi-session registry) vs `test_session.py` (git-excluded — `BackupSession`'s file index against
   the private fixture). One letter apart, adjacent when sorted; a clone silently has half.
 - **`search.py` caps dishonestly.** `MAX_ROWS` `break`s only the inner per-kind loop, so register
-  hits can exceed the cap, and `total` is summed *after* truncation â€” a capped category quietly
+  hits can exceed the cap, and `total` is summed *after* truncation — a capped category quietly
   understates its true hit count. (Read-only observation.)
 - **`test_qr.py` embeds a second full QR implementation** (~80 lines: function-module map, mask
   reversal, zigzag scan, format decode) as its oracle. Correct for a zero-dependency repo, but the
@@ -594,16 +594,16 @@ Findings only â€” nothing here was acted on. Line references are to the wor
   `RB`/`RC` families throughout. The three `cvx_handshake/*.bin` blobs were checked
   programmatically: every `TCP:<ip>` field in all three is a documentation-range placeholder,
   rewritten to the dialed IP at connect time. The git-excluded tests *do* assert on real robot
-  names and F-numbers â€” correctly firewalled, and anything merging them into the public suite has
+  names and F-numbers — correctly firewalled, and anything merging them into the public suite has
   to scrub the assertions, not just swap the fixture.
   âš ï¸ One gap: `test_cvx_remote.py` checks only that the `TCP:` field parses and can be replaced,
-  **not** that its contents are TEST-NET â€” a future re-capture from live hardware could reintroduce
+  **not** that its contents are TEST-NET — a future re-capture from live hardware could reintroduce
   a real address into an opaque binary without failing a test.
-  > **âœ… RESOLVED `f3b8ebd`.** `test_bundled_handshakes_carry_no_real_address` now requires every
-  > address in every bundled blob to be an RFC 5737 documentation range â€” checked at the `TCP:`
+  > **✅ RESOLVED `f3b8ebd`.** `test_bundled_handshakes_carry_no_real_address` now requires every
+  > address in every bundled blob to be an RFC 5737 documentation range — checked at the `TCP:`
   > field *and* anywhere else a dotted quad appears, since that field is not the only place bytes
   > can hide. Passes today (all three are `198.51.100.249`); verified it fails when handed a
-  > plant-shaped address. **If a re-capture ever trips this, scrub the blob â€” do not relax the test.**
+  > plant-shaped address. **If a re-capture ever trips this, scrub the blob — do not relax the test.**
 - **Two literal credential pairs sit in public source.** `mtxbackup.py` hardcodes the Matrox DA
   camera's vendor-default share credentials (with a comment on their exact casing), and
   `home.js`'s `startLineBackup` names the default camera credentials in a comment. Vendor defaults
@@ -611,19 +611,19 @@ Findings only â€” nothing here was acted on. Line references are to the wor
   > **DECIDED: leave them.** They are published in Matrox's own documentation and burned into
   > every DA camera, so moving them buys no security; a config file would break the
   > offline-single-exe contract; and the casing comment is live-verified field knowledge
-  > (`Matrox` authenticates, `MATROX` does not â€” that comment is why first backups stopped
+  > (`Matrox` authenticates, `MATROX` does not — that comment is why first backups stopped
   > failing). The real gap this surfaced is a **feature**, not hygiene: *a site that rotates the
   > default has no way to supply the new one.* Tracked in ROADMAP.md.
 - **`overview.js` (~line 408) names a person** as the source of a UI decision. Not a plant
   identifier, so not a firewall breach, but it is a real name in a public comment.
-  > **âœ… RESOLVED `b708f87`.** Rationale kept, name gone. Note that "Cody" Ã—3 and "Jake" Ã—2
-  > remain elsewhere as design attributions â€” those are the maintainers' own first names in
+  > **✅ RESOLVED `b708f87`.** Rationale kept, name gone. Note that "Cody" ×3 and "Jake" ×2
+  > remain elsewhere as design attributions — those are the maintainers' own first names in
   > their own repo, and were left deliberately rather than scrubbed silently.
 - **Licensing paper trail is thin.** `base.css` calls the bundled Orbitron "SIL OFL" but
-  `web/fonts/` holds only the `.ttf` â€” no `OFL.txt` beside it, and grepping the markdown for
+  `web/fonts/` holds only the `.ttf` — no `OFL.txt` beside it, and grepping the markdown for
   "OFL"/"Orbitron" returns nothing. The bgfx AGPL-3.0 attribution exists only as the `FX_CREDIT`
   string in `settings_ui.js:47`, not as a license file.
-- **`phoneview.py` renders HTML from Python** â€” a ~85-line `_PAGE` of markup and script, against
+- **`phoneview.py` renders HTML from Python** — a ~85-line `_PAGE` of markup and script, against
   CLAUDE.md's "Python never renders HTML". Defensible (it is served to a phone's browser over the
   LAN, not into the WebView), but it is the one place the rule bends.
 
@@ -639,14 +639,14 @@ Findings only â€” nothing here was acted on. Line references are to the wor
   than this working copy contains.
   > **Narrowed to 17** (`85e147c` un-excluded three). The gap is now measured rather than
   > guessed: a bare clone runs 585 unit tests and 594 with the probes, against 611 / 620 here.
-  > **Do not add a tracked `tests/conftest.py`** â€” the excluded one holds the real
+  > **Do not add a tracked `tests/conftest.py`** — the excluded one holds the real
   > `SampleBackup` fixtures, and a tracked file of that name would collide with it. That is why
   > `pythonpath` lives in `pyproject.toml`.
 - **`CHANGELOG.md`'s "Unreleased" section is large** (review-your-edits, the 4-pane split, inline
-  diff, CV-X simulator workspaces, CV-X self-naming, simulator-folder export) â€” `main` is well
+  diff, CV-X simulator workspaces, CV-X self-naming, simulator-folder export) — `main` is well
   ahead of the released v1.4 exe. Version numbering itself is consistent across all three places
   it lives (`pyproject.toml`, `__init__.py`, README badge).
-- **`ROADMAP.md` lags the merged state** â€” it still describes the phone-view and CV-X-photos lanes
+- **`ROADMAP.md` lags the merged state** — it still describes the phone-view and CV-X-photos lanes
   as "landing on the branch" though those PRs are merged and the files are in the tree.
 - **Fragile hard-coded counts are a repeated probe pattern:** `ui_batch_probe.py` asserts
   `BV.tabs.length == 16` and exactly 43 `.lib-robot` rows; `ui_sim_export_probe.py` asserts an

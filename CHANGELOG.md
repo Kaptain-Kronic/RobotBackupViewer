@@ -1,6 +1,32 @@
 # Changelog
 
 ## unreleased — the camera gets its 3d view, backups drag in, the statusbar finds the switch, and a program plays in 3d
+- **The star check samples five pairs, and `star_off` finally gets a budget.**
+  Two sessions fixed `perf_probe`'s favourite-star flake at the same time and
+  their fixes disagreed, so this is what survived the merge. One session went
+  at the symptom: the check was a single sample of a 2400-row rebuild against
+  a 500 ms line — four consecutive runs gave 532, 466, 397 and 463 ms, and
+  only the first failed, straight after `ui_camwall_probe` and its sixteen
+  local HTTP servers — so it took the best of five pairs and moved the budget
+  to 700. The other session had already gone at the cause: the surgical star
+  repaint, which stopped the toggle rebuilding the tree at all.
+  On the merged tree the cause fix wins the number. A toggle costs 33.9–67.0
+  ms now (`star_off` 32.7–69.2) across four runs of five pairs, so the 700
+  would have been ten times the real cost — wide enough for a full rebuild to
+  slide back onto the click path unnoticed, which is the entire cliff this
+  guards. **The budget stays 150.**
+  The sampling is kept regardless, because it is nearly free and the noise
+  here is one-sided — a scheduler slice or a GC pause only ever *adds* time —
+  so the fastest of a few is the honest floor, and a real regression lifts the
+  floor along with everything else. What it buys now is drift resolution
+  rather than flake protection: the flake itself is gone at the source, and
+  the run taken deliberately straight after `ui_camwall_probe` came back
+  40.9 / 37.0 ms, in line with the three idle ones.
+  `star_off`, measured all along and asserted never, gets the same 150 rather
+  than staying a number nobody checks. And the pair now asserts that it is its
+  own undo — same robot every time, same row count afterwards — because the
+  favourites strip renders its own copy of the row, which shifts every index
+  below it, and the samples are only comparable if that puts itself back.
 - **Every move shows the frame and tool it was taught in, and a program can be
   played one tool at a time.** A move's utool is what decides where its TCP
   physically is, so a program that changes tool part-way — most of a drop on
