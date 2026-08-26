@@ -286,6 +286,21 @@ one click backs up the robot + all its cameras together.
   mostly taught masters; timestamped triggers only exist when a tech turned
   image logging on. Landing on the `cvx-photos` branch.
 
+- ✅ **A Matrox backup carries a run of photos, and re-runs stop cloning
+  folders** (landed on `mtx-photo-history`) — the pull took the newest
+  `SavedImages/<date>/` folder, which on a real camera is usually one
+  inspection: a 367-file snapshot with a single photo in it. It now takes the
+  newest N photos (`mtx_photos`, default 25, a slider in ⚙ → preferences),
+  walking date folders newest-first; the newest day comes whole and older
+  photos leave the png behind (same 1920×1200 frame as the jpg beside it, ten
+  times the bytes — measured). And a re-run whose `da/` tree is unchanged now
+  folds its new photos into the snapshot they match instead of stacking a
+  ~400-file near-twin, which is the ONE ruled exception to "nothing writes
+  into a backup folder" (CLAUDE.md · backup-capture.md §5 inv. 7): adds only,
+  never a partial, never a rewrite, and only after this pull is already a
+  complete snapshot in its own right. Verified against two real pulls of one
+  camera two minutes apart (425 non-photo files identical). Still owed: a run
+  against a live camera — everything so far is against real *pulled* trees.
 - ✅ **CV-X 3D models: viewer + STL extract** (landed on `cvx-camera-tabs`) —
   a camera backup's `TDC_L`/`WSM_L` blobs decode to the registered part CAD
   and workspace scans (zlib-wrapped binary-STL facets, `parsers/cvx_models.py`);

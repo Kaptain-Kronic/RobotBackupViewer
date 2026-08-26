@@ -215,11 +215,15 @@ def build_tree(lib: Path) -> None:
         (saved / (stem + ".png")).write_bytes(PNG_1PX)
         (saved / (stem + ".txt")).write_text(
             SIDECAR_TXT.format(result=result, ts=ts), encoding="utf-8")
+    # `updated`/`topups`: a later pull added photos to this snapshot instead of
+    # stacking a near-twin beside it (mtxbackup._settle). `taken` still means
+    # when the tree was pulled - the overview has to show both.
     (snap / "backup.json").write_text(json.dumps({
         "robot": "CELL-01CAM01", "line": "LINE01", "plant": "FakePlant",
         "taken": "2026-07-07T11:20:00", "type": "matrox da backup",
         "device_type": "camera-mtx", "files": 7, "bytes": 200,
         "source": "smb", "complete": True,
+        "updated": "2026-08-26T06:15:00", "topups": 2,
     }), encoding="utf-8")
 
 def probe(window):
@@ -1703,6 +1707,20 @@ def probe(window):
         check("photos.camera_lands_on_overview",
               poll(window, "location.hash==='#overview' ? 'y' : ''") == "y",
               f"(hash={js(window, 'location.hash')!r})")
+        # a topped-up snapshot says so on the overview: `taken` is when the
+        # tree was pulled, and a separate chip carries when it last gained
+        # photos - without it the run that added them looks like a no-op
+        chips = poll(window, """(function(){
+            var c = [...document.querySelectorAll('.ov-chip')].map(function(x){
+                return (x.querySelector('.k')||{}).textContent + '=' +
+                       x.textContent.replace(((x.querySelector('.k')||{}).textContent||''), '').trim();
+            });
+            return c.length ? JSON.stringify(c) : '';
+        })()""")
+        chips = json.loads(chips or "[]")
+        check("photos.chip_keeps_taken", "date=2026-07-07 11:20" in chips, f"({chips})")
+        check("photos.chip_shows_topup",
+              "photos added=2026-08-26 06:15" in chips, f"({chips})")
         # the fallback invariant still holds: a robot-only hash must replace
         # to a tab you could have CLICKED, never one of the hidden always-on
         # ones (edit/search/compare/pdiff)
