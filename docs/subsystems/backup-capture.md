@@ -294,8 +294,11 @@ five are CLAUDE.md's "Gentle with live equipment" made mechanical.
    this pull has already landed as a complete snapshot of its own, so a
    death mid-fold leaves two honest folders and never a hole. Everything
    downstream reads the same story: `library._when` makes "last backup"
-   the top-up, and `register_backup` replaces the row for a path instead
-   of stacking a second one.
+   the top-up, `register_backup` replaces the row for a path instead of
+   stacking a second one, and the camera overview stamps **photos added**
+   beside the take time (hero chip + every dated-backup row,
+   `tabs/overview.js`) — a fold that left no visible trace would read as a
+   backup that did nothing.
 8. **Passwords are prompted per run, live in memory, and die with the
    run.** The chain, verified end to end 2026-08-01: one shared prompt per
    batch click, value held in a JS local (`home.js:1572-1594`) → sent in

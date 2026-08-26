@@ -94,6 +94,10 @@ def long_path(p) -> str:
     s = str(p)
     if os.name != "nt" or s.startswith("\\\\?\\"):
         return s
+    if not os.path.isabs(s):
+        return s                        # the prefix only means anything on an
+                                        # absolute path; prefixing a relative one
+                                        # would build a path that opens nothing
     if s.startswith("\\\\"):            # UNC \\host\share -> \\?\UNC\host\share
         return "\\\\?\\UNC\\" + s[2:]
     return "\\\\?\\" + s                # local C:\... -> \\?\C:\...

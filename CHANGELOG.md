@@ -22,7 +22,10 @@
   removes the folder it just pulled into, so a camera's photo history
   accumulates in one place. The snapshot keeps its own `taken` and records the
   visit as `updated` + `topups`; the library reads "last backup" from the
-  top-up, so a camera pulled this morning never reads as weeks stale. This is
+  top-up, so a camera pulled this morning never reads as weeks stale, and the
+  camera's overview carries a **photos added** stamp beside the take time (in
+  the hero chips and in every dated-backup row) so a top-up run never looks
+  like it did nothing. This is
   the one place the app writes inside a backup folder and it stays one — it
   only ADDS files the camera itself produced, never rewrites or deletes one,
   never touches a partial snapshot, and runs only after the pull has already
