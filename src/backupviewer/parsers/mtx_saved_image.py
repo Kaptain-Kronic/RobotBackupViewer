@@ -111,16 +111,26 @@ def parse_saved_image(text: str) -> dict:
 # records out - the api layer owns reading sidecars and stat'ing files.
 
 _RESULT_RE = re.compile(r"-(Pass|Fail)-", re.IGNORECASE)
-_TS_RE = re.compile(r"(\d{4})_(\d{2})_(\d{2})-(\d{2})\.(\d{2})\.(\d{2})\.(\d+)")
+# ...-2026_07_07-13.05.02.100 - and before 10:00 the camera writes the hour with
+# NO leading zero (...-2026_07_07-9.14.30.020), which is why the hour group takes
+# one OR two digits and photo_sort_key pads it back out.
+_TS_RE = re.compile(r"(\d{4})_(\d{2})_(\d{2})-(\d{1,2})\.(\d{2})\.(\d{2})\.(\d+)")
 
 PHOTO_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".txt")
 
 
 def photo_sort_key(name: str, mtime: int) -> tuple:
     """Newest-first ordering: the filename's own timestamp when present (the
-    camera stamps one), the filesystem mtime as tie-break/fallback."""
+    camera stamps one), the filesystem mtime as tie-break/fallback.
+
+    The parts are zero-padded to fixed widths before they are joined: a raw
+    string compare of the camera's own spelling sorts a 9am photo AFTER a 12pm
+    one, and morning photos are exactly the ones a rolling window keeps."""
     m = _TS_RE.search(name)
-    return ("".join(m.groups()) if m else "", mtime)
+    if not m:
+        return "", mtime
+    y, mo, d, hh, mi, ss, ms = m.groups()
+    return y + mo + d + hh.zfill(2) + mi + ss + ms.zfill(3), mtime
 
 
 def group_photo_files(rels) -> dict:

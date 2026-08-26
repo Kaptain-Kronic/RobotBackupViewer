@@ -283,6 +283,7 @@ verified* — or an honest **assumed**. The evidence tags:
 | Blocks are *found by self-validation*, never by a hardcoded offset: a candidate must open with a run of **≥24** consecutive records whose normals are unit-or-exactly-zero (a zero normal is legal STL — "you compute it"), and the run must contain at least one genuinely unit normal; the block then grows outward over records that still read as facets. All-zero padding fails the "at least one non-zero vertex component" clause and stops the growth, which is what keeps a block's edge from eating the pad around it. A sub-header ahead of the block does carry a count (46,946 / 481,016) and the scan lands within a handful of it *without being told* — corroboration read after the fact, never instruction | `cvx_models.py` `raw_facets` / `_facet_like` / `_unit_run`, constants `_HND_RUN=24`, `_HND_MIN=64`; **corpus-measured** 2026-08-10 |
 | The layout was proved **geometrically**, not by plausibility: the stored normal equals the cross product of the record's own vertex winding, dot 1.0000 on both real files — an agreement no accidental alignment survives. TDC/TDM/WSM files and random noise all yield `{}` — the negatives were measured, not assumed | **corpus-measured** 2026-08-10, two real hand files (46,952 and 481,039 facets) plus the other blob kinds and noise as refusals |
 | Matrox saved photos come as jpg/png/txt triples; the `.txt` sidecar's values contain colons (timestamps, MACs) so keys split on the FIRST colon only; a colon-less line starts a section | `mtx_saved_image.py:3-33` |
+| The camera stamps its own filenames — `…-2026_07_07-13.05.02.100.jpg` — but writes hours before 10:00 with **no leading zero** (`…-9.14.30.020`), so sorting those names as text puts a 9am shot above a 1pm one. `photo_sort_key` pads every part to a fixed width before joining, and falls back to mtime for a name the camera never stamped | **real filenames, one camera's whole day of them 2026-08-26**; pinned `test_mtx_saved_image.py`. Load-bearing twice: the photos grid's order, and which photos the Matrox backup carries back (backup-capture.md §7) |
 | Older Matrox portals write literal DesignAssistant links; DA 9.x never does — each project row carries a `prj-name` attribute (unquoted in the wild) and the portal builds the URL in JS, so the parser builds the same one | `mtx_portal.py:6-12` |
 
 ### `.DG` reports
@@ -500,10 +501,12 @@ faulted when the backups ran) or a used DCS tool/user frame (every DCS
 frame in the tree is all-zero). Both branches stay covered only
 synthetically until a backup shows up with one.
 
-**No coverage at all** (tracked or excluded): `mtx_saved_image.
-group_photo_files`/`photo_record` (the photos-tab grouping, `api.py:1987`),
-and `curpos.parse_tool_frames`' section-end edge cases beyond what
-`test_kinematics` touches. The `parsers/` docstring-level claims from
+**No coverage at all** (tracked or excluded): `curpos.parse_tool_frames`'
+section-end edge cases beyond what `test_kinematics` touches. (`mtx_saved_
+image`'s grouping half — `photo_sort_key`/`group_photo_files`/`photo_record`
+— was in this list until 2026-08-26; `test_mtx_saved_image.py` now pins all
+three, because the Matrox backup started using them to choose WHICH photos a
+pull carries back.) The `parsers/` docstring-level claims from
 corpora (6,478 programs, 157 BMPs, 154 inspect.dat) are records of past
 measurement, not repeatable tests — the corpora are not in the repo.
 
@@ -562,9 +565,13 @@ re-derive it.
    `long_path` to a neutral module (`common.py` is the obvious seam — it
    already owns "how to read files safely"), but that touches capture-side
    callers, so it waits for a code pass.
-9. **`mtx_saved_image`'s grouping half has no tests** (§7). The parse half
-   is pinned indirectly; `group_photo_files`/`photo_record` — which decide
-   what the photos tab shows — are not.
+9. ~~**`mtx_saved_image`'s grouping half has no tests**~~ — **closed
+   2026-08-26** by `test_mtx_saved_image.py`. What forced it: the Matrox
+   backup now uses `photo_sort_key` + `group_photo_files` to decide which
+   photos a pull carries back, so an untested sort was about to decide what
+   lands on disk. The fix that came out of it: real cameras write hours
+   before 10:00 with no leading zero, so the key had to pad its parts —
+   until then a 9am shot sorted as the newest of the day.
 10. **CV-X inspection *settings* are not decoded** (§4 negatives, 2026-08-11).
     The float64 slots at offset 6 mod 8 hold the numbers behind every tool —
     thresholds, windows, tolerances — and exactly one slot has been located,
