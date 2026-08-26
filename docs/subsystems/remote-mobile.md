@@ -9,8 +9,11 @@ cvx-live-tiles pass on top of it: §1 fifth surface, §5 invariants 5+9, §6
 ladder 13, §9 item 3 resolved. Updated 2026-08-18 by the tile-still pass
 (branch `cvx-live-tiles` @ `a106644`): §1 surface 5, §6 ladder 13, §7 the
 per-origin connection trap, §8 counts — and by the matrox-dark pass beside it:
-§6 ladder 14, §7 the HMIImage trap. Line-number cites drift with edits; the
-anchor commit is the reference.*
+§6 ladder 14, §7 the HMIImage trap. Updated 2026-08-26 by the cam-fair pass
+(branch `cam-fair` off `cvx-live-tiles` @ `2f81faa`): §1 surface 5, §5
+invariant 9, §6 ladder 13, §7 the per-beat budget trap (and the stale probe
+count in the trap above it), §8 counts. Line-number cites drift with edits;
+the anchor commit is the reference.*
 
 Covers: src/backupviewer/cvx_remote.py, src/backupviewer/phoneview.py,
 src/backupviewer/qr.py, src/backupviewer/screengrab.py,
@@ -91,10 +94,14 @@ reading a backup. All of them vanish when there is nothing to drive:
    input path is wired to a tile, and `cvx_remote_mouse` refuses a tile session
    outright. A tile deliberately does *not* hold the MJPEG stream open — that
    is the overlay's route, and a wall cannot be built out of it (§7, the
-   per-origin connection cap). Tile sessions are *leases* — renewed by the grid every tick the
+   per-origin connection cap) — nor out of a DOM-order prefix (§7, the per-beat
+   budget). Tile sessions are *leases* — renewed by the grid every tick the
    tile is actually on screen, hung up by a reaper within `CVX_TILE_TTL` (8 s)
    of the wall not being watched — and clicking a tile *adopts* its live
-   session into the full remote (§5 invariants 5 and 9).
+   session into the full remote (§5 invariants 5 and 9). The toolbar's **CV-X
+   live** switch takes the whole vendor off the wall in one click: the tiles
+   leave the grid and every session is hung up immediately, which is the fast
+   path for handing a line's remote slots back to the people at the HMIs.
 
 The subsystem's centre of gravity is the CV-X protocol; the rest is
 comparatively ordinary once the trust posture is stated. Everything below
@@ -394,7 +401,11 @@ What must stay true, what enforces it, what breaks if it doesn't.
    every path off the wall — lens flip, hidden window, scrolled-away tile, an
    open modal or overlay, a crashed frontend — converges on the same reaper,
    which hangs up within `CVX_TILE_TTL` and gives the controller's single
-   remote slot back to whoever needs it. Since the tile-still pass that is the
+   remote slot back to whoever needs it. The **CV-X live** switch is the one
+   path that does not wait for the reaper: turning it off calls
+   `releaseCvxTiles()` directly, because a user saying "stop mirroring these"
+   should not leave a terminal locked for another eight seconds
+   (`cvxswitch.off_frees_the_slots` in `ui_camwall_probe.py`). Since the tile-still pass that is the
    *only* pause mechanism: a paused wall has nothing to detach, so skipping the
    pass IS the pause (`detachCvxStreams` is gone). Test-enforced
    (`test_cvx_tiles.py`; the adopt/redial choreography in `ui_batch_probe.py`).
@@ -461,6 +472,12 @@ code does about it. "Test-enforced" = a unit test or the probe pins it;
     `frames` count `cvx_tile_sync` already returned and the grid used to throw
     away), anything else "no image — not answering" (`home.js` camTile, one
     `_camSay` so the 8 s timer, the error handler and the tick cannot disagree).
+    A tile that has not had its first picture *yet* — the beat's load budget
+    has not reached it — reads "waiting for its first frame…" rather than
+    showing nothing at all: a blank box is indistinguishable from a dead
+    camera, and for one release that is precisely what a starved tile was
+    (§7, the per-beat budget). **No tile is ever silent**: every state above
+    puts words in the tile (`cvxswitch`/`wall.no_silent_blank_tile`).
     A session python reports dead on sync is dropped and redialed on the same
     backoff. **No tile ever leaves the retry loop**: every tile polls, so every
     tile has a next beat — the old streaming tile parked `_camDue` at `Infinity`
@@ -523,7 +540,55 @@ code does about it. "Test-enforced" = a unit test or the probe pins it;
   `ui_batch_probe` rendered two tiles and dialled one controller,
   `test_cvx_stream` drove a single stream. A per-origin connection limit is
   invisible at one and fatal at eight. `ui_camwall_probe.py` is now the plural
-  case and fails at ~6 of 9 against the old code.
+  case. (It used nine cameras when it was written for *this* trap; the trap
+  below is why it now uses twenty-four of both vendors.)
+
+- **A wall cannot be built out of a prefix — the per-beat load budget.** The
+  refresh tick starts at most **six new loads a beat**, a courtesy to the plant
+  network. It used to walk the tiles in DOM order and stop at six, and the
+  arithmetic of that is brutal: a tile fetched at beat *N* is due again at
+  *N+2*, so six slots served exactly **twelve tiles, forever**, whatever the
+  wall's size. On a library of 56 cameras, 44 tiles could never paint.
+
+  The two vendors met it very differently, which is why it read as a camera
+  fault. A CV-X tile pays a slot only for its first **dial** — every frame
+  after that is a free loopback read of the leased still (`_camLoad` returns
+  `false` for it) — so CV-X tiles all come up and the bug is invisible. A
+  **Matrox** tile pays a slot for *every frame it ever fetches*, so past the
+  twelfth the wall simply stopped asking. Measured on a real line: tiles 1–9 on
+  screen live, tiles 10–15 black, with three more tiles scrolled just above the
+  fold quietly holding the other three slots.
+
+  Worse than dark: **silent**. A tile that is never *asked* never fails either
+  — no `error`, no 8 s timer — so `dark()` never ran, `.cam-off` was never set,
+  and the CSS keeps `.cam-tile-note` hidden behind a loaded `<img>`. The result
+  was a black rectangle with no text at all, which is exactly what a dead
+  camera looks like. Every one of those cameras answered `200 image/jpeg` in
+  under a second when asked directly, several with *fresher* frames than the
+  tiles that were painting.
+
+  The fix is that the budget **rotates** instead of restarting: a tile that has
+  never painted goes first (a region scrolled into view fills in on the next
+  beat), then the refresh cursor resumes where the last beat stopped, so every
+  showing tile gets its turn — a big wall costs a slower lap, never a permanent
+  black tile. The near-screen margin shrank from ±1/+2 viewports to ±0.5 for
+  the same reason: tiles nobody is looking at were competing for the budget
+  with tiles on screen. And a tile with no picture yet now *says* so
+  (`.cam-wait` → "waiting for its first frame…"), so no tile can ever again be
+  a blank box that means nothing.
+
+  The reason this survived to the plant floor — three at once, and the first
+  two are the same mistake as the trap above, one level up. `ui_camwall_probe`
+  used **nine** cameras: comfortably past the six-connection cap it was written
+  for, comfortably under this twelve-tile ceiling. It drove the wall by calling
+  `_camLoad()` on every tile **by hand**, which bypasses the budget entirely —
+  the broken code never executed under test. And it tiled **CV-X only**, the
+  one vendor this bug spares. The probe now runs 24 tiles of both vendors,
+  lets the real `pass()` drive (`document.hidden` pinned false), asserts
+  against the tiles genuinely on screen, and refuses to run at all if fewer
+  than 13 of them are — a test that sits under the ceiling cannot tell a fixed
+  scheduler from a broken one. Against the old code it reports 20 of 24
+  painted, 4 silent, 4 never re-fetched.
 
 - **Appending 8504 control traffic to the frame — the patchy artifacting.** The
   op1 acks and op6 responses on the video socket carry no image bytes; a frame
@@ -594,8 +659,9 @@ code does about it. "Test-enforced" = a unit test or the probe pins it;
 
 ## 8. Coverage
 
-Counted 2026-08-03; re-run 2026-08-14 by the stream-flush pass, and again
-2026-08-18 by the tile-still + matrox-dark passes: `python -m pytest tests -m
+Counted 2026-08-03; re-run 2026-08-14 by the stream-flush pass, again
+2026-08-18 by the tile-still + matrox-dark passes, and again 2026-08-26 by the
+cam-fair pass: `python -m pytest tests -m
 "probe or not probe"` → **785 passed, 2 skipped** (both skips environmental — the private
 sample tree absent — each announcing itself, neither silent).
 

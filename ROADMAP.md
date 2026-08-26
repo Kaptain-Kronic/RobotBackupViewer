@@ -136,6 +136,18 @@ one click backs up the robot + all its cameras together.
   window it was pressed in (`viewfinder_start {window}` — a key naming one of
   our windows, never a raw title).
 
+- ✅ **The wall feeds every tile, and CV-X has an off switch** (`cam-fair`).
+  The per-beat load budget was handed out to a DOM-order prefix, so exactly
+  twelve tiles were ever fed however big the wall got — and the starved ones
+  were *silent*, not dark, because a tile that is never asked never fails.
+  The budget rotates now (never-painted first, then a resuming cursor), the
+  near-screen margin shrank so off-screen tiles stop competing, and a tile
+  with no picture yet says so. Alongside it, a **CV-X live** switch at the
+  right of the library toolbar drops the whole vendor off the wall and hangs
+  up its sessions at once, handing back the controllers' single remote slots.
+  See §7 of `docs/subsystems/remote-mobile.md` for why three separate test
+  gaps let this reach a plant floor.
+
 - ✅ **Both remote bars carry the same options** — reload · open in window ·
   phone · fullscreen · close, on Matrox and CV-X alike. CV-X reload is a
   Python-side hang-up-then-redial under the same session id, and its pop-out
