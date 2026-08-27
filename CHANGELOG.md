@@ -1,6 +1,6 @@
 # Changelog
 
-## unreleased — the camera gets its 3d view, backups drag in, the statusbar finds the switch, a program plays in 3d, and a matrox pull brings home its photo history
+## unreleased — the camera gets its 3d view, backups drag in, the statusbar finds the switch, a program plays in 3d, a matrox pull brings home its photo history, and the scan window tightens up
 - **The star check samples five pairs, and `star_off` finally gets a budget.**
   Two sessions fixed `perf_probe`'s favourite-star flake at the same time and
   their fixes disagreed, so this is what survived the merge. One session went
@@ -396,6 +396,51 @@
   shot the newest of the day: that decided the photos grid's order and which
   sidecar a camera was named from, and now the timestamp parts are padded
   before they are compared.
+- **Cleanup: the library learns to let go — without learning to delete.** The
+  manage-backups modal (was "last backup") splits into two tabs. **report** is
+  the taking side: the last run with retry-failed, the stale list, and the
+  never-backed-up robots finally *listed* behind a fold instead of only
+  counted. **cleanup** is the keeping side: one grouped checklist of every
+  snapshot the retention policy says is safe to lose — partial snapshots with
+  newer completed siblings (age-exempt: a pull that died is junk from day one,
+  so each row states its own age instead), and superseded backups older than
+  N days (default 90) beyond the newest-K completed per robot (default 2). Verdicts are
+  computed once, in Python (`lib_retention`), and the same engine re-judges
+  every pick inside `lib_stage` — the checkbox list is a request, not an
+  authority. Checked snapshots MOVE into `<library>/_staged`, a mirrored tree
+  the scanner treats as reserved (like `Latest`), every move logged to
+  `staged.log`; deleting that one folder in Explorer is the human's step, and
+  restoring is moving a folder back and rescanning — files are law. Protected
+  snapshots stay visibly locked with their reason — latest completed, within
+  keep-N, the robot's only backup or last trace, pinned, offline, undated —
+  and the old-but-latest case warns "take a fresh backup first" instead of
+  ever becoming deletable. A per-snapshot **pin** (kept on the library entry,
+  keyed by the snapshot's timestamp, so it survives rescans and relocates)
+  makes "keep forever" one click. Nothing anywhere in the app deletes backup
+  data; staging claims its own tree delta, so no rescan is ever paid for it.
+  Two preferences round it out: a **staging destination** (the library's
+  `_staged`, any folder *outside* the library — a second disk actually
+  reclaims this one — or the **Windows recycle bin**, which the shell can
+  restore from and Windows' own storage policy expires; local drives only,
+  because a network share or USB stick has no bin and "recycling" there would
+  silently hard-delete, so the app refuses), and **auto-stage partial
+  backups**, which sweeps dead pulls for you when the cleanup tab loads —
+  deliberately skipping any partial that is a robot's *newest* snapshot,
+  because that partial is the evidence the robot's current state was never
+  captured. Those robots get a **backup broken** button on the partial
+  section instead: back them up now, and the fresh completed backup is also
+  what frees their partial for the next sweep. Staging itself runs as a
+  **background job with live n/total progress** — same-volume staging is
+  instant renames, but a cross-volume destination is a real file-by-file copy
+  that takes minutes at plant scale, and the first field run proved the old
+  synchronous shape let the app imply "done" mid-move (an app exit followed;
+  the per-snapshot transaction kept every backup intact, but the lesson
+  stuck). Close and reopen the modal and it reattaches to the running move.
+  Cleanup lists fold plant → line → **robot**, so a robot with a dozen old
+  backups is one row with a count until opened, and the whole tab dropped its
+  sentence-length labels: categories are two words, protections are one
+  ("latest", "kept", "pinned" — the full why lives in each row's hover tip),
+  and byte totals finally know what a gigabyte is.
 - **The files tab extracts to USB.** Every row grew a checkbox — tick one,
   shift-click a range, or take the header box, which selects exactly what the
   filter shows (the `tp` chip plus one click is every TP file in the backup).
@@ -513,6 +558,42 @@
 - Probe: `ui_cvx3d_probe.py` (tabs light/vanish, canvas paints pixels, extract
   modal, enlarge overlay). Inventory: dropped the three long-deleted
   `*_sandbox.html` rows that were blocking `update_inventory.py`.
+- **The fleet-scan picker is a compact flat list.** No category headers, no
+  per-category select-alls — every check in one list, two tight side-by-side
+  columns under a single "all" box. The window now hugs the list (the full
+  80vh frame comes back when a report paints), the find bar and scan button
+  sit flush at its bottom edge, and the close button is gone — the ✕ and Esc
+  already do that job. Text still sitting in the find box when scan is
+  clicked rides along without needing Enter (it always did; now it's pinned
+  by a probe and the tooltip says so).
+- **The style table is checked in both directions.** "style table broken"
+  still flags an enabled style row pointing at a program the backup doesn't
+  have — and now also flags a STYLE-named main sitting in the backup with no
+  style row at all (the PLC starts styles through the table, so an unlisted
+  STYLE07 can never run). Disabled rows still count as deliberate parking,
+  in both directions.
+- **"unused S## programs" grew into "S## subroutine discipline."** Same
+  check, wider truth: S## subs never reached from a style's call tree are
+  still listed (dead style code, info) — and a sub reached by the WRONG
+  style (an S61 program inside STYLE04's tree) is now a flag, with the call
+  path named. Style chaining is understood: the walk stops where STYLE04
+  calls STYLE05, so the next style's own kit never false-flags.
+- **"scan again" always shows the live check list.** The picker used to
+  rebuild from the kept report's own snapshot of the checks, so reopening
+  an old report and hitting "scan again" resurrected outdated labels — and
+  would have silently hidden any check added since that report ran. The
+  snapshot is now id+label only (just enough to title the report's
+  sections) and the picker re-pulls the registry every time.
+- **Clock drift reads like a clock, not a stopwatch.** Drift and tolerance
+  now print as a unit cascade — `+2M 4D 10H 43m 12s`, or just `+7m` when
+  that's the whole story. The robot whose RTC died years ago reads
+  `+15Y 11M 28D 8H` instead of a six-digit pile of hours.
+- **One checkbox, everywhere.** The library's hand-drawn selection box
+  (the sketched square with the X) is now the app-wide checkbox: the scan
+  picker, the programs pick column, the editor workspace (program finder,
+  find/replace tree, search options), the network scan, the 3D zone list,
+  and every modal checklist all wear it. It was scoped to the library by
+  accident of birth; the style is shared now, so a restyle lands once.
 
 ## v1.5 — the library overhaul
 - **Renaming a robot no longer rescans the library.** Every app-initiated

@@ -542,7 +542,7 @@
        flows that lived in the manage-backups modal, and the last-backup
        report. Items are built at open time so counts and gating are live. */
     var fnBtn = BV.el("button", { class: "btn lib-act-functions",
-      title: "library functions — backup, hide, scan, tidy-ups, the last-backup report" },
+      title: "library functions — backup, hide, scan, tidy-ups, manage backups" },
       "functions…");
     fnBtn.addEventListener("click", function () {
       var sel = _visibleRobots.filter(function (r) { return _cl.has(r.id); });
@@ -570,8 +570,8 @@
           onClick: function () {
             BV.libActions.autoLink().catch(function (e) { BV.toast(e.message); });
           } },
-        { label: "last backup…",
-          onClick: function () { if (BV.manageUI) BV.manageUI.open({ report: true }); } },
+        { label: "manage backups…",
+          onClick: function () { if (BV.manageUI) BV.manageUI.open(); } },
       ]);
     });
     var sortBtn = BV.el("button", { class: "btn lib-sort", title: "library sort order" },
@@ -2343,14 +2343,32 @@
   function startLineBackup(lineRobots) {
     var sel = selectedInLine(lineRobots);
     if (!sel.length) { BV.toast("select robots first"); return; }
-    var runnable = sel.filter(function (r) { return r.ips && r.ips[0]; });
-    var noip = sel.length - runnable.length;
-    if (!runnable.length) { BV.toast("no IP on selected robot(s)"); return; }
+    startBackups(sel, {
+      onRow: renderRowProgress,
+      onStarted: function () { setCancelAllVisible(true); },
+      onFired: function (runnable) {
+        runnable.forEach(function (r) { _cl.set(r.id, false); });
+        _cl.sync();
+      },
+    });
+  }
+
+  /* start a backup for each runnable robot entry — the shared core behind the
+     library's backup action AND the manage-backups modal (BV.startBackups).
+     One run_id per call: the durable backup log groups these jobs as ONE run,
+     so "last run" + retry-failed survive the post-backup refresh. Prompts the
+     shared FTP password once when any robot needs one. opts (all optional):
+     onRow(robotId, state) row-progress paint · onStarted(robotId) per job
+     accepted · onFired(runnable) once after the batch is sent. Returns false
+     when nothing was runnable (no prompt shown). */
+  function startBackups(robots, opts) {
+    opts = opts || {};
+    var runnable = (robots || []).filter(function (r) { return r.ips && r.ips[0]; });
+    var noip = (robots || []).length - runnable.length;
+    if (!runnable.length) { BV.toast("no IP on selected robot(s)"); return false; }
 
     var needsPw = runnable.some(function (r) { return r.ftp && r.ftp.user; });
     promptSharedPassword(needsPw, function (pw) {
-      /* one run_id per click: the durable backup log groups these jobs as ONE
-         run, so "last run" + retry-failed survive the post-backup refresh */
       var runId = "run-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
       runnable.forEach(function (r) {
         var spec = {
@@ -2367,19 +2385,20 @@
         if ((r.device_type || "").indexOf("camera") === 0 && r.ips.length > 1) {
           spec.cameras = r.ips.map(function (ip, i) { return { label: "CAM" + (i + 1), host: ip }; });
         }
-        renderRowProgress(r.id, { status: "pending", total: 0, done: 0 });
+        if (opts.onRow) opts.onRow(r.id, { status: "pending", total: 0, done: 0 });
         BV.api.call("start_backup", spec).then(function (res) {
           BV.jobs.track(res.job_id, { robotId: r.id });
-          setCancelAllVisible(true);
+          if (opts.onStarted) opts.onStarted(r.id);
         }).catch(function (e) {
-          renderRowProgress(r.id, { status: "error", error: e.message });
+          if (opts.onRow) opts.onRow(r.id, { status: "error", error: e.message });
         });
-        _cl.set(r.id, false);
       });
-      _cl.sync();
       if (noip) BV.toast(noip + " skipped · no IP");
+      if (opts.onFired) opts.onFired(runnable);
     });
+    return true;
   }
+  BV.startBackups = startBackups;   /* the manage-backups modal fires from its stale list */
 
   /* one shared password prompt for the whole batch (FANUC default is anonymous) */
   function promptSharedPassword(needed, cont) {

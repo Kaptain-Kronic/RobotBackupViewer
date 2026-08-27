@@ -70,9 +70,12 @@ Each of these is deliberately scoped to land on its own. Good places to start.
   reference DI[279]" across the whole library, not just the open backup.
 - 📋 **Absorb `tools/restyle.py`** — the style-clone kit builder gets UI inside
   the app.
-- ❓ **Scheduled backups + retention** — nightly fleet backup reusing the run
-  log / retry / complete-marker machinery; needs a keep-last-N + monthly
-  retention policy before it's safe to leave running.
+- ❓ **Scheduled backups** — nightly fleet backup reusing the run log / retry /
+  complete-marker machinery. The retention half landed for manual use (the
+  manage-backups cleanup tab: `library.retention_verdicts` + `_staged`
+  staging — moves, never deletes); an unattended nightly run should reuse that
+  same engine, and its only power stays "stage a move" — emptying `_staged`
+  remains the human's Explorer step.
 - 📋 **Camera credentials a site can actually change** — `mtxbackup.py` hardcodes
   the Matrox vendor defaults (`mtxuser` / `Matrox`, both case-sensitive), which
   is correct: they are published, they are burned into every DA camera, and a

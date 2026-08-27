@@ -57,7 +57,7 @@ window.BV = {};
       if (n < 1024) return n + " B";
       if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
       if (n < 1073741824) return (n / 1048576).toFixed(2) + " MB";
-      return (n / 1073741824).toFixed(2) + " GB";   /* plant-slice imports get here */
+      return (n / 1073741824).toFixed(2) + " GB";   /* plant libraries and plant-slice imports both hit GB */
     },
     kb: function (kb) {
       if (kb >= 1024) return (kb / 1024).toFixed(1) + " MB";

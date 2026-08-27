@@ -255,6 +255,35 @@ def set_favorite(robot_id: str, favorite: bool) -> dict | None:
     return update_robot(robot_id, {"favorite": bool(favorite)}, sidecar=False)
 
 
+def set_pinned(robot_id: str, taken: str, pinned: bool) -> dict | None:
+    """Pin/unpin one snapshot as a permanent cleanup exemption (overlay-only,
+    like hidden/favorite). Pins live on the ENTRY, keyed by the snapshot's
+    `taken` stamp — a flag inside backups[] would be erased by the next scan,
+    which rebuilds that list wholesale from disk, and `taken` survives
+    relocates where paths don't. Never written into the backup folder itself
+    (backups are read-only evidence)."""
+    taken = (taken or "").strip()
+    if not taken:
+        return None
+    with _LOCK:
+        data = load()
+        for e in data["robots"]:
+            if e.get("id") == robot_id:
+                if pinned and not any(b.get("taken") == taken
+                                      for b in e.get("backups") or []):
+                    return None    # pin-on needs a real snapshot; unpin always
+                                   # works so a stale pin can be cleared
+                pins = [p for p in (e.get("pins") or []) if p]
+                if pinned and taken not in pins:
+                    pins.append(taken)
+                elif not pinned and taken in pins:
+                    pins.remove(taken)
+                e["pins"] = pins
+                _write(data)      # pins touch no paths - skip the _reconcile stat sweep
+                return e
+        return None
+
+
 # -- camera <-> robot linking ----------------------------------------------------
 # A camera inspects a robot; linking the two lets the robot's viewer show its
 # cameras' photos. Matrox camera names encode the station + robot (the camera
@@ -560,6 +589,22 @@ def _is_latest_mirror(snap: Path, root: Path) -> bool:
     return any(part.lower() == "latest" for part in rel.parts)
 
 
+# <root>/_staged/ — the cleanup staging area: snapshots moved out of the library
+# wait here (mirrored plant/line/robot/date/time) until a human deletes the
+# folder in Explorer. Reserved + invisible to every walker, same contract as
+# the Latest mirror: its contents must never read back as robots/backups, and
+# changes inside it must never perturb scan_signature.
+STAGED_NAME = "_staged"
+
+
+def _is_staged(snap: Path, root: Path) -> bool:
+    try:
+        rel = snap.relative_to(root)
+    except ValueError:
+        return False
+    return any(part.lower() == STAGED_NAME for part in rel.parts)
+
+
 def _snap_taken(snap: Path, meta: dict) -> str:
     if meta.get("taken"):
         return meta["taken"]
@@ -659,7 +704,7 @@ def scan_signature(root: str | Path) -> str:
                 if not de.is_dir(follow_symlinks=False):
                     continue
                 name = de.name
-                if name.endswith((".__part", ".__tmp")):
+                if name.endswith((".__part", ".__tmp")) or name.lower() == STAGED_NAME:
                     continue
                 st = de.stat(follow_symlinks=False)
             except OSError:
@@ -761,8 +806,8 @@ def _scan_disk(root: Path, stats: dict | None = None, progress=None, expect: int
     _tick("finding backup folders…")
     for snap in session.find_backup_roots(root, stats=stats,
                                           on_root=_on_root if progress else None):
-        if _is_latest_mirror(snap, root):
-            continue                                   # mirror = copy of a dated snap
+        if _is_latest_mirror(snap, root) or _is_staged(snap, root):
+            continue                # mirror = copy of a dated snap; _staged = awaiting deletion
         meta = _read_json(snap / "backup.json")
         robot_dir = snap.parent.parent if _is_dated(snap) else snap
         done += 1
@@ -827,7 +872,7 @@ def _scan_disk(root: Path, stats: dict | None = None, progress=None, expect: int
     empty_lines: list = []
 
     def _skip_name(n: str) -> bool:
-        return (n.endswith((".__part", ".__tmp")) or n.lower() == "latest"
+        return (n.endswith((".__part", ".__tmp")) or n.lower() in ("latest", STAGED_NAME)
                 or bool(_DATE_RE.match(n)) or bool(_TIME_RE.match(n)))
 
     def _dir_children(d: Path) -> list:
@@ -1489,6 +1534,8 @@ def relocate_robot(robot_id: str, plant: str, line: str, robot: str) -> dict:
         raise ValueError("robot name required")
     if robot.lower() == "latest":
         raise ValueError("'Latest' is reserved (it names the mirror folder)")
+    if STAGED_NAME in (plant.lower(), line.lower(), robot.lower()):
+        raise ValueError("'_staged' is reserved (it names the cleanup staging folder)")
     with _LOCK:
         data = load()
         e = next((x for x in data["robots"] if x.get("id") == robot_id), None)
@@ -1603,3 +1650,366 @@ def merge_robots(primary_id: str, secondary_id: str) -> dict:
                     "removed_id": secondary_id if res.get("secondary_removed") else None,
                     "primary": _ident_e(prim), "secondary": _ident_e(sec)})
         return res
+
+
+# -- cleanup: retention verdicts + staging (moves, never deletes) -----------------
+
+def retention_verdicts(robots: list, days: int, keep: int, now: str = "") -> list[dict]:
+    """One cleanup verdict per snapshot, over already-indexed entries (pure -
+    no disk I/O; stale flags and record fields are whatever the caller's
+    listing says). Hidden robots are skipped; cameras follow the same rules.
+
+      candidate - safe to stage by policy. group "partial" skips the age gate
+                  entirely (a pull that died is junk from day one - Cody's
+                  call: always listed, the UI shows its age); group
+                  "superseded" means older than `days` with newer completed
+                  backups shielding the robot.
+      protected - reason ids (for COMPLETED snapshots recency is judged
+                  FIRST, so latest/kept can only ever mark OLD snapshots -
+                  without that, every robot's fresh latest would flood the
+                  protected fold):
+          pinned    the human said keep, forever
+          offline   record is stale (folder unreachable - disconnected drive?)
+          undated   no taken stamp - age unprovable, so never a candidate
+          only      a robot's sole snapshot when it is a PARTIAL, any age
+                    (a broken last trace); warn=True. A sole completed
+                    snapshot reads recent/latest instead - truer, and it
+                    keeps single-backup fleets out of the fold
+          last      newest partial of a robot with NO completed backup (its
+                    last trace, broken or not); warn=True
+          recent    completed + newer than the cutoff (the UI omits these
+                    from the fold; totals still count them)
+          latest    newest completed snapshot AND old; warn=True always -
+                    "old but latest - take a fresh backup first"
+          kept      within the newest-`keep` completed snapshots (and old)
+
+    The JS renders these verdicts and never re-derives them; stage_backups
+    re-runs this same function and refuses anything not returned here as a
+    candidate - the checkbox list is a request, not an authority."""
+    days = max(0, int(days or 0))
+    keep = max(0, int(keep or 0))
+    if not now:
+        now = _dt.datetime.now().isoformat(timespec="seconds")
+    try:
+        cutoff = (_dt.datetime.fromisoformat(now)
+                  - _dt.timedelta(days=days)).isoformat(timespec="seconds")
+    except ValueError:
+        cutoff = ""
+    out: list[dict] = []
+    for e in robots or []:
+        if e.get("hidden"):
+            continue
+        backups = e.get("backups") or []           # newest-first
+        if not backups:
+            continue
+        pins = {p for p in (e.get("pins") or []) if p}
+        completed = [b for b in backups if not b.get("partial")]
+        latest_taken = completed[0].get("taken", "") if completed else ""
+        keep_taken = {b.get("taken", "") for b in completed[:keep]}
+        newest_taken = backups[0].get("taken", "")
+        for b in backups:
+            taken = b.get("taken", "")
+            partial = bool(b.get("partial"))
+            item = {
+                "robot_id": e.get("id", ""), "plant": e.get("plant", ""),
+                "line": e.get("line", ""), "robot": e.get("robot", ""),
+                "device_type": e.get("device_type", "robot"),
+                "taken": taken, "path": b.get("path", ""),
+                "bytes": b.get("bytes", 0) or 0,
+                "source": b.get("source", ""),
+                "partial": partial, "pinned": taken in pins,
+            }
+            old = bool(cutoff) and bool(taken) and taken < cutoff
+            if item["pinned"]:
+                verdict, reason, warn = "protected", "pinned", False
+            elif b.get("stale"):
+                verdict, reason, warn = "protected", "offline", False
+            elif not taken:
+                verdict, reason, warn = "protected", "undated", False
+            elif partial:
+                # newest=True marks "the robot's most recent snapshot is this
+                # dead pull" - its current state was never captured. The UI's
+                # backup-broken button targets these, and auto-stage SKIPS
+                # them: the partial IS the out-of-date evidence, and it stays
+                # until a fresh completed backup replaces it.
+                item["newest"] = taken == newest_taken
+                if len(backups) == 1:
+                    verdict, reason, warn = "protected", "only", True
+                elif not completed and taken == newest_taken:
+                    verdict, reason, warn = "protected", "last", True
+                else:
+                    verdict, reason, warn = "candidate", "", False
+                    item["group"] = "partial"       # died pulls skip the age gate
+            elif not old:
+                verdict, reason, warn = "protected", "recent", False
+            elif taken == latest_taken:
+                verdict, reason, warn = "protected", "latest", True
+            elif taken in keep_taken:
+                verdict, reason, warn = "protected", "kept", False
+            else:
+                verdict, reason, warn = "candidate", "", False
+                item["group"] = "superseded"
+            item["verdict"] = verdict
+            if reason:
+                item["reason"] = reason
+            if warn:
+                item["warn"] = True
+            out.append(item)
+    return out
+
+
+def staging_dest(root: str | Path) -> tuple[str, Path | None, str]:
+    """Where staged snapshots go, from settings: ("library"|"folder"|"recycle",
+    base-dir-or-None, error). Default is <root>/_staged. A custom folder must
+    live OUTSIDE the library (the scan would re-adopt one inside - unless it
+    resolves to the default itself). Recycle mode needs a volume that actually
+    HAS a bin: on a network share or removable stick a "recycle" is a silent
+    permanent delete, which this app never performs."""
+    root = Path(root)
+    mode = str(settings.get("staging_mode", "library") or "library")
+    if mode == "recycle":
+        if not _volume_recycles(root):
+            return ("recycle", None,
+                    "this library's drive has no recycle bin (network/removable) - "
+                    "recycling would permanently delete; use a staging folder instead")
+        return ("recycle", None, "")
+    if mode == "folder":
+        raw = str(settings.get("staging_dir", "") or "").strip()
+        if not raw:
+            return ("folder", None,
+                    "no staging folder picked - choose one in settings/preferences")
+        base = _safe_resolve(Path(raw))
+        if base == _safe_resolve(root / STAGED_NAME):
+            return ("library", root / STAGED_NAME, "")
+        if _within(base, _safe_resolve(root)) or base == _safe_resolve(root):
+            return ("folder", None,
+                    "the staging folder cannot live inside the library "
+                    "(the scan would re-adopt it) - pick somewhere else")
+        return ("folder", Path(raw), "")
+    return ("library", root / STAGED_NAME, "")
+
+
+def _volume_recycles(root: Path) -> bool:
+    """True when the path's volume is a local fixed drive - the only kind that
+    reliably has a recycle bin. UNC shares and removable media do not, and
+    SHFileOperation would hard-delete there despite FOF_ALLOWUNDO."""
+    try:
+        drive = os.path.splitdrive(str(_safe_resolve(root)))[0]
+        if not drive or drive.startswith("\\\\"):
+            return False
+        import ctypes
+        return ctypes.windll.kernel32.GetDriveTypeW(drive + "\\") == 3  # DRIVE_FIXED
+    except Exception:  # noqa: BLE001 - no ctypes/windll (non-Windows test run)
+        return False
+
+
+def _send_to_recycle(paths: list) -> None:
+    """Send folders to the Windows Recycle Bin (SHFileOperationW +
+    FOF_ALLOWUNDO). The bin keeps origin + date and offers Restore, and
+    Windows' own storage policy handles expiry - that IS the point of this
+    mode. Raises OSError on any failure (sources intact). NULs are built
+    programmatically - never as literals through a tool layer."""
+    import ctypes
+    from ctypes import wintypes
+
+    class SHFILEOPSTRUCTW(ctypes.Structure):
+        _fields_ = [("hwnd", wintypes.HWND), ("wFunc", wintypes.UINT),
+                    ("pFrom", ctypes.c_wchar_p), ("pTo", ctypes.c_wchar_p),
+                    ("fFlags", ctypes.c_ushort),
+                    ("fAnyOperationsAborted", wintypes.BOOL),
+                    ("hNameMappings", ctypes.c_void_p),
+                    ("lpszProgressTitle", ctypes.c_wchar_p)]
+
+    nul = chr(0)
+    joined = nul.join(str(Path(p)) for p in paths) + nul   # ctypes adds the 2nd
+    op = SHFILEOPSTRUCTW(None, 3,                          # FO_DELETE
+                         joined, None,
+                         0x40 | 0x10 | 0x4 | 0x400,        # ALLOWUNDO|NOCONFIRMATION|SILENT|NOERRORUI
+                         False, None, None)
+    rc = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
+    if rc or op.fAnyOperationsAborted:
+        raise OSError(f"recycle refused (shell code {rc})")
+
+
+def staging_status(root: str | Path) -> dict:
+    """What is parked in staging right now: {"mode", "present", "count",
+    "bytes", "path"}. For folder-backed modes this is staged.log reconciled
+    against the folder, so a hand-deleted staging dir (the whole point)
+    honestly reads as empty again and a re-staged snapshot is never
+    double-counted. Recycle mode claims no counts - the bin is the shell's
+    ledger, not ours."""
+    mode, base, err = staging_dest(root)
+    if mode == "recycle" or base is None:
+        return {"mode": mode, "present": False, "count": 0, "bytes": 0,
+                "path": "", "error": err} if err else \
+               {"mode": mode, "present": False, "count": 0, "bytes": 0, "path": ""}
+    staged = base
+    out = {"mode": mode, "present": False, "count": 0, "bytes": 0, "path": str(staged)}
+    if not staged.is_dir():
+        return out
+    out["present"] = True
+    log_file = staged / "staged.log"
+    if not log_file.is_file():
+        return out                 # a hand-made folder: claim nothing about it
+    parked: dict[str, int] = {}    # rel -> bytes, last log line wins
+    try:
+        for ln in log_file.read_text(encoding="utf-8", errors="replace").splitlines():
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                rec = json.loads(ln)
+            except ValueError:
+                continue           # a torn line (crash mid-append) is not evidence
+            rel = rec.get("rel", "")
+            if rel:
+                parked[rel] = int(rec.get("bytes", 0) or 0)
+    except OSError:
+        return out
+    for rel, nbytes in parked.items():
+        if (staged / rel).is_dir():
+            out["count"] += 1
+            out["bytes"] += nbytes
+    return out
+
+
+def stage_backups(picks: list, days: int, keep: int, progress=None) -> dict:
+    """Move chosen snapshots into staging (see staging_dest: <root>/_staged by
+    default, a custom outside-the-library folder, or the Windows Recycle Bin),
+    mirrored plant/line/robot/date/time in the folder modes. MOVES only: the
+    app never deletes backup data. A human empties staging in Explorer (or
+    lets Windows expire the bin - that mode's whole point), and moving a
+    folder back + a rescan restores it (files are law).
+
+    Every pick is re-judged against retention_verdicts HERE — the UI's
+    checkbox list is a request, not an authority; anything that is not a
+    current candidate comes back in `failed`, untouched on disk. Per snapshot:
+    _move_tree (atomic rename same-volume; verified copy otherwise, source
+    intact on any failure) + a staged.log line; per touched robot one
+    backups[]/latest rebuild + Latest-mirror regen. picks =
+    [{"robot_id", "taken"}]. Returns {"staged", "failed", "staging"}.
+
+    `progress(done, total)` fires per processed pick. Same-volume staging is
+    an instant rename per snapshot; a cross-volume destination is a real
+    copy-verify-delete of every file, which on a plant-scale batch takes
+    MINUTES - callers must show this progress, never imply completion."""
+    with _LOCK:
+        data = load()
+        root = _root()
+        mode, staged_root, cfg_err = staging_dest(root)
+        if cfg_err:
+            raise ValueError(cfg_err)
+        _reconcile(data)                     # verdicts lean on fresh stale flags
+        allowed = {(it["robot_id"], it["taken"])
+                   for it in retention_verdicts(data["robots"], days, keep)
+                   if it["verdict"] == "candidate"}
+        staged: list = []
+        failed: list = []
+        by_robot: dict[str, list[str]] = {}
+        for p in picks or []:
+            rid, taken = (p.get("robot_id") or ""), (p.get("taken") or "")
+            if (rid, taken) not in allowed:
+                failed.append({"robot_id": rid, "taken": taken,
+                               "error": "not a current candidate (protected, "
+                                        "unknown, or the tree changed)"})
+            elif taken not in by_robot.setdefault(rid, []):
+                by_robot[rid].append(taken)
+        now = _dt.datetime.now().isoformat(timespec="seconds")
+        total = len(failed) + sum(len(ts) for ts in by_robot.values())
+        done = len(failed)                   # gate refusals count as processed
+        if progress and total:
+            progress(done, total)
+
+        def _tick():
+            nonlocal done
+            done += 1
+            if progress:
+                progress(done, total)
+
+        for rid, takens in by_robot.items():
+            e = next((x for x in data["robots"] if x.get("id") == rid), None)
+            robot_dir = _robot_folder(e) if e is not None else None
+            if e is None or robot_dir is None:
+                failed.extend({"robot_id": rid, "taken": t,
+                               "error": "robot folder unknown"} for t in takens)
+                for _ in takens:
+                    _tick()
+                continue
+            moved = False
+            for t in takens:
+                b = next((x for x in e.get("backups") or []
+                          if x.get("taken") == t), None)
+                src = Path(b["path"]) if b and b.get("path") else None
+                dst = None
+                if src is None or not src.is_dir():
+                    err = "snapshot folder missing"
+                elif not _within(_safe_resolve(src), root):
+                    err = "outside the library root"
+                elif not _is_dated(src):
+                    err = "a flat import (not a dated snapshot) - move it by hand"
+                elif mode != "recycle":
+                    err = ""
+                    dst = (staged_root / e.get("plant", "") / e.get("line", "")
+                           / e.get("robot", "") / src.parent.name / src.name)
+                    if dst.exists():
+                        err = "already parked in staging (restore or delete that copy first)"
+                else:
+                    err = ""
+                if err:
+                    failed.append({"robot_id": rid, "taken": t, "error": err})
+                    _tick()
+                    continue
+                rec = {"when": now, "robot_id": rid, "plant": e.get("plant", ""),
+                       "line": e.get("line", ""), "robot": e.get("robot", ""),
+                       "taken": t, "bytes": b.get("bytes", 0) or 0}
+                if not rec["bytes"]:
+                    # sidecar-less imports have no recorded size - measure the
+                    # folder itself before it moves, so staging status tells
+                    # the truth (a batch of 1-file husks once read "0 B" and
+                    # looked like the move had lost the data)
+                    for _dp, _dn, _fn in os.walk(src):
+                        for _n in _fn:
+                            try:
+                                rec["bytes"] += os.path.getsize(os.path.join(_dp, _n))
+                            except OSError:
+                                pass
+                if mode == "recycle":
+                    try:
+                        _send_to_recycle([src])
+                    except OSError as ex:
+                        failed.append({"robot_id": rid, "taken": t, "error": str(ex)})
+                        _tick()
+                        continue
+                    # the bin itself is the ledger here: origin + date +
+                    # Restore live in the shell, so no staged.log is written
+                    rec["rel"] = src.relative_to(root).as_posix()
+                    rec["recycled"] = True
+                else:
+                    try:
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+                        _move_tree(src, dst)
+                    except OSError as ex:
+                        failed.append({"robot_id": rid, "taken": t, "error": str(ex)})
+                        _tick()
+                        continue
+                    rec["rel"] = dst.relative_to(staged_root).as_posix()
+                    try:
+                        with open(staged_root / "staged.log", "a", encoding="utf-8") as fh:
+                            fh.write(json.dumps(rec) + "\n")
+                    except OSError:
+                        log.warning("staged.log append failed for %s (the move itself "
+                                    "succeeded)", rec["rel"])
+                # prune the emptied date dir; robot_dir is the boundary, so the
+                # robot folder itself can never be swept up (structural, on top
+                # of the latest/only/last verdict shields)
+                _prune_empty_dirs(src.parent, robot_dir)
+                staged.append(rec)
+                moved = True
+                _tick()
+            if moved:
+                _rebuild_backups(e, robot_dir, root)
+                _regen_latest(e, root)
+        if staged:
+            _reconcile(data)
+            _write(data)
+        return {"staged": staged, "failed": failed, "staging": staging_status(root)}

@@ -3934,10 +3934,143 @@ class Api:
             raise ApiError("NOT_FOUND", "robot not in library")
         return e
 
+    @_endpoint
+    def lib_set_pin(self, robot_id: str, taken: str, pinned: bool = True):
+        """Pin/unpin one snapshot as a permanent cleanup exemption (overlay-only,
+        survives a rescan; lives on the entry, never inside the backup folder)."""
+        e = library.set_pinned(robot_id, taken, pinned)
+        if e is None:
+            raise ApiError("NOT_FOUND", "robot or snapshot not in library")
+        return e
+
     # (lib_delete_files, lib_scan_folder, and lib_add_from_session were removed
     # with the v0.98 files-are-law pivot: the app never deletes backup data, and
     # backups join the library by being COPIED into the library folder - the
     # scan/watcher picks them up. Hiding covers the everyday remove case.)
+
+    @_endpoint
+    def lib_retention(self, days: int = 90, keep: int = 2):
+        """Cleanup verdicts for every snapshot in the library, plus staging
+        status. Verdicts come from ONE engine (library.retention_verdicts) that
+        lib_stage re-runs at move time - the JS renders them, never re-derives
+        them. bytes come from each pull's own sidecar meta; a hand-import has
+        none, so totals carry an `unsized` count instead of a guessed size."""
+        items = library.retention_verdicts(
+            library.list_robots().get("robots") or [], days, keep)
+        lib = {"count": 0, "bytes": 0, "unsized": 0}
+        cand = {"count": 0, "bytes": 0, "unsized": 0, "partial": 0, "superseded": 0}
+        reasons: dict = {}
+        for it in items:
+            lib["count"] += 1
+            lib["bytes"] += it["bytes"]
+            if not it["bytes"]:
+                lib["unsized"] += 1
+            if it["verdict"] == "candidate":
+                cand["count"] += 1
+                cand["bytes"] += it["bytes"]
+                if not it["bytes"]:
+                    cand["unsized"] += 1
+                cand[it["group"]] += 1
+            else:
+                r = it.get("reason", "")
+                reasons[r] = reasons.get(r, 0) + 1
+        return {"items": items, "days": days, "keep": keep,
+                "totals": {"library": lib, "candidates": cand, "reasons": reasons},
+                "staging": library.staging_status(settings.library_root())}
+
+    @_endpoint
+    def lib_stage(self, picks: list, days: int = 90, keep: int = 2):
+        """Start moving cleanup candidates into staging (mirrored, logged,
+        re-judged server-side — see library.stage_backups). Never deletes.
+
+        Runs in a worker and returns a stub immediately — poll
+        lib_stage_progress. Same-volume staging is instant renames, but a
+        cross-volume destination is a real file-by-file copy that can take
+        MINUTES on a plant-scale batch; the old synchronous shape let the UI
+        (and the user) believe it was done while the worker was mid-move."""
+        if self._backups_active():
+            raise ApiError("BUSY", "backups are running - stage after the run finishes")
+        prior = getattr(self, "_stage_job", None)
+        if prior and prior.get("running"):
+            raise ApiError("BUSY", "a staging move is already running")
+        picks = [p for p in (picks or []) if isinstance(p, dict)]
+        if not picks:
+            raise ApiError("BAD_ARGS", "nothing to stage")
+        by_id = {e.get("id"): e for e in library.load()["robots"]}
+        folders = sorted({(by_id.get(p.get("robot_id")) or {}).get("history_root", "")
+                          for p in picks} - {""})
+        self._release_sessions_under(*folders)             # Windows holds handles
+
+        job = {"running": True, "done": 0, "total": len(picks),
+               "result": None, "error": ""}
+        self._stage_job = job
+
+        def _prog(done, total):
+            job["done"], job["total"] = done, total
+
+        def _run():
+            try:
+                job["result"] = self._claim_tree_changes(
+                    lambda: library.stage_backups(picks, days, keep, progress=_prog))
+            except Exception as ex:  # noqa: BLE001 - config refusals (ValueError) included
+                job["error"] = str(ex)
+            finally:
+                job["running"] = False
+                self._notify_library_updated()
+
+        self._stage_thread = threading.Thread(target=_run, name="libstage", daemon=True)
+        self._stage_thread.start()
+        return {"total": job["total"]}
+
+    @_endpoint
+    def lib_stage_progress(self):
+        """The current (or last finished) staging job: {running, done, total,
+        error, result}. The worker holds the library lock while it moves, so
+        this reads only the job dict — it never blocks behind the move."""
+        job = getattr(self, "_stage_job", None)
+        if not job:
+            return {"running": False, "done": 0, "total": 0, "result": None, "error": ""}
+        return {"running": job["running"], "done": job["done"], "total": job["total"],
+                "result": job["result"], "error": job["error"]}
+
+    @_endpoint
+    def open_staging(self):
+        """Reveal wherever staging points right now: the _staged folder, the
+        custom staging folder, or the Recycle Bin itself in recycle mode."""
+        root = Path(settings.library_root())
+        mode, base, err = library.staging_dest(root)
+        if err:
+            raise ApiError("BAD_STATE", err)
+        if mode == "recycle":
+            os.startfile("shell:RecycleBinFolder")  # noqa: S606 - explicit user action
+            return {"opened": "recycle bin"}
+        if base is None or not Path(base).is_dir():
+            raise ApiError("NOT_FOUND", "staging is empty - nothing there yet")
+        os.startfile(str(base))  # noqa: S606 - explicit user action
+        return {"opened": str(base)}
+
+    @_endpoint
+    def pick_staging_dir(self):
+        """Folder picker for the custom staging destination. Refuses a folder
+        inside the library - the scan would re-adopt staged snapshots there."""
+        import webview
+
+        start = str(settings.get("staging_dir", "") or "")
+        result = self._window.create_file_dialog(
+            webview.FOLDER_DIALOG, directory=start if Path(start or ".").exists() else ""
+        )
+        if not result:
+            return ""
+        picked = Path(result[0] if isinstance(result, (list, tuple)) else result)
+        try:
+            root = Path(settings.library_root()).resolve()
+            inside = picked.resolve() == root or root in picked.resolve().parents
+        except OSError:
+            inside = False
+        if inside and picked.name.lower() != "_staged":
+            raise ApiError("BAD_PATH", "that folder is inside the library - "
+                                       "the scan would re-adopt staged snapshots there")
+        return str(picked)
 
     @_endpoint
     def lib_open(self, robot_id: str, which: str = "latest", side: str = "a"):

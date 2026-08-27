@@ -397,6 +397,19 @@ def test_relocate_refuses_reserved_latest_name(monkeypatch, tmp_path):
         library.relocate_robot("rid-1", "P", "L", "Latest")      # reserved mirror token
 
 
+def test_relocate_refuses_reserved_staged_name(monkeypatch, tmp_path):
+    _iso(monkeypatch, tmp_path)
+    root = _lib(tmp_path)
+    r1 = root / "P" / "L" / "R1"
+    _snap(r1, "2026_01_01", "12_00_00", robot="R1", line="L", plant="P")
+    _sidecar(r1, "rid-1", "P", "L", "R1")
+    library.scan_library_root(root)
+    for dest in (("P", "L", "_staged"), ("P", "_staged", "R1"), ("_Staged", "L", "R1")):
+        with pytest.raises(ValueError):
+            library.relocate_robot("rid-1", *dest)               # reserved cleanup token
+    assert r1.is_dir()                                           # nothing moved
+
+
 # -- api endpoints --------------------------------------------------------------
 
 def test_open_path_guarded(monkeypatch, tmp_path):
@@ -774,6 +787,31 @@ def test_scan_ignores_transient_staging_dirs(monkeypatch, tmp_path):
     names = [e.get("robot", "") for e in data["robots"]]
     assert names == ["R1"]                                       # no phantom robots
     assert ghost.is_dir() and tmpd.is_dir()                      # residue untouched
+
+
+def test_scan_ignores_staged_folder(monkeypatch, tmp_path):
+    """<root>/_staged holds snapshots the cleanup moved out (mirrored
+    plant/line/robot/date/time) until a human deletes the folder in Explorer.
+    The scanner must never read them back as robots/backups, and churn inside
+    _staged must never perturb scan_signature — a stage that dirtied the tree
+    would force a full rescan and defeat the claim machinery."""
+    _iso(monkeypatch, tmp_path)
+    root = _lib(tmp_path)
+    r1 = root / "P" / "L" / "R1"
+    _snap(r1, "2026_01_01", "12_00_00", robot="R1", line="L", plant="P")
+    _sidecar(r1, "rid-1", "P", "L", "R1")
+    parked = root / "_staged" / "P" / "L" / "R2"
+    _snap(parked, "2025_02_02", "09_30_00", robot="R2", line="L", plant="P")
+    _sidecar(parked, "rid-2", "P", "L", "R2")    # even a sidecar must not resurrect it
+
+    data = library.scan_library_root(root)
+    names = [e.get("robot", "") for e in data["robots"]]
+    assert names == ["R1"]                                       # nothing parked came back
+    assert (parked / "2025_02_02" / "09_30_00").is_dir()         # parked snapshots untouched
+
+    sig0 = library.settled_signature(root)
+    _snap(parked, "2025_03_03", "10_00_00", robot="R2", line="L", plant="P")
+    assert library.settled_signature(root) == sig0               # _staged churn is invisible
 
 
 def test_verify_tree_semantics(tmp_path):

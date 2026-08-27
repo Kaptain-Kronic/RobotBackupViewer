@@ -1216,7 +1216,7 @@ def probe(window):
         check("cam.back_to_backup_lens", bool(poll(window,
               "document.querySelectorAll('.lib-robot').length===44 ? 'y' : ''")))
 
-        # ---- health-scan picker: new checks listed, the clock tolerance input ----
+        # ---- health-scan picker: ONE flat list, every check, a single all ----
         js(window, """(function(){
             window.__hs=null; window.__realCall2=BV.api.call;
             BV.api.call=function(){
@@ -1226,24 +1226,35 @@ def probe(window):
               }
               return window.__realCall2.apply(this, arguments);
             };
+            window.__hcN=0; window.__hcLabels=null;
+            window.__realCall2('health_checks').then(function(r){
+              window.__hcN=r.length;
+              window.__hcLabels=r.map(function(c){return c.label;});
+            });
             BV.scanUI.open([{id:'probe-r1', robot:'RB010R01B01'}]);
         })()""")
         picker = poll(window, """(function(){
-            var cats=[...document.querySelectorAll('.hs-cat-title')]
-                .map(function(t){return t.textContent;});
-            if(cats.length<5) return null;
+            var rows=[...document.querySelectorAll('.hs-check')];
+            if(!rows.length || !window.__hcN) return null;
             var pin=document.querySelector('.hs-param');
-            return JSON.stringify({ cats: cats,
+            return JSON.stringify({ rows: rows.length, registry: window.__hcN,
+              catHeads: document.querySelectorAll('.hs-modal .hs-cat-head').length,
+              allBoxes: document.querySelectorAll('.hs-modal .scan-selall input').length,
               labels: [...document.querySelectorAll('.hs-lbl')].map(function(l){
                   return l.textContent;}),
               pin: !!pin, pinVal: pin ? pin.value : '' });
         })()""")
         picker = json.loads(picker or "{}")
-        check("scan.categories_include_positions",
-              picker.get("cats", [])[:5] == ["safety", "mastering", "programs",
-                                             "positions", "config"],
-              f"({picker.get('cats')})")
-        for lbl in ("remarked positions", "remarked logic", "untaught positions",
+        # the flat list carries the WHOLE registry — the invariant, not a count
+        check("scan.flat_list_carries_every_check",
+              (picker.get("rows") or 0) > 0 and picker.get("rows") == picker.get("registry"),
+              f"({picker.get('rows')} rows vs {picker.get('registry')} registry checks)")
+        check("scan.no_category_heads", picker.get("catHeads") == 0,
+              f"({picker.get('catHeads')} heads — categories are gone)")
+        check("scan.exactly_one_select_all", picker.get("allBoxes") == 1,
+              f"({picker.get('allBoxes')} select-alls)")
+        for lbl in ("advanced DCS", "mastering incomplete", "remarked positions",
+                    "remarked logic", "untaught positions",
                     "uninitialized PRs in use", "general override < 100%",
                     "controller clock drift"):
             check("scan.lists_" + lbl.split()[0] + "_" + lbl.split()[1][:5],
@@ -1251,7 +1262,28 @@ def probe(window):
         check("scan.tolerance_input_default",
               picker.get("pin") is True and picker.get("pinVal") == "2m", f"({picker})")
 
-        # pick the clock check, type a tolerance, scan: the param rides along
+        # the one box drives the whole list (honest tri-state: none -> all,
+        # ANY existing selection -> clear)
+        allstate = js(window, """JSON.stringify((function(){
+            var all=document.querySelector('.hs-modal .scan-selall input');
+            var boxes=function(){return [...document.querySelectorAll(
+                '.hs-check input[type=checkbox]')];};
+            if(boxes().some(function(b){return b.checked;})) all.click();
+            all.click();
+            var on=boxes().every(function(b){return b.checked;});
+            all.click();
+            var off=boxes().every(function(b){return !b.checked;});
+            return {on:on, off:off};
+        })())""")
+        allstate = json.loads(allstate or "{}")
+        check("scan.single_all_toggles_everything",
+              allstate.get("on") is True and allstate.get("off") is True, f"({allstate})")
+
+        # pick the clock check, type a tolerance AND type a find query WITHOUT
+        # pressing Enter, scan: the param and the pending query both ride
+        # along (type-one-thing-then-scan is the common case). The query also
+        # sticks in _lastQueries for the app run - later picker opens in this
+        # probe show it as a chip, which is the designed behavior.
         sent = js(window, """(function(){
             var rows=[...document.querySelectorAll('.hs-check')];
             var clock=rows.find(function(r){
@@ -1259,6 +1291,7 @@ def probe(window):
             clock.querySelector('input[type=checkbox]').click();
             var pin=clock.querySelector('.hs-param');
             pin.value='45s';
+            document.querySelector('.hs-findinput').value='R[151]';
             var go=[...document.querySelectorAll('.hs-foot .btn.primary')]
                 .find(function(b){return b.textContent==='scan';});
             go.click();
@@ -1270,6 +1303,8 @@ def probe(window):
               len(sent) == 4 and sent[0] == ["probe-r1"] and
               sent[1] == ["clock_drift"] and sent[3].get("clock_drift") == "45s",
               f"({sent})")
+        check("scan.pending_find_rides_without_enter",
+              len(sent) == 4 and sent[2] == ["R[151]"], f"({sent})")
         js(window, """BV.api.call=window.__realCall2;
             document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}));""")
         check("scan.modal_closes", bool(poll(window,
@@ -1308,6 +1343,7 @@ def probe(window):
                  {id:'override_low', status:'na', summary:'no $MCR.$GENOVERRIDE'}]}];
             BV.api.call=function(){
               var a=arguments;
+              if(a[0]==='save_last_scan') window.__savedRep=a[1];   /* capture + fall through */
               if(a[0]==='health_scan_start')
                 return Promise.resolve({job_id:'hs-probe', total:2});
               if(a[0]==='scan_progress' && a[1]==='hs-probe')
@@ -1330,6 +1366,23 @@ def probe(window):
         })()""")
         got = poll(window, "document.querySelectorAll('.hs-sec').length")
         check("report.sections_render", got and got >= 2, f"({got} sections)")
+        # the compact pick frame is the PICKER's; a painted report takes back
+        # the full 80vh/78rem window it needs
+        rep_frame = json.loads(js(window, """JSON.stringify((function(){
+            var b=document.querySelector('.hs-modal').getBoundingClientRect();
+            return {wide: Math.round(b.width/window.innerWidth*100),
+                    tall: Math.round(b.height/window.innerHeight*100)};
+        })())""") or "{}")
+        check("report.wears_the_full_frame",
+              (rep_frame.get("wide") or 0) >= 70 and (rep_frame.get("tall") or 0) >= 75,
+              f"({rep_frame})")
+        # the persisted report snapshots id+label ONLY - enough to title its
+        # sections, too little to ever pass for the check registry (a full
+        # snapshot once fed "scan again" and resurrected pre-rename labels)
+        saved = poll(window, """window.__savedRep && window.__savedRep.checks
+            && window.__savedRep.checks.length
+            ? JSON.stringify(Object.keys(window.__savedRep.checks[0]).sort()) : ''""")
+        check("report.snapshot_is_labels_only", saved == '["id","label"]', f"({saved})")
         head_txt = js(window, "(document.querySelector('.hs-report-head .hs-info')||{}).textContent||''")
         check("report.head_counts_and_stamp",
               "2 robots scanned" in head_txt and "3 flags" in head_txt and ":" in head_txt,
@@ -1598,6 +1651,17 @@ def probe(window):
         js(window, """[...document.querySelectorAll('.hs-report-head .btn')]
             .find(function(b){return b.textContent==='scan again';}).click()""")
         poll(window, "!!document.querySelector('.hs-check')")
+        # scan-again's picker comes from the LIVE registry, never the kept
+        # report's snapshot: same labels, same order, nothing missing
+        again = json.loads(js(window, """JSON.stringify((function(){
+            var live=window.__hcLabels||[];
+            var shown=[...document.querySelectorAll('.hs-lbl')].map(function(l){
+                return l.textContent;});
+            return {n: shown.length, match: shown.length===live.length &&
+                    shown.every(function(t,i){return t===live[i];})};
+        })())""") or "{}")
+        check("scanagain.picker_is_the_live_registry", again.get("match") is True,
+              f"({again})")
         gate = js(window, """JSON.stringify((function(){
             var go=[...document.querySelectorAll('.hs-foot .btn')]
                 .find(function(b){return b.textContent==='scan';});
@@ -1612,52 +1676,75 @@ def probe(window):
               f"({gate})")
         check("noselect.last_scan_still_offered", gate_d.get("last") is True)
 
-        # ---- the picker's own layout: stapled foot, one scroller, packed ----
+        # ---- the picker's own layout: stapled foot, a frame that HUGS ----
         layout = js(window, """JSON.stringify((function(){
             var m=document.querySelector('.hs-modal');
             var mb=m.querySelector('.modal-body');
             var sc=document.querySelector('.hs-scroll');
             var ft=document.querySelector('.hs-foot');
             var q=document.querySelector('.hs-findinput');
-            var cats=document.querySelector('.hs-cats');
+            var grid=document.querySelector('.hs-checks');
             var box=m.getBoundingClientRect();
             var rows=[...document.querySelectorAll('.hs-check')];
+            var half=Math.ceil(rows.length/2);
+            var cb=rows.length?rows[0].querySelector('input'):null;
+            var cs=cb?getComputedStyle(cb):{};
             return {
               bodyOverflow: getComputedStyle(mb).overflowY,
               scroller: !!sc && getComputedStyle(sc).overflowY === 'auto',
               footBelowScroll: !!(sc && ft) &&
                   ft.getBoundingClientRect().top >= sc.getBoundingClientRect().bottom - 1,
-              footInsideModal: !!ft &&
-                  ft.getBoundingClientRect().bottom <= box.bottom + 1,
+              footGap: ft ? Math.round(box.bottom - ft.getBoundingClientRect().bottom) : 999,
               findStapled: !!(q && sc) &&
                   q.getBoundingClientRect().top >= sc.getBoundingClientRect().bottom - 1,
-              columns: cats ? getComputedStyle(cats).columnCount : '0',
-              wide: Math.round(box.width / window.innerWidth * 100),
-              topGap: Math.round(box.top),
-              bottomGap: Math.round(window.innerHeight - box.bottom),
+              cols: grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').length : 0,
+              gridFill: !!(grid && sc) &&
+                  grid.getBoundingClientRect().height >= sc.clientHeight - 2,
+              rowGap: rows.length > 1 ? Math.round(
+                  rows[1].getBoundingClientRect().top -
+                  rows[0].getBoundingClientRect().bottom) : 999,
+              colGap: rows.length > half ? Math.round(
+                  rows[half].getBoundingClientRect().left -
+                  rows[0].getBoundingClientRect().right) : 999,
+              hugsCap: box.height <= window.innerHeight * 0.8 + 2,
+              narrowed: Math.round(box.width / window.innerWidth * 100),
+              closeGone: ft ? ![...ft.querySelectorAll('.btn')].some(function(b){
+                  return b.textContent === 'close';}) : false,
               rowH: rows.length ? Math.round(rows[0].getBoundingClientRect().height) : 0,
               descEls: document.querySelectorAll('.hs-check .hs-desc').length,
               tipped: rows.filter(function(r){ return (r.title||'').length > 10; }).length,
+              drawn: cs.appearance==='none' &&
+                  String(cs.maskImage||cs.webkitMaskImage||'').indexOf('svg')>=0,
               nRows: rows.length};
         })())""")
         lay = json.loads(layout or "{}")
         check("picker.body_does_not_scroll", lay.get("bodyOverflow") == "hidden",
               f"({layout} — the host owns [head][scroll][foot])")
         check("picker.one_scroller", lay.get("scroller") is True)
+        # stapled AND flush with the window's bottom edge — the frame ends at
+        # the buttons, no dead band below them
+        # .get with a default, never `or`: a gap of 0px is the BEST result and
+        # must not be swallowed as falsy
         check("picker.foot_is_stapled",
-              lay.get("footBelowScroll") is True and lay.get("footInsideModal") is True,
-              "(the scan / last-scan buttons must never scroll away)")
+              lay.get("footBelowScroll") is True and 0 <= lay.get("footGap", 999) <= 20,
+              f"(gap under the buttons: {lay.get('footGap')}px)")
         check("picker.find_bar_stapled_too", lay.get("findStapled") is True,
               "(find is an action you reach for, not an option you browse)")
-        check("picker.categories_flow_in_columns", lay.get("columns") == "3",
-              "(a short category must not reserve the tallest one's height)")
-        check("picker.uses_the_screen", (lay.get("wide") or 0) >= 70,
-              f"({lay.get('wide')}% of the window — it carries a lot)")
-        # #modal-root pins dialogs 10vh from the top, so the height must leave
-        # the SAME gap underneath or the window reads as dropped, not centred
-        check("picker.window_is_centred",
-              abs((lay.get("topGap") or 0) - (lay.get("bottomGap") or 0)) <= 6,
-              f"(top {lay.get('topGap')} vs bottom {lay.get('bottomGap')})")
+        check("picker.two_columns_side_by_side", lay.get("cols") == 2,
+              f"({lay.get('cols')} grid columns — one flat list, split in half)")
+        check("picker.checks_fill_the_scroller", lay.get("gridFill") is True,
+              "(no void between the list and the buttons)")
+        # TIGHT: rows packed, columns close — and the whole frame hugs the
+        # list instead of stretching to the report's 80vh/78rem numbers
+        check("picker.rows_are_packed", 0 <= lay.get("rowGap", 999) <= 6,
+              f"({lay.get('rowGap')}px between rows)")
+        check("picker.columns_sit_close", 0 <= lay.get("colGap", 999) <= 70,
+              f"({lay.get('colGap')}px between the columns)")
+        check("picker.frame_hugs_the_list",
+              lay.get("hugsCap") is True and (lay.get("narrowed") or 100) < 70,
+              f"(height capped at 80vh, width {lay.get('narrowed')}% of the window)")
+        check("picker.close_button_gone", lay.get("closeGone") is True,
+              "(the sticky ✕ and Esc are the ways out)")
         # a list, not a stack of paragraphs: one line per check, description
         # in the tooltip
         check("picker.rows_are_one_line", 0 < (lay.get("rowH") or 0) <= 34,
@@ -1665,6 +1752,8 @@ def probe(window):
         check("picker.descriptions_are_tooltips",
               lay.get("descEls") == 0 and lay.get("tipped") == lay.get("nRows"),
               f"({lay.get('tipped')} of {lay.get('nRows')} rows carry their description as a title)")
+        check("picker.boxes_wear_the_drawn_icon", lay.get("drawn") is True,
+              "(appearance:none + the SVG mask — the library's box, app-wide)")
         js(window, "document.querySelector('.modal-x').click()")
         poll(window, "document.getElementById('modal-root').classList.contains('hidden')")
 
@@ -1678,20 +1767,23 @@ def probe(window):
                 ? 'y' : '';
         })()""")
         check("fns.link_cams_in_menu", mi == "y")
-        # the "last backup…" entry opens the REPORT alone — no actions bar
+        # the "manage backups…" entry opens the two-tab modal on report; the
+        # old tidy-up actions bar is gone for good (those live in this menu)
         js(window, """(function(){
             var items=[].slice.call(document.querySelectorAll('.ctx-menu .ctx-item'));
-            items.filter(function(b){return b.textContent.indexOf('last backup')===0;})[0].click();
+            items.filter(function(b){return b.textContent.indexOf('manage backups')===0;})[0].click();
         })()""")
         mb = poll(window, """(function(){
             var m=document.querySelector('.mb-modal');
-            if(!m || !m.querySelector('.mb-partial')) return '';
+            if(!m || !m.querySelector('.mb-runpane')) return '';
             return JSON.stringify({ actbar: !!m.querySelector('.mb-actbar'),
-                                    partial: true });
+                                    tabs: m.querySelectorAll('.mb-tabs .mb-tab').length,
+                                    run: true });
         })()""")
         mb = json.loads(mb or "{}")
-        check("fns.report_opens_without_actbar",
-              mb.get("actbar") is False and mb.get("partial") is True, f"({mb})")
+        check("fns.manage_opens_tabbed_report",
+              mb.get("actbar") is False and mb.get("tabs") == 2 and mb.get("run") is True,
+              f"({mb})")
         js(window, "document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))")
         check("manage.modal_closes", bool(poll(window,
               "document.getElementById('modal-root').classList.contains('hidden')")))

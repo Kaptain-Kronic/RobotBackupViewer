@@ -6,10 +6,14 @@
 
    Three views swapped inside one modal: pick -> running -> report. Checks are
    fetched from the backend registry, so a new check in healthscan.py shows up
-   here with zero UI work; the registry's "category" field groups the picker
-   under plain headers (no accordions - everything stays visible). The picked
-   check ids persist in settings ("scan_checks", default NOTHING selected);
-   find queries are add-to-list chips, each its own report section.
+   here with zero UI work; the picker lists them FLAT in registry order — a
+   tight two-column list under one select-all, no category headers (the
+   registry's "category" field is report-side flavor now), in a compact frame
+   that hugs the list (.hs-pick — the 80vh report frame returns when a report
+   paints). The picked check ids persist in settings ("scan_checks", default
+   NOTHING selected); find queries are add-to-list chips, each its own report
+   section — and text still sitting in the find box when scan is clicked
+   rides along, Enter or not.
 
    The REPORT is a tree, not prose: checks with structured items (healthscan's
    "items") group them per program under an expandable robot row, so nothing
@@ -27,7 +31,10 @@
   var _lastQueries = [];   /* find chips survive close/reopen within this app run */
   /* the kept report {results, checks, queries, when, flt, view}. Held here for
      the app run AND written to its own file, so closing the app never throws
-     away minutes of scanning; the file is read once, lazily, on first open. */
+     away minutes of scanning; the file is read once, lazily, on first open.
+     Its `checks` is an id+label snapshot of the sections it ran - old files
+     may carry full registry dicts (a superset), and neither form ever feeds
+     the picker. */
   var _lastScan = null;
   var _lastLoaded = false;
 
@@ -140,6 +147,12 @@
       var host = BV.el("div", { class: "hs-host" });
       var stop = null;          /* live poller's stop() while a scan runs */
       var jobId = null;
+      /* the LIVE check registry, fetched once at boot - the picker's ONLY
+         source. A kept report carries its own id+label snapshot for section
+         headers, and that snapshot must never leak back into the picker:
+         "scan again" from a pre-rename report once resurrected old labels
+         (and would have hidden any check added since that report ran). */
+      var registry = null;
       var modal = BV.modal("scan " + robots.length + " robot" + (robots.length === 1 ? "" : "s"),
         host, {
           sticky: true,         /* a stray outside click must not eat a report */
@@ -150,18 +163,17 @@
           },
         });
       modal.el.classList.add("hs-modal");   /* reports need width - see .hs-modal */
+      /* the PICK/run views wear a compact frame that hugs the check list;
+         only a painted report earns the full 80vh window */
+      modal.el.classList.add("hs-pick");
 
-      /* ---- view 1: pick checks (grouped by category) + find chips ---- */
+      /* ---- view 1: pick checks (one flat list) + find chips ---- */
       function pickView(checks) {
         host.innerHTML = "";
-        /* [note] [scrolling picker] [stapled actions]: the buttons must never
+        modal.el.classList.add("hs-pick");    /* back from a report: shrink again */
+        /* [head][scrolling picker][stapled actions]: the buttons must never
            scroll away behind a long check list */
         var scroll = BV.el("div", { class: "hs-scroll" });
-        host.appendChild(BV.el("div", { class: "hs-info" },
-          robots.length
-            ? "scans each robot's saved backup — nothing touches the network"
-            : "no robots selected — pick some in the library to run a scan, " +
-              "or reopen the last report below"));
 
         /* one shared checklist controller = the same select-all / tri-state
            behavior as every other list in the app. Default = NOTHING picked;
@@ -171,49 +183,50 @@
           cl.set(id, true);
         });
 
-        var cats = [], byCat = {};
-        checks.forEach(function (c) {
-          var k = c.category || "checks";
-          if (!byCat[k]) { byCat[k] = []; cats.push(k); }
-          byCat[k].push(c);
-        });
+        /* the head row: what the scan touches on the left, THE select-all on
+           the right — one box over every check, not one per category */
+        var top = BV.el("div", { class: "hs-pickhead" });
+        top.appendChild(BV.el("span", { class: "hs-info" },
+          robots.length
+            ? "scans each robot's saved backup — nothing touches the network"
+            : "no robots selected — pick some in the library to run a scan, " +
+              "or reopen the last report below"));
+        var sel = BV.el("label", { class: "scan-selall", title: "select all / clear every check" });
+        sel.appendChild(cl.group(BV.el("input", { type: "checkbox", class: "lf-check" }),
+          function () { return checks.map(function (c) { return c.id; }); }, "all"));
+        sel.appendChild(BV.el("span", null, "all"));
+        top.appendChild(sel);
+        host.appendChild(top);
 
         /* per-check inputs (the clock tolerance): the registry declares them,
            values persist in settings (scan_params) like the picks do */
         var paramInputs = {};
         var savedParams = (BV.state.settings && BV.state.settings.scan_params) || {};
 
-        var wrap = BV.el("div", { class: "hs-cats" });
-        cats.forEach(function (cat) {
-          var block = BV.el("div", { class: "hs-cat" });
-          var head = BV.el("div", { class: "hs-cat-head" });
-          head.appendChild(BV.el("span", { class: "hs-cat-title" }, BV.esc(cat)));
-          var sel = BV.el("label", { class: "scan-selall", title: "select all / clear " + cat });
-          sel.appendChild(cl.group(BV.el("input", { type: "checkbox", class: "lf-check" }),
-            function () { return byCat[cat].map(function (c) { return c.id; }); }, cat));
-          sel.appendChild(BV.el("span", null, "all"));
-          head.appendChild(sel);
-          block.appendChild(head);
-          byCat[cat].forEach(function (c) {
-            /* ONE line per check: the description is a tooltip, not a
-               paragraph. Seventeen checks with a paragraph each is a page you
-               scroll; seventeen one-liners is a list you read. */
-            var row = BV.el("label", { class: "hs-check", title: c.desc || "" });
-            row.appendChild(cl.bind(BV.el("input", { type: "checkbox", class: "lf-check" }), c.id));
-            row.appendChild(BV.el("span", { class: "hs-lbl" }, BV.esc(c.label)));
-            if (c.input) {
-              var pin = BV.el("input", { type: "text", class: "hs-param", spellcheck: "false",
-                placeholder: c.input.hint || "", title: c.input.label || "" });
-              pin.value = savedParams[c.id] !== undefined
-                ? savedParams[c.id] : (c.input.default || "");
-              /* a text input inside the row's <label> must never toggle the box */
-              pin.addEventListener("click", function (e) { e.stopPropagation(); });
-              paramInputs[c.id] = pin;
-              row.appendChild(pin);
-            }
-            block.appendChild(row);
-          });
-          wrap.appendChild(block);
+        /* ONE flat list in two columns — registry order IS the order (it
+           already reads safety → config). The grid flows down column one
+           then column two, so the split point is ceil(n/2), told to the
+           grid here: a stylesheet can't count the registry. */
+        var wrap = BV.el("div", { class: "hs-checks" });
+        wrap.style.gridTemplateRows = "repeat(" + Math.ceil(checks.length / 2) + ", auto)";
+        checks.forEach(function (c) {
+          /* ONE line per check: the description is a tooltip, not a
+             paragraph. Seventeen checks with a paragraph each is a page you
+             scroll; seventeen one-liners is a list you read. */
+          var row = BV.el("label", { class: "hs-check", title: c.desc || "" });
+          row.appendChild(cl.bind(BV.el("input", { type: "checkbox", class: "lf-check" }), c.id));
+          row.appendChild(BV.el("span", { class: "hs-lbl" }, BV.esc(c.label)));
+          if (c.input) {
+            var pin = BV.el("input", { type: "text", class: "hs-param", spellcheck: "false",
+              placeholder: c.input.hint || "", title: c.input.label || "" });
+            pin.value = savedParams[c.id] !== undefined
+              ? savedParams[c.id] : (c.input.default || "");
+            /* a text input inside the row's <label> must never toggle the box */
+            pin.addEventListener("click", function (e) { e.stopPropagation(); });
+            paramInputs[c.id] = pin;
+            row.appendChild(pin);
+          }
+          wrap.appendChild(row);
         });
         scroll.appendChild(wrap);
         host.appendChild(scroll);
@@ -243,8 +256,9 @@
         }
         renderChips();
         var q = BV.el("input", { type: "text", spellcheck: "false", class: "hs-findinput",
-          title: "each query becomes its own section in the report",
-          placeholder: "find across the scan — DI[279], R[151], a program name… Enter adds it" });
+          title: "each query becomes its own section in the report — Enter adds it" +
+                 " to the list, and whatever is still typed here rides along on scan",
+          placeholder: "find across the scan — DI[279], R[151], a program name…" });
 
         /* true = the input text is now IN the list (added or already there) */
         function addQuery(text, silent) {
@@ -270,11 +284,10 @@
         var bar = BV.el("div", { class: "hs-footbar" });
         var go = BV.el("button", { class: "btn primary" }, "scan");
         /* honest gating: with nothing picked in the library there is nothing
-           to scan, but the window still opens so the last report is reachable */
+           to scan, but the window still opens so the last report is reachable.
+           No close button - the sticky ✕ and Esc are the ways out. */
         go.disabled = !robots.length;
         if (!robots.length) go.title = "select robots in the library first";
-        var closeBtn = BV.el("button", { class: "btn" }, "close");
-        closeBtn.addEventListener("click", function () { modal.close(); });
         bar.appendChild(q);
         if (_lastScan) {
           /* the finished report outlives the modal AND the app: reopening
@@ -287,7 +300,6 @@
           });
           bar.appendChild(lastBtn);
         }
-        bar.appendChild(closeBtn);
         bar.appendChild(go);
         actions.appendChild(bar);
         host.appendChild(actions);
@@ -370,10 +382,17 @@
 
       /* ---- view 3: the report (a tree, filtered by report-scoped ignores) ---- */
       function reportView(results, checks, queries, keep) {
+        modal.el.classList.remove("hs-pick");   /* a report earns the full frame */
         /* the finished report is KEPT module-wide with its view filters, so
-           closing the modal loses nothing; a fresh scan replaces it */
-        var rep = keep || { results: results, checks: checks, queries: queries,
-                            when: Date.now(),
+           closing the modal loses nothing; a fresh scan replaces it. checks
+           is stored as an id+label SNAPSHOT only - enough to title the
+           sections this report actually ran, and too little to ever pass
+           for the registry (the picker re-pulls the live one). */
+        var rep = keep || { results: results,
+                            checks: (checks || []).map(function (c) {
+                              return { id: c.id, label: c.label };
+                            }),
+                            queries: queries, when: Date.now(),
                             flt: { rows: {}, items: {}, progs: {}, progRows: {} } };
         _lastScan = rep;
         results = rep.results;
@@ -577,7 +596,7 @@
         listBtn.addEventListener("click", function () {
           BV.copyText(quickText(), "list copied");
         });
-        againBtn.addEventListener("click", function () { pickView(checks); });
+        againBtn.addEventListener("click", function () { pickView(registry); });
 
         function setRowOpen(row, open) {
           var b = row.querySelector(".hs-rowbody");
@@ -640,7 +659,8 @@
               });
               g.items.forEach(function (it) {
                 /* the program NAME is the whole finding for some checks
-                   (unused S## programs) - no empty row under the header */
+                   (the discipline check's dead S## programs) - no empty row
+                   under the header */
                 if (!it.line && !it.text && !it.after) return;
                 var ln = BV.el("div", { class: "hs-item", title: "right-click for actions" },
                   '<span class="ln">' + (it.line ? "line " + it.line : "") + "</span>" +
@@ -882,9 +902,9 @@
       host.innerHTML = '<div class="dim" style="padding:.5rem 0">loading checks…</div>';
       Promise.all([BV.api.call("health_checks"), loadLast()])
         .then(function (both) {
-          var checks = both[0];
+          registry = both[0];
           if (!robots.length && _lastScan) reportView(null, null, null, _lastScan);
-          else pickView(checks);
+          else pickView(registry);
         })
         .catch(function (e) {
           host.innerHTML = '<div class="hs-info">could not load checks: ' +

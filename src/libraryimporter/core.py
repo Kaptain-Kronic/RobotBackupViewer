@@ -258,7 +258,7 @@ _TIME_RE = re.compile(r"^\d{2}_\d{2}_\d{2}$")
 
 
 def _invisible_name(n: str) -> bool:
-    return (n.endswith((".__part", ".__tmp")) or n.lower() == "latest"
+    return (n.endswith((".__part", ".__tmp")) or n.lower() in ("latest", "_staged")
             or bool(_DATE_RE.match(n)) or bool(_TIME_RE.match(n)))
 
 

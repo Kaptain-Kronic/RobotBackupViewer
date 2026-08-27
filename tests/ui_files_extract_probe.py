@@ -23,7 +23,10 @@ sys.path.insert(0, str(ROOT / "src"))
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-_TMP = Path(tempfile.mkdtemp(prefix="bv_extract_probe_"))
+# resolve(): mkdtemp can hand back an 8.3 short path (a username with a space
+# — WILSON~1.0), while the app's done-modal shows the real long path; the
+# str(EXPORT)-in-modal check must compare the same spelling
+_TMP = Path(tempfile.mkdtemp(prefix="bv_extract_probe_")).resolve()
 os.environ["APPDATA"] = str(_TMP / "appdata")
 os.environ["BV_NO_WATCHER"] = "1"
 
