@@ -1917,6 +1917,7 @@
   function byId(id) { return EFFECTS.find(function (e) { return e.id === id; }); }
 
   var persistTune = null;   /* built lazily so BV.debounce is ready */
+  var _tdirty = {};         /* global-knob values awaiting their debounced write */
   var _pdirty = {}, pushP = null;
 
   /* per-effect params persist one key each, `bgfx_p_<effect>_<key>`, so an
@@ -2034,10 +2035,17 @@
         if (BV.state.settings) {
           Object.keys(m).forEach(function (k) { BV.state.settings[k] = m[k]; });
         }
+        /* the debounced writer reads _tdirty at FIRE time. Its first version
+           closed over this call's `m` - so every later drag re-fired a
+           closure holding the FIRST drag's values, and the disk never left
+           them (the settings looked right all session, then snapped back on
+           restart). Same shape as pushParam's _pdirty. */
+        Object.keys(m).forEach(function (k) { _tdirty[k] = m[k]; });
         if (!persistTune) persistTune = BV.debounce(function () {
-          Object.keys(m).forEach(function (k) {
-            BV.api.call("set_setting", k, m[k]).catch(function () {});
+          Object.keys(_tdirty).forEach(function (k) {
+            BV.api.call("set_setting", k, _tdirty[k]).catch(function () {});
           });
+          _tdirty = {};
         }, 400);
         persistTune();
       }

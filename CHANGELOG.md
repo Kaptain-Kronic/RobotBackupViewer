@@ -1,6 +1,55 @@
 # Changelog
 
-## unreleased — the camera gets its 3d view, the files tab extracts, the scan window tightens up, long scans go background, and the 3d viewports share their instruments and find their speed
+## unreleased — the camera gets its 3d view, the files tab extracts, the scan window tightens up, long scans go background, the 3d viewports share their instruments and find their speed, the remote views join the tab strip, and the background settings stop lying
+- **The Keyence remote stops "freezing" between clicks.** The live screen
+  streams as MJPEG, and Chromium renders a multipart frame only once the
+  boundary that *ends* it arrives — the server framed parts lazily, so the
+  newest screen (exactly the one your click was waiting on) sat invisible
+  until the *next* frame, which on an on-change stream meant your next mouse
+  input. In the field that read as "frozen — orbit the cursor until it
+  updates." The stream now closes every frame eagerly and repeats the newest
+  frame about once a second during a lull, so the picture is always current
+  and the connection provably alive (`test_mjpeg_closes_each_part_eagerly…`
+  pins the framing invariant: boundaries = parts + 1).
+- **Remote views ride the session bar like open backups.** A live camera
+  remote (CV-X mirror, Matrox web UI) used to take over the entire window —
+  no tabs, no way to glance at the backup behind it. Now it parks on a chip
+  with the monitor icon: the panel sits below the top bar, esc or navigating
+  anywhere hides it with the session held (the stream and pages stay warm, so
+  the chip brings it back instantly, exactly as you left it), re-opening the
+  same camera focuses its chip instead of redialling its one remote slot, and
+  the chip's ✕ is what disconnects. Different cameras can stay open on
+  side-by-side chips. Solo pop-outs and owned remote windows keep the old
+  takeover — they have no strip to park on. The old fullscreen tab-key guard
+  is retired: number keys now deliberately switch screens, because a route
+  parks the remote.
+- **Ctrl+scroll zooms a remote view — locally.** Browser zoom is disabled
+  app-wide (the page-zoom era is over), so the remotes grew their own:
+  ctrl+wheel, ctrl+= / ctrl+-, ctrl+0, and a % button with presets. On the
+  CV-X the fitted screen box scales and the stage pans, mouse mapping intact,
+  and a ctrl+wheel is never forwarded to the camera (a plain wheel still
+  drives the controller's own zoom — probe-pinned both ways). On the Matrox
+  the iframes scale like browser zoom, including below 100% to fit an
+  oversized operator page. Zoom lives with the view: parked and restored it
+  keeps, a fresh open starts back at 100%.
+- **The screens dropdown survives compare, search, and program diff.** Those
+  are hidden always-on screens — not in the screens list — so landing on one
+  erased the active tab's "· screen ▾" breadcrumb, and with it the only mouse
+  path back out of a compare. The breadcrumb now keeps naming the screen you
+  stand on and its menu still opens (probe-pinned on both #compare and
+  #search).
+- **Background effect settings: the rack follows the picker, and the dials
+  finally survive a restart.** Switching effects rebuilt the per-effect
+  slider rack on menu-*open* instead of on the actual pick, so it trailed one
+  effect behind until the dialog was reopened — the rack (and the density
+  ceiling) now repaint on the pick itself. Worse, the six global dials wrote
+  their *first* drag's values to disk forever: the debounced writer captured
+  that first snapshot and every later drag re-fired it, so everything looked
+  right all session and snapped back on restart. The writer now reads the
+  live values at fire time (per-effect dials already persisted correctly —
+  keyed `bgfx_p_<effect>_<dial>`, seeded back at boot). One `defaults` button
+  returns the whole background block — the six dials and the active effect's
+  own — to stock.
 - **The 3d viewports: instruments that survive every setting, one cube for
   both viewers, and drag frames 4–7× faster.** The floor grid and the
   orientation cube are instruments, not chrome — they used to vanish with

@@ -1,10 +1,15 @@
 /* mtxremote.js - Matrox camera live remote (its own web UI, in-app).
 
    BV.openMtxRemote(ip, label) probes http://<ip>/ via the bridge and embeds the
-   camera's web pages in a fullscreen-capable overlay (same chrome as the CV-X
+   camera's web pages in a fullscreen-capable panel (same chrome as the CV-X
    remote) with TABS: the portal home plus every DesignAssistant operator page
    the backend scraped off it - the pages the portal would otherwise pop into
    the default browser. Each tab is its own iframe, kept alive across switches.
+
+   Like the CV-X remote, the main window parks it on a SESSION-BAR CHIP
+   (BV.remotes, backuptabs.js): the panel sits under the top chrome, esc or
+   any navigation hides it (iframes stay warm), the chip's ✕ closes it. Solo
+   pop-outs have no strip, so the remote stays a full takeover there.
 
    If the home page refuses embedding (X-Frame-Options / CSP), it opens in a
    separate app window instead. The sandbox attr blocks legacy frame-busting
@@ -14,8 +19,6 @@
 (function () {
   "use strict";
 
-  var open = false;
-
   /* the portal appends a random ?pgx= cache-buster when it launches a
      DesignAssistant page - do the same so every load is fresh */
   function daUrl(url) {
@@ -24,13 +27,17 @@
   }
 
   BV.openMtxRemote = function (ip, label) {
-    if (open) { BV.toast("a remote session is already open"); return; }
     ip = (ip || "").trim();
     if (!ip) { BV.toast("this camera has no IP on record"); return; }
-    open = true;
-    /* per-invocation flag: `open` only gates "one overlay at a time" - a slow
-       probe that resolves after THIS overlay closed (and another opened) must
-       check its OWN teardown, not the shared flag, or it dead-ends the newer one */
+    /* solo pop-outs hide the session bar, so a chip there could never be
+       clicked - the remote stays a takeover in those windows */
+    var chipless = !!BV.solo;
+    var rkey = "mtx:" + ip;
+    /* re-opening a camera that already has a chip brings its view back up */
+    if (!chipless && BV.remotes.focus(rkey)) return;
+    /* per-invocation flag: a slow probe that resolves after THIS panel closed
+       (and another opened) must check its OWN teardown, or it dead-ends the
+       newer one */
     var closed = false;
 
     var overlay = BV.el("div", { class: "cvx-remote" });
@@ -45,11 +52,17 @@
     var phBtn = BV.el("button", { class: "btn",
       title: "mirror this window to your phone (QR) — watch the live image " +
         "at the lens" }, BV.icon("phone") + " phone");
+    var zoomBtn = BV.el("button", { class: "btn cvx-zoom",
+      title: "view zoom — ctrl+= / ctrl+- (or ctrl+scroll over this bar), " +
+        "ctrl+0 resets" }, "100%");
     var fsBtn = BV.el("button", { class: "btn", title: "fullscreen" }, "fullscreen");
-    var closeBtn = BV.el("button", { class: "btn", title: "close (esc)" }, "✕ close");
+    var closeBtn = BV.el("button", { class: "btn", title: chipless
+      ? "close (esc)"
+      : "close this remote — esc only hides it" }, "✕ close");
     bar.appendChild(title); bar.appendChild(tabStrip); bar.appendChild(status);
     bar.appendChild(spacer);
     bar.appendChild(rlBtn); bar.appendChild(winBtn); bar.appendChild(phBtn);
+    bar.appendChild(zoomBtn);
     bar.appendChild(fsBtn);
     bar.appendChild(closeBtn);
 
@@ -61,27 +74,99 @@
     overlay.appendChild(bar); overlay.appendChild(stage);
     document.body.appendChild(overlay);
 
+    /* --- chip lifecycle (same shape as the CV-X remote) ------------------ */
+    function place() {
+      if (chipless) return;               /* the whole window is the remote */
+      var fs = BV.fullscreen.active();    /* fullscreen: cover the chrome too */
+      /* below the TOPBAR (navigation + chips stay reachable), over the
+         toolbar row - that row is context for the screen this panel covers */
+      var tb = document.getElementById("topbar");
+      var sb = document.getElementById("statusbar");
+      overlay.style.top = (fs || !tb) ? "0" : tb.getBoundingClientRect().bottom + "px";
+      overlay.style.bottom = (fs || !sb) ? "0" : sb.offsetHeight + "px";
+    }
+    function show() {
+      overlay.style.display = "";
+      document.addEventListener("keydown", onKey);
+      place();
+    }
+    function hide() {
+      document.removeEventListener("keydown", onKey);
+      BV.fullscreen.exit();               /* never park a borderless window */
+      overlay.style.display = "none";
+    }
+    window.addEventListener("resize", place);
+    if (!chipless) {
+      BV.remotes.add({ key: rkey, kind: "mtx", label: label || ip,
+        ctl: { show: show, hide: hide, destroy: close } });
+    }
+    show();
+
     var tabs = [];      /* {label, url, home, frame, btn} */
     var current = -1;
+
+    /* view zoom, one factor for every tab. The iframes are cross-origin, so
+       a real page zoom is out of reach - instead each frame is scaled up and
+       inverse-SIZED (width 100%/z at scale z), which reads exactly like
+       browser zoom: bigger page, the iframe's own scrollbars take up the
+       slack, and below 1 MORE of an oversized operator page fits. The frames
+       also swallow wheel/key events while focused (cross-origin again), so
+       the reliable paths are the % button and ctrl+= / ctrl+- with the app
+       chrome focused; ctrl+scroll works over the bar. Nothing here reaches
+       the camera. Lives with this overlay: a fresh open starts at 100%. */
+    var zoom = 1;
+    function applyZoom(f) {
+      f.style.transform = zoom === 1 ? "" : "scale(" + zoom + ")";
+      f.style.transformOrigin = "0 0";
+      f.style.width = (100 / zoom) + "%";
+      f.style.height = (100 / zoom) + "%";
+    }
+    function setZoom(z) {
+      z = Math.round(Math.max(0.5, Math.min(3, z)) * 100) / 100;
+      if (z === zoom) return;
+      zoom = z;
+      tabs.forEach(function (t) { if (t.frame) applyZoom(t.frame); });
+      zoomBtn.textContent = Math.round(zoom * 100) + "%";
+    }
+    zoomBtn.addEventListener("click", function () {
+      BV.menu(zoomBtn, [50, 75, 100, 150, 200, 300].map(function (p) {
+        return { label: p + "%", active: Math.round(zoom * 100) === p,
+                 onClick: function () { setZoom(p / 100); } };
+      }));
+    });
+    overlay.addEventListener("wheel", function (e) {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      setZoom(zoom * (e.deltaY < 0 ? 1.25 : 0.8));
+    }, { passive: false });
 
     function close() {
       if (closed) return;
       closed = true;
-      open = false;
       document.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", place);
       BV.fullscreen.exit();               /* never leave a borderless window behind */
       overlay.remove();
+      if (!chipless) BV.remotes.drop(rkey);
     }
     closeBtn.addEventListener("click", close);
 
+    /* attached while the panel shows (show/hide) - a parked remote must not
+       eat keystrokes; nav keys pass through, any route parks the remote */
     function onKey(e) {
+      if (e.ctrlKey && (e.key === "=" || e.key === "+")) {
+        e.preventDefault(); setZoom(zoom * 1.25); return;
+      }
+      if (e.ctrlKey && e.key === "-") { e.preventDefault(); setZoom(zoom * 0.8); return; }
+      if (e.ctrlKey && e.key === "0") { e.preventDefault(); setZoom(1); return; }
       if (e.key !== "Escape") return;
       e.preventDefault();
-      /* esc backs out one step at a time: window first, then the remote */
+      /* esc backs out one step at a time: window, then the remote - which on
+         a chip means HIDE (the pages stay loaded); solo still closes */
       if (BV.fullscreen.active()) BV.fullscreen.exit();
-      else close();
+      else if (chipless) close();
+      else BV.remotes.hideVisible();
     }
-    document.addEventListener("keydown", onKey);
 
     fsBtn.addEventListener("click", function () { BV.fullscreen.toggle(); });
     rlBtn.addEventListener("click", function () {
@@ -124,6 +209,7 @@
         t.frame.addEventListener("load", function () {
           if (tabs[current] === t) hint.style.display = "none";
         });
+        applyZoom(t.frame);   /* a tab opened at 150% joins at 150% */
         t.frame.src = daUrl(t.url);
         screen.appendChild(t.frame);
       } else {

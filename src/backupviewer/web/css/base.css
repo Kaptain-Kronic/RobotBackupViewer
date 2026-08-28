@@ -245,6 +245,10 @@ body.chrome-fused #chrome-top::after { opacity: 0; }
   padding: 0 0.32em; border-radius: 4px; font-size: 0.7em; line-height: 1.5;
 }
 .stab-x:hover { color: var(--error); background: color-mix(in srgb, var(--error) 14%, transparent); }
+/* remote-view chips (BV.remotes): same tab shape, the monitor icon is the tell */
+.stab-ico { display: inline-flex; flex: none; color: inherit; }
+.stab-ico .bv-ico { width: 1.05em; height: 1.05em; vertical-align: 0; }
+.stab.remote.active .stab-ico { color: var(--accent); }
 .stab.dragging { opacity: 0.5; }
 .stab.drop-before { box-shadow: inset 2px 0 0 var(--accent); }
 #sessionbar.drop-end { box-shadow: inset -2px 0 0 var(--accent); }

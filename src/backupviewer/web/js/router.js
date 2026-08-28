@@ -79,6 +79,14 @@
     var cur = null;
     if (BV.state.manifest && tabId) {
       screenList().forEach(function (e) { if (e.tab.id === tabId) cur = e; });
+      /* the hidden always-on screens (compare/search/pdiff) are not IN the
+         screens list, but you still STAND on one - the breadcrumb keeps
+         naming it, or the dropdown (the only mouse path back out) vanishes
+         with it. No badge: they never held a number-row slot. */
+      if (!cur) {
+        var t = BV.tabs.find(function (x) { return x.id === tabId; });
+        if (t) cur = { tab: t };
+      }
     }
     /* the ACTIVE SESSION TAB is the everyday host: it grows a breadcrumb
        segment ("DD… · io ▾") and opens the menu (backuptabs.js). The
@@ -257,6 +265,10 @@
     /* running outside the app shell (plain browser, no python bridge): keep the
        old "launch via run.py" hint instead of a home screen that can't load */
     if (!BV.api.bridged) { syncScreens(null); updateStatus(); setTopbarChrome(true); emptyState(); return; }
+
+    /* a live remote view is an overlay on a chip, not a route: ANY navigation
+       returns to the app and parks the remote (session stays connected) */
+    if (BV.remotes) BV.remotes.hideVisible();
 
     var hash = location.hash.slice(1);
     var parts = hash.split("/");

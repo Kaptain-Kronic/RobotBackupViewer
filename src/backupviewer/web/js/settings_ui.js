@@ -274,7 +274,20 @@
           function (v) { persist("frost", v / 100); applyPrefs(); });
 
         section(into, "background");
-        var fxRow = row(into, "effect");
+        /* everything from the picker down lives in one rebuildable host: the
+           picker label, the density ceiling and the per-effect rack are all
+           functions of WHICH effect is live, so an effect switch repaints the
+           block wholesale. Rebuilding piecemeal is how the rack got stuck
+           showing the previous effect's dials until a close/reopen. */
+        var bgHost = BV.el("div");
+        into.appendChild(bgHost);
+        buildBackground(bgHost);
+        into.appendChild(BV.el("div", { class: "acc-credit" }, BV.esc(FX_CREDIT)));
+      }
+
+      function buildBackground(host) {
+        host.innerHTML = "";
+        var fxRow = row(host, "effect");
         var fxBtn = BV.el("button", { class: "btn fx-pick" }, BV.esc(BV.bgfx.activeName()) + " ▾");
         fxRow.appendChild(fxBtn);
         fxBtn.addEventListener("click", function () {
@@ -282,28 +295,32 @@
             return {
               label: t.name + (t.id === BV.bgfx.activeId ? "  ✓" : ""),
               onClick: function () {
+                /* the item CLICK is the switch, so the rebuild lives here.
+                   It used to hang off the picker button's own click - i.e.
+                   menu-OPEN, before anything was chosen - which is why the
+                   rack trailed one effect behind. */
                 BV.bgfx.set(t.id, true);
-                fxBtn.textContent = t.name + " ▾";
+                buildBackground(host);
               },
             };
           }));
         });
-        sliderRow(into, "intensity", 10, 100, 5, Math.round(BV.bgfx.intensity * 100), pct,
+        sliderRow(host, "intensity", 10, 100, 5, Math.round(BV.bgfx.intensity * 100), pct,
           function (v) { BV.bgfx.tune({ intensity: v / 100 }, true); });
-        sliderRow(into, "size", 50, 400, 10, Math.round(BV.bgfx.size * 100), pct,
+        sliderRow(host, "size", 50, 400, 10, Math.round(BV.bgfx.size * 100), pct,
           function (v) { BV.bgfx.tune({ size: v / 100 }, true); });
-        sliderRow(into, "speed", 10, 300, 10, Math.round(BV.bgfx.speed * 100), pct,
+        sliderRow(host, "speed", 10, 300, 10, Math.round(BV.bgfx.speed * 100), pct,
           function (v) { BV.bgfx.tune({ speed: v / 100 }, true); });
         /* density and variance fix counts and per-element properties when the
            effect is seeded, so they cannot be applied mid-flight — they ask
            for a re-seed, and sliderRow already commits on release rather than
            per drag pixel, which is the whole reason that is not a slideshow */
-        sliderRow(into, "density", 25, BV.bgfx.denseMax(), 5,
+        sliderRow(host, "density", 25, BV.bgfx.denseMax(), 5,
           Math.round(BV.bgfx.density * 100), pct,
           function (v) { BV.bgfx.tune({ density: v / 100, reseed: true }, true); });
-        sliderRow(into, "variance", 0, 200, 5, Math.round(BV.bgfx.spread * 100), pct,
+        sliderRow(host, "variance", 0, 200, 5, Math.round(BV.bgfx.spread * 100), pct,
           function (v) { BV.bgfx.tune({ spread: v / 100, reseed: true }, true); });
-        sliderRow(into, "hue drift", 0, 180, 5, Math.round(BV.bgfx.hue), deg,
+        sliderRow(host, "hue drift", 0, 180, 5, Math.round(BV.bgfx.hue), deg,
           function (v) { BV.bgfx.tune({ hue: v }, true); });
 
         /* the active effect's OWN dials. Reynolds' three weights mean nothing
@@ -311,12 +328,24 @@
            flock, so these belong to the effect that owns them rather than to
            a global panel that would have to pretend otherwise. */
         var ownHost = BV.el("div", { class: "fx-own" });
-        into.appendChild(ownHost);
+        host.appendChild(ownHost);
         buildFxParams(ownHost);
-        fxBtn.addEventListener("click", function () {
-          setTimeout(function () { buildFxParams(ownHost); }, 0);
+
+        /* one road back to stock: the six global dials AND the active
+           effect's own. An action row, deliberately not a set-row - it
+           names no setting. */
+        var rrow = BV.el("div", { class: "set-reset" });
+        var rst = BV.el("button", { class: "btn", title:
+          "reset the background to stock — the six dials above and this effect's own" },
+          "defaults");
+        rst.addEventListener("click", function () {
+          BV.bgfx.tune({ intensity: 1, size: 1, speed: 1, density: 1,
+                         spread: 1, hue: 0, reseed: true }, true);
+          BV.bgfx.paramSpec().forEach(function (p) { BV.bgfx.setParam(p.k, p.def, true); });
+          buildBackground(host);
         });
-        into.appendChild(BV.el("div", { class: "acc-credit" }, BV.esc(FX_CREDIT)));
+        rrow.appendChild(rst);
+        host.appendChild(rrow);
       }
 
       function buildFxParams(host) {
@@ -331,12 +360,6 @@
             cur[p.k] != null ? cur[p.k] : p.def, unit,
             function (v) { BV.bgfx.setParam(p.k, v, true); });
         });
-        var rst = BV.el("button", { class: "btn" }, "reset");
-        rst.addEventListener("click", function () {
-          spec.forEach(function (p) { BV.bgfx.setParam(p.k, p.def, true); });
-          buildFxParams(host);
-        });
-        row(host, "").appendChild(rst);
       }
 
       /* ---- preferences ---- */

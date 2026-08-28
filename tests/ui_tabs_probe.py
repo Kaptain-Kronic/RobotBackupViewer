@@ -101,6 +101,33 @@ def probe(window):
         check("switch.bucket_restored",
               js(window, "BV.tabState('probe').mark") == "first-was-here")
 
+        # ---- the breadcrumb survives the hidden always-on screens ----
+        # compare/search/pdiff register hidden:true, so they are not in the
+        # screens LIST - but you still STAND on them, and the active tab must
+        # keep its "· screen ▾" segment there: it is the only mouse path back
+        # out (this used to vanish, stranding compare behind a hotkey).
+        js(window, "location.hash = '#search/probe'")
+        crumb = poll(window, """(function(){
+            var s = document.querySelector('#sessionbar .stab.active .stab-screen');
+            return s && s.textContent.indexOf('search') >= 0 ? s.textContent : '';
+        })()""")
+        check("crumb.search_named", bool(crumb), f"(got {crumb!r})")
+        js(window, "location.hash = '#compare'")
+        crumb = poll(window, """(function(){
+            var s = document.querySelector('#sessionbar .stab.active .stab-screen');
+            return s && s.textContent.indexOf('compare') >= 0 ? s.textContent : '';
+        })()""")
+        check("crumb.compare_named", bool(crumb), f"(got {crumb!r})")
+        # and it still opens the screens menu from there
+        js(window, "document.querySelector('#sessionbar .stab.active .stab-screen').click()")
+        nitems = poll(window, "document.querySelectorAll('.ctx-menu .ctx-item').length")
+        check("crumb.menu_opens", (nitems or 0) >= 1, f"(got {nitems})")
+        js(window, """document.dispatchEvent(new KeyboardEvent('keydown',
+            {key:'Escape', bubbles:true, cancelable:true}))""")
+        time.sleep(0.3)
+        js(window, "location.hash = '#overview'")
+        poll(window, "location.hash === '#overview' ? 'y' : ''")
+
         # ---- dedupe: re-opening an open robot focuses, never duplicates ----
         js(window, "BV.goHome()")
         time.sleep(0.4)

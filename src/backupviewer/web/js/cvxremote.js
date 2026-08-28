@@ -1,9 +1,15 @@
-/* cvxremote.js - live CV-X remote-desktop overlay (screen mirror + mouse).
+/* cvxremote.js - live CV-X remote-desktop view (screen mirror + mouse).
 
    BV.openCvxRemote(ip, label) opens a fullscreen-capable panel that mirrors a
    Keyence CV-X controller's live 1024x768 screen and forwards mouse input -
    all three buttons plus the wheel, so the controller's own zoom (scroll),
    pan (middle-drag) and context-menu (right-click) gestures work.
+
+   In the main window the view lives on a SESSION-BAR CHIP (BV.remotes,
+   backuptabs.js) like an open backup: the panel sits under the top chrome,
+   esc or any navigation HIDES it (stream + session stay warm on the chip),
+   the chip's ✕ disconnects. Solo pop-outs have no strip, so there - and in
+   an owned window - it stays the old full takeover.
 
    The Python side (cvx_remote.py, via api.cvx_remote_*) speaks the controller's
    own TCP protocol and re-streams frames as MJPEG over a localhost HTTP server,
@@ -30,18 +36,17 @@
   var DOWN_EV = { 0: EV_LDOWN, 1: EV_MDOWN, 2: EV_RDOWN };
   var UP_EV = { 0: EV_LUP, 1: EV_MUP, 2: EV_RUP };
   var DRAG_EV = { 0: EV_DRAGGED, 1: EV_WHEEL_DRAGGED, 2: EV_DRAGGED };
-  /* while the fullscreen remote is up, swallow the app's tab-switch keys so they
-     don't change the tab hidden behind it (keys.js maps digits / - / = to tabs).
-     the cv-x has no pc-keyboard input over its protocol - only mouse. */
-  var NAV_KEYS = "0123456789-=";
-  var open = false;   /* one session at a time */
-
   BV.openCvxRemote = function (ip, label, opts) {
-    if (open) { BV.toast("a remote session is already open"); return; }
     ip = (ip || "").trim();
     opts = opts || {};
     if (!ip && !opts.adopt) { BV.toast("this camera has no IP on record"); return; }
-    open = true;
+    /* chipless = the old takeover: an owned window IS the remote, and a solo
+       pop-out hides the session bar so a chip there could never be clicked */
+    var chipless = !!(opts.owned || BV.solo);
+    var rkey = "cvx:" + (ip || opts.adopt);
+    /* one session per CONTROLLER (it has a single remote slot): re-opening a
+       camera that already has a chip just brings its view back up */
+    if (!chipless && BV.remotes.focus(rkey)) return;
 
     var sid = null, statusTimer = null, lastMove = 0, downBtn = null;
     var pressPt = null, dragging = false, wheelAcc = 0;
@@ -66,12 +71,17 @@
     var phBtn = BV.el("button", { class: "btn",
       title: "mirror this window to your phone (QR) — watch the live screen " +
         "at the camera" }, BV.icon("phone") + " phone");
+    var zoomBtn = BV.el("button", { class: "btn cvx-zoom",
+      title: "view zoom — ctrl+scroll, ctrl+= / ctrl+-, ctrl+0 resets" }, "100%");
     var fsBtn = BV.el("button", { class: "btn", title: "fullscreen (f)" }, "fullscreen");
-    var closeBtn = BV.el("button", { class: "btn", title: "close (esc)" }, "✕ close");
+    var closeBtn = BV.el("button", { class: "btn", title: chipless
+      ? "close (esc)"
+      : "disconnect from the camera — esc only hides this view" }, "✕ close");
     bar.appendChild(title); bar.appendChild(status); bar.appendChild(spacer);
     bar.appendChild(rlBtn);
     if (!opts.owned) bar.appendChild(winBtn);   /* already in its own window */
     bar.appendChild(phBtn);
+    bar.appendChild(zoomBtn);
     bar.appendChild(fsBtn); bar.appendChild(closeBtn);
 
     var stage = BV.el("div", { class: "cvx-stage" });
@@ -83,16 +93,90 @@
     overlay.appendChild(bar); overlay.appendChild(stage);
     document.body.appendChild(overlay);
 
-    /* keep the 4:3 screen box as large as fits, so mouse coords map linearly */
+    /* --- chip lifecycle --------------------------------------------------
+       The panel is DOM-persistent: hide() display:nones it (the MJPEG <img>
+       and the controller session stay warm), show() brings it back - so a
+       parked remote returns instantly, exactly as you left it, zoom included.
+       Chipless (owned window / solo) keeps inset:0 and never registers. */
+    function place() {
+      if (chipless) return;               /* the whole window is the remote */
+      var fs = BV.fullscreen.active();    /* fullscreen: cover the chrome too */
+      /* below the TOPBAR (navigation + chips stay reachable), over the
+         toolbar row - that row is context for the screen this panel covers */
+      var tb = document.getElementById("topbar");
+      var sb = document.getElementById("statusbar");
+      overlay.style.top = (fs || !tb) ? "0" : tb.getBoundingClientRect().bottom + "px";
+      overlay.style.bottom = (fs || !sb) ? "0" : sb.offsetHeight + "px";
+    }
+    function show() {
+      overlay.style.display = "";
+      document.addEventListener("keydown", onKey);
+      place();
+      fit();
+    }
+    function hide() {
+      document.removeEventListener("keydown", onKey);
+      BV.fullscreen.exit();               /* never park a borderless window */
+      overlay.style.display = "none";
+    }
+    if (!chipless) {
+      BV.remotes.add({ key: rkey, kind: "cvx", label: label || ip || "cv-x",
+        ctl: { show: show, hide: hide, destroy: close } });
+    }
+
+    /* keep the 4:3 screen box as large as fits, so mouse coords map linearly.
+       `zoom` is a VIEW multiplier on the fitted size (the stage scrolls, the
+       mouse math reads the live rect so it never needs to know): ctrl+wheel /
+       ctrl+= / ctrl+- / the % button. View-local on purpose - WebView2's own
+       page zoom is disabled app-wide, and nothing here reaches the camera.
+       It lives with this overlay: a fresh open starts back at 100%. */
+    var zoom = 1;
     function fit() {
-      var sw = stage.clientWidth, sh = stage.clientHeight, ar = SCREEN_W / SCREEN_H;
+      if (overlay.style.display === "none") return;   /* re-fit happens on show() */
+      var cs = getComputedStyle(stage);
+      var sw = stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      var sh = stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+      var ar = SCREEN_W / SCREEN_H;
       var w = sw, h = sw / ar;
       if (h > sh) { h = sh; w = sh * ar; }
-      screen.style.width = Math.round(w) + "px";
-      screen.style.height = Math.round(h) + "px";
+      /* floor, not round: a 0.5px overshoot at 100% grows a phantom scrollbar */
+      screen.style.width = Math.floor(w * zoom) + "px";
+      screen.style.height = Math.floor(h * zoom) + "px";
     }
-    window.addEventListener("resize", fit);
-    fit();
+    function onResize() { place(); fit(); }
+    window.addEventListener("resize", onResize);
+    show();   /* opens showing: placed, fitted, keys attached (chip case and takeover alike) */
+
+    function setZoom(z, ev) {
+      z = Math.round(Math.max(1, Math.min(4, z)) * 100) / 100;
+      if (z === zoom) return;
+      /* hold the point under the cursor (no cursor: the view center) still
+         while the box resizes around it */
+      var r = screen.getBoundingClientRect();
+      var sr = stage.getBoundingClientRect();
+      var ax = ev ? ev.clientX : sr.left + sr.width / 2;
+      var ay = ev ? ev.clientY : sr.top + sr.height / 2;
+      var fx = (ax - r.left) / r.width, fy = (ay - r.top) / r.height;
+      zoom = z;
+      fit();
+      var r2 = screen.getBoundingClientRect();   /* forces layout, post-fit */
+      stage.scrollLeft += (r2.left + fx * r2.width) - ax;
+      stage.scrollTop += (r2.top + fy * r2.height) - ay;
+      zoomBtn.textContent = Math.round(zoom * 100) + "%";
+    }
+    zoomBtn.addEventListener("click", function () {
+      BV.menu(zoomBtn, [100, 150, 200, 300, 400].map(function (p) {
+        return { label: p + "%", active: Math.round(zoom * 100) === p,
+                 onClick: function () { setZoom(p / 100); } };
+      }));
+    });
+    /* on the OVERLAY so it also answers over the bar and the stage padding;
+       the screen's own wheel handler steps aside on ctrl (see below) */
+    overlay.addEventListener("wheel", function (e) {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      setZoom(zoom * (e.deltaY < 0 ? 1.25 : 0.8), e);
+    }, { passive: false });
 
     /* --- teardown ------------------------------------------------------- */
     /* keepSession: the remote lives on elsewhere (it just moved to its own
@@ -100,15 +184,14 @@
     function close(keepSession) {
       if (closed) return;
       closed = true;
-      open = false;
       clearInterval(statusTimer);
-      window.removeEventListener("resize", fit);
+      window.removeEventListener("resize", onResize);
       window.removeEventListener("mouseup", onMouseUp);
       document.removeEventListener("keydown", onKey);
-      document.removeEventListener("keydown", onKeyCapture, true);
       img.src = "";                       /* drop the MJPEG connection */
       BV.fullscreen.exit();               /* never leave a borderless window behind */
       overlay.remove();
+      if (!chipless) BV.remotes.drop(rkey);
       if (keepSession === true) return;
       /* in its own window the session IS the window: closing it closes the
          window, which is what stops the session (api._close_cvx_window) */
@@ -134,26 +217,29 @@
         });
     });
 
+    /* attached while the panel shows (show/hide) - a parked remote must not
+       eat keystrokes. Nav keys (digits etc.) deliberately pass through to
+       keys.js now: switching screens is a route, and any route parks the
+       remote on its chip (router.route -> BV.remotes.hideVisible). */
     function onKey(e) {
       if (e.key === "Escape") {
         e.preventDefault();
-        /* esc backs out one step at a time: window first, then the remote */
+        /* esc backs out one step at a time: window, then the remote - which
+           on a chip means HIDE (session stays warm); only the chipless
+           takeover (owned window / solo) still closes outright */
         if (BV.fullscreen.active()) BV.fullscreen.exit();
-        else close();
+        else if (chipless) close();
+        else BV.remotes.hideVisible();
+      } else if (e.ctrlKey && (e.key === "=" || e.key === "+")) {
+        e.preventDefault(); setZoom(zoom * 1.25);
+      } else if (e.ctrlKey && e.key === "-") {
+        e.preventDefault(); setZoom(zoom * 0.8);
+      } else if (e.ctrlKey && e.key === "0") {
+        e.preventDefault(); setZoom(1);
       } else if (e.key === "f" || e.key === "F") {
         toggleFs();
       }
     }
-    document.addEventListener("keydown", onKey);
-
-    /* capture phase so a nav key never leaks to keys.js and switches a tab
-       behind the fullscreen remote */
-    function onKeyCapture(e) {
-      if (e.ctrlKey || e.altKey || e.metaKey) return;
-      if (NAV_KEYS.indexOf(e.key) < 0) return;
-      e.preventDefault(); e.stopPropagation();
-    }
-    document.addEventListener("keydown", onKeyCapture, true);
 
     /* --- mouse forwarding ----------------------------------------------- */
     function toScreen(e) {
@@ -205,6 +291,7 @@
     }
     window.addEventListener("mouseup", onMouseUp);
     screen.addEventListener("wheel", function (e) {
+      if (e.ctrlKey) return;   /* view zoom - the overlay handler owns it, the camera never hears it */
       if (!sid) return;
       e.preventDefault();
       var d = e.deltaY;
@@ -296,7 +383,7 @@
     function pollStatus() {
       if (!sid) return;
       BV.api.call("cvx_remote_status", sid).then(function (s) {
-        if (!open) return;
+        if (closed) return;
         if (s.error) {
           status.textContent = "error"; status.classList.add("err");
           hint.style.display = ""; hint.textContent = s.error;

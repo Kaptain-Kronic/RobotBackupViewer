@@ -1,14 +1,20 @@
-"""Hidden-window probe for the remote bars + the top-bar phone button.
+"""Hidden-window probe for the remote views + the top-bar phone button.
 
-Three things, on real DOM:
+On real DOM:
   A. the main window's top bar carries 📱 between compare and ⚙, and it opens
      the viewfinder for THIS window;
-  B. the CV-X overlay's bar now matches the Matrox one - reload, open in
-     window, phone, fullscreen, close - and reload redials under the SAME
+  B. the CV-X view's bar matches the Matrox one - reload, open in window,
+     phone, zoom, fullscreen, close - and reload redials under the SAME
      session id (the controller has one remote slot);
+  B1. view zoom is LOCAL: ctrl+wheel grows the screen box and forwards
+     nothing to the camera (a plain wheel does reach it), ctrl+0 resets;
+  B2/B3. the remote rides a SESSION-BAR CHIP: the panel sits below the top
+     chrome, esc parks it (hidden, session alive, chip stays), the chip
+     click brings it back, a route parks it, re-opening the same ip focuses
+     instead of redialling, and the chip's ✕ is what disconnects;
   C. a popped-out CV-X window (#cvx= fragment) boots into the overlay alone,
      ADOPTS the running session instead of dialling again, and drops its own
-     "open in window" button.
+     "open in window" button (chipless there - it IS the remote).
 
 Fully offline: CvxRemoteSession is faked, so nothing dials a camera.
 Fully synthetic and identifier-clean: TEST-NET ip, empty library in a temp
@@ -42,6 +48,7 @@ class FakeSession:
         self.frames = 0
         self.handshake_done = True
         self.error = None
+        self.mouse = []          # event ids the frontend forwarded
 
     def start(self):
         FakeSession.dials.append(self.ip)
@@ -52,6 +59,12 @@ class FakeSession:
 
     def stop(self):
         self.alive = False
+
+    def send_mouse(self, event_id, x, y):
+        self.mouse.append(event_id)
+
+    def queue_mouse(self, seq, event_id, x, y):
+        self.mouse.append(event_id)
 
 
 def bar_buttons(window):
@@ -83,11 +96,11 @@ def probe(window, api):
         js(window, "document.getElementById('btn-phone').click()")
         check("topbar.phone_opens_viewfinder", js(window, "BV._vfCalls") == 1)
 
-        # ---- B. the CV-X overlay's own bar ----
+        # ---- B. the CV-X view's own bar ----
         js(window, f"BV.openCvxRemote('{CAM_IP}', 'probe cam')")
         btns = bar_buttons(window)
         check("cvx.bar_matches_matrox",
-              btns == ["⟳ reload", "open in window", "phone", "fullscreen", "✕ close"],
+              btns == ["⟳ reload", "open in window", "phone", "100%", "fullscreen", "✕ close"],
               f"({btns})")
         check("cvx.phone_btn_has_icon", js(window,
             "!!document.querySelectorAll('.cvx-bar .btn')[2].querySelector('svg.bv-ico')"))
@@ -101,6 +114,49 @@ def probe(window, api):
         js(window, """BV._vf2 = 0; BV.openViewfinder = function(){ BV._vf2++; };
                       document.querySelectorAll('.cvx-bar .btn')[2].click();""")
         check("cvx.phone_opens_viewfinder", js(window, "BV._vf2") == 1)
+
+        # the chip: the remote rides the session bar like an open backup
+        check("chip.appears",
+              js(window, "document.querySelectorAll('#sessionbar .stab.remote').length") == 1)
+        check("chip.has_icon",
+              js(window, "!!document.querySelector('#sessionbar .stab.remote svg.bv-ico-remote')"))
+        check("chip.named",
+              (js(window, "document.querySelector('#sessionbar .stab.remote .stab-label')"
+                          ".textContent") or "") == "probe cam")
+        check("chip.active_while_shown",
+              js(window, "document.querySelector('#sessionbar .stab.remote')"
+                         ".classList.contains('active')"))
+        # the panel sits BELOW the topbar, so the strip stays clickable
+        top_px = js(window, "parseFloat(document.querySelector('.cvx-remote').style.top) || 0")
+        check("chip.panel_below_topbar", (top_px or 0) > 0, f"(top={top_px})")
+
+        # ---- B1. view zoom: local, never forwarded ----
+        check("zoom.starts_100",
+              js(window, "document.querySelector('.cvx-bar .cvx-zoom').textContent") == "100%")
+        w0 = js(window, "document.querySelector('.cvx-screen').getBoundingClientRect().width")
+        js(window, """document.querySelector('.cvx-screen').dispatchEvent(
+            new WheelEvent('wheel', {ctrlKey: true, deltaY: -100, bubbles: true, cancelable: true}))""")
+        time.sleep(0.4)
+        w1 = js(window, "document.querySelector('.cvx-screen').getBoundingClientRect().width")
+        check("zoom.ctrl_wheel_grows", bool(w0) and bool(w1) and w1 > w0 * 1.15,
+              f"({w0} -> {w1})")
+        check("zoom.button_reads_125",
+              js(window, "document.querySelector('.cvx-bar .cvx-zoom').textContent") == "125%")
+        check("zoom.nothing_forwarded", api._cvx[sid].mouse == [],
+              f"({api._cvx[sid].mouse})")
+        # a PLAIN wheel is camera input and does go through (async bridge - poll)
+        js(window, """document.querySelector('.cvx-screen').dispatchEvent(
+            new WheelEvent('wheel', {deltaY: 240, bubbles: true, cancelable: true}))""")
+        deadline = time.time() + 4
+        while time.time() < deadline and not api._cvx[sid].mouse:
+            time.sleep(0.2)
+        check("zoom.plain_wheel_reaches_camera", len(api._cvx[sid].mouse) >= 1,
+              f"({api._cvx[sid].mouse})")
+        js(window, """document.dispatchEvent(new KeyboardEvent('keydown',
+            {key: '0', ctrlKey: true, bubbles: true, cancelable: true}))""")
+        time.sleep(0.4)
+        check("zoom.ctrl0_resets",
+              js(window, "document.querySelector('.cvx-bar .cvx-zoom').textContent") == "100%")
 
         # reload: same id, new session under it, the <img> re-pointed
         was = api._cvx.get(sid)
@@ -116,25 +172,64 @@ def probe(window, api):
 
         # ---- B2. fullscreen reaches the WINDOW (the web api can't) ----
         # requestFullscreen is granted here but only stretches the element
-        # inside the same window - and the overlay is already inset:0, so the
-        # button used to do visibly nothing. It must go through pywebview.
-        js(window, "document.querySelectorAll('.cvx-bar .btn')[3].click()")
+        # inside the same window, so the button must go through pywebview.
+        js(window, "document.querySelectorAll('.cvx-bar .btn')[4].click()")
         time.sleep(1.5)
         check("fs.window_went_fullscreen", "main" in api._fullscreen)
         check("fs.js_state_agrees", js(window, "BV.fullscreen.active()") is True)
-        # esc in fullscreen backs out the WINDOW, it does not close the remote
+        # esc in fullscreen backs out the WINDOW, it does not park the remote
         js(window, """document.dispatchEvent(
             new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}))""")
         time.sleep(1.5)
         check("fs.esc_leaves_fullscreen_first", "main" not in api._fullscreen)
         check("fs.esc_kept_the_remote_open",
-              js(window, "!!document.querySelector('.cvx-remote')"))
-        # and now a second esc really does close it
+              (js(window, "document.querySelector('.cvx-remote').style.display") or "") != "none")
+
+        # ---- B3. esc PARKS the remote on its chip - it does not disconnect ----
         js(window, """document.dispatchEvent(
             new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}))""")
         time.sleep(1)
-        check("fs.second_esc_closes", not js(window, "!!document.querySelector('.cvx-remote')"))
-        # reopen for part C, adopting nothing (the session above was stopped)
+        check("park.panel_hidden",
+              js(window, "document.querySelector('.cvx-remote').style.display") == "none")
+        check("park.chip_stays",
+              js(window, "document.querySelectorAll('#sessionbar .stab.remote').length") == 1
+              and not js(window, "document.querySelector('#sessionbar .stab.remote')"
+                                 ".classList.contains('active')"))
+        check("park.session_alive", sid in api._cvx and api._cvx[sid].alive is True)
+        # a parked remote must not eat keys: its esc handler is detached
+        js(window, """document.dispatchEvent(
+            new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}))""")
+        time.sleep(0.5)
+        check("park.parked_hears_no_keys", sid in api._cvx and api._cvx[sid].alive is True)
+        # the chip brings it back
+        js(window, "document.querySelector('#sessionbar .stab.remote').click()")
+        time.sleep(0.6)
+        check("park.chip_restores",
+              js(window, "document.querySelector('.cvx-remote').style.display") != "none"
+              and js(window, "document.querySelector('#sessionbar .stab.remote')"
+                             ".classList.contains('active')"))
+        # any route parks it too (navigation returns to the app)
+        js(window, "BV.route()")
+        time.sleep(0.6)
+        check("park.route_parks",
+              js(window, "document.querySelector('.cvx-remote').style.display") == "none")
+        # re-opening the same camera FOCUSES the chip - never a second dial
+        dials_now = list(FakeSession.dials)
+        js(window, f"BV.openCvxRemote('{CAM_IP}', 'probe cam')")
+        time.sleep(0.8)
+        check("park.reopen_focuses",
+              js(window, "document.querySelectorAll('.cvx-remote').length") == 1
+              and js(window, "document.querySelector('.cvx-remote').style.display") != "none"
+              and FakeSession.dials == dials_now, f"({FakeSession.dials})")
+        # the chip's ✕ is what disconnects
+        js(window, "document.querySelector('#sessionbar .stab.remote .stab-x').click()")
+        time.sleep(1.5)
+        check("park.x_disconnects",
+              not js(window, "!!document.querySelector('.cvx-remote')")
+              and js(window, "document.querySelectorAll('#sessionbar .stab.remote').length") == 0
+              and sid not in api._cvx)
+
+        # reopen for part C (the session above was stopped - this dials fresh)
         js(window, f"BV.openCvxRemote('{CAM_IP}', 'probe cam')")
         sid = poll(window, """(function(){
             var i = document.querySelector('.cvx-remote img');
@@ -154,7 +249,7 @@ def probe(window, api):
               and js(win2, "getComputedStyle(document.getElementById('app')).display") == "none")
         btns2 = bar_buttons(win2)
         check("popout.bar_drops_open_in_window",
-              btns2 == ["⟳ reload", "phone", "fullscreen", "✕ close"], f"({btns2})")
+              btns2 == ["⟳ reload", "phone", "100%", "fullscreen", "✕ close"], f"({btns2})")
         check("popout.adopted_not_redialled",
               api._cvx.get(sid) is live and FakeSession.dials == dials_before,
               f"({FakeSession.dials})")

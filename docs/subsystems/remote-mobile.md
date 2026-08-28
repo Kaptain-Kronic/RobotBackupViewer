@@ -6,6 +6,14 @@
 hold). Line-number cites are against that revision and drift with edits; the
 anchor commit is the reference.*
 
+*Updated 2026-08-28 (that update's commit is the anchor for these sections):
+the remotes became **session-bar chips** — the panel sits below the topbar,
+esc/navigation PARKS it (session held) and the chip's ✕ disconnects, with the
+old full takeover kept in owned/solo windows; both remotes grew **local view
+zoom** (never forwarded to the device); and the MJPEG server's framing was
+fixed to close every part **eagerly** (§4a, §7 — the frozen-until-input bug).
+The NAV_KEYS fullscreen tab-guard is retired (closing section).*
+
 Covers: src/backupviewer/cvx_remote.py, src/backupviewer/phoneview.py,
 src/backupviewer/qr.py, src/backupviewer/screengrab.py,
 src/backupviewer/cvx_handshake/chan8502_tx.bin,
@@ -231,7 +239,15 @@ a time (`:306-308`); and every `op5/meth5` triggers a 20-byte frame-ack
 the session's latest JPEG as `multipart/x-mixed-replace`, so the frontend is a
 plain `<img src="http://127.0.0.1:PORT/cvx/<sid>">` (`cvxremote.js:250`) — the
 live screen renders with zero JS decoding, in a `file://` page with no CSP to
-fight.
+fight. Two framing rules, both load-bearing (added 2026-08-28): every part is
+**closed eagerly** — the boundary that ends it is written with it, because
+Chromium renders a multipart part only once the ending boundary arrives, and
+lazy `[boundary, headers, jpeg]` framing showed every frame one part LATE (on
+an on-change stream that is "frozen until the user's next input" — §7); and a
+quiet stream **re-sends the newest frame ~1/s** rather than going silent, so
+the picture can never sit stale behind client-side buffering and the
+connection stays provably alive. Test-enforced
+(`test_mjpeg_closes_each_part_eagerly_and_resends_when_idle`).
 
 **Mouse, and the drag finding.** Mouse events are 60-byte messages on 8502
 (type 7 / op 5 / method 0x34), body `[7, h1, h2, eventId, X, Y, h3]` where
@@ -340,6 +356,11 @@ What must stay true, what enforces it, what breaks if it doesn't.
    session id (`api.py:2170-2189`); a pop-out *adopts* rather than re-dials
    (`cvx_remote_info`); closing a window or the app stops the session; a failed
    reload rebinds the registry to the new id. All test-enforced (`test_cvx_window.py`).
+   Since 2026-08-28 a **parked chip still holds the slot** (esc hides, it does
+   not hang up — that is the point: the picture returns instantly) — the chip in
+   the session bar is the honest tell that the camera is still held, re-opening
+   the same ip focuses that chip instead of dialling (probe-enforced,
+   `park.reopen_focuses`), and the chip's ✕ is what releases the slot.
 6. **Only actual video bodies join the frame.** Control traffic on 8504 (op1
    acks, op6 responses) is excluded from the image buffer
    (`cvx_remote.py:320-327`); a frame comes out byte-identical across arbitrary
@@ -407,10 +428,13 @@ code does about it. "Test-enforced" = a unit test or the probe pins it;
     would strand the camera's one remote slot until app exit (`api.py:2242-2257`,
     `cvxremote.js:243-247`). Test-enforced
     (`test_failed_reload_rebind_stops_the_redialed_session`).
-12. **Probe / headless environment** → the CV-X overlay runs in a hidden
+12. **Probe / headless environment** → the CV-X view runs in a hidden
     WebView2 with `CvxRemoteSession` faked (nothing dials a camera); the bar
-    shape, the reload-keeps-the-id rule, fullscreen-through-the-window, and the
-    pop-out adopt are all asserted on real DOM (`ui_cvxremote_probe.py`).
+    shape, the reload-keeps-the-id rule, fullscreen-through-the-window, the
+    pop-out adopt, the session-bar chip (park on esc / restore on click /
+    route parks / ✕ disconnects), and the local zoom (ctrl+wheel grows the box
+    and forwards nothing; a plain wheel does reach the camera) are all
+    asserted on real DOM (`ui_cvxremote_probe.py`).
 
 ## 7. Traps paid for
 
@@ -461,6 +485,17 @@ code does about it. "Test-enforced" = a unit test or the probe pins it;
   silently — when the v1.4 branding rename changed the title
   (`api.py:2411-2417`).
 
+- **MJPEG parts framed lazily — "frozen until you bump the mouse"** (found and
+  fixed 2026-08-28). The stream originally wrote `[boundary, headers, jpeg]`
+  per frame and then went silent; Chromium renders a multipart part only when
+  the boundary that ENDS it arrives, so the newest frame — exactly the one a
+  click was waiting on — sat undisplayed until the *next* frame, which on an
+  on-change stream meant the user's next mouse input. In the field that read
+  as "the Keyence is frozen; orbit the cursor until it updates." The fix is
+  framing, not protocol: close every part eagerly and re-send the newest frame
+  ~1/s during a lull (§4a). The invariant the test pins: boundaries written ==
+  parts + 1 (`test_mjpeg_closes_each_part_eagerly_and_resends_when_idle`).
+
 - **SO_REUSEADDR would let two app instances fight for the phones.** The share
   server sets `allow_reuse_address = False`, so a second instance can't silently
   double-bind a port that is already listening; it moves up to the next free port
@@ -482,7 +517,7 @@ count checked individually:
 |---|---:|
 | `tests/test_qr.py` | 34 |
 | `tests/test_phone_view.py` | 25 |
-| `tests/test_cvx_remote.py` | 23 |
+| `tests/test_cvx_remote.py` | 23 *(24 since 2026-08-28: + the MJPEG framing/idle-resend test)* |
 | `tests/test_mtx_remote.py` | 21 |
 | `tests/test_cvx_window.py` | 19 |
 | `tests/test_viewfinder.py` | 16 |
@@ -601,12 +636,13 @@ recorded-and-consistent, not re-proven.
   subKeycode, count)` drives the *physical* console, and `VapiConsoleKeyCode
   KEY_0..KEY_8` are button **indices**, not ASCII digits — so real value entry is
   already a mouse job on the on-screen keypad. The scaffolding was pursued and
-  stripped back out; the one keeper is the tab-guard in `cvxremote.js`
-  (`NAV_KEYS`, `onKeyCapture`, `:36,151-156`) that swallows number / `-` / `=`
-  keys while the fullscreen remote is up, so they don't switch the tab hidden
-  behind it. Recorded here because no repo file explains *why* that guard exists,
-  and a future reader would otherwise re-litigate the keyboard question — treat
-  it as closed.
+  stripped back out. Its one-time keeper — the tab-guard (`NAV_KEYS` /
+  `onKeyCapture`) that swallowed number / `-` / `=` while the takeover remote
+  was up — was **retired 2026-08-28** when the remote became a session-bar
+  chip: nav keys now deliberately pass through, because switching screens is a
+  route and any route parks the remote (probe-enforced, `park.route_parks`).
+  Recorded so a future reader neither re-litigates the keyboard question (still
+  closed) nor re-adds the guard out of git-history sympathy.
 - **Every rate and single-flight claim** for the phone relay is proven over
   loopback with the camera faked; the "camera's HMI polls at 1 Hz, we never
   exceed 2 Hz" bound is the docstring's `corpus-measured` figure, not re-measured
