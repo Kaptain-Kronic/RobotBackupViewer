@@ -189,7 +189,7 @@ def probe(window):
               "document.querySelector('#jobstrip .jobstrip-scan') ? '' : 'y'", tries=48)))
 
         # ---- phase C: network sweeps - backdrop-safe, results survive reopen ----
-        na = FakeNet(label="network sweep 10.9.9.0/24")
+        na = FakeNet(label="network sweep 192.0.2.0/24")
         na._set(status="scanning", total=254, scanned=60, started="2026-01-01T00:00:01")
         API._scans[na.id] = na
         js(window, "BV.jobs.trackScan('%s','network')" % na.id)
@@ -215,13 +215,13 @@ def probe(window):
                 break
             time.sleep(0.3)
 
-        nb = FakeNet(label="network sweep 10.9.9.0/24")
+        nb = FakeNet(label="network sweep 192.0.2.0/24")
         nb._set(status="done", total=254, scanned=254, found=2,
                 started="2026-01-01T00:00:02")
         nb._set_results([
-            {"host": "10.9.9.21", "device_type": "robot", "name": "RB901R01B01",
+            {"host": "192.0.2.21", "device_type": "robot", "name": "RB901R01B01",
              "has_md": True, "has_fr": False},
-            {"host": "10.9.9.22", "device_type": "robot", "name": "RB902R01B01",
+            {"host": "192.0.2.22", "device_type": "robot", "name": "RB902R01B01",
              "has_md": True, "has_fr": False},
         ])
         API._scans[nb.id] = nb

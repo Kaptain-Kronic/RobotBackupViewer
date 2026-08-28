@@ -163,7 +163,7 @@ def test_frame_ack_shape():
 # -- ctx echo + video routing (the regression) -------------------------------
 
 def _session():
-    return cx.CvxRemoteSession("10.0.0.9", connect=lambda ip, port: FakeSock())
+    return cx.CvxRemoteSession("192.0.2.9", connect=lambda ip, port: FakeSock())
 
 
 def test_prepare_echoes_learned_ctx_for_service_type():
@@ -411,7 +411,7 @@ def test_send_mouse_noop_when_not_alive():
 def test_start_reports_connect_failure():
     def boom(ip, port):
         raise OSError("refused")
-    s = cx.CvxRemoteSession("10.0.0.9", connect=boom)
+    s = cx.CvxRemoteSession("192.0.2.9", connect=boom)
     assert s.start() is False
     assert "connect failed" in s.error
     assert s.alive is False
