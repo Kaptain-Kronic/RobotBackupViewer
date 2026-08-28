@@ -35,7 +35,10 @@
   "⚠ viewing from BELOW the floor — the layout reads mirrored" first in
   the viewport notes; bottom views stay reachable, because under-cell
   inspection is legitimate evidence — the ambiguity was the bug, not the
-  viewpoint.
+  viewpoint. *Known issue (field-reported 2026-08-28, parked): occasional
+  missing triangles and wrong front/behind stacking after this engine —
+  ranked suspects and the one-line cull kill-switch live in ROADMAP's 3D
+  follow-ups.*
 - **Scans become background jobs — closing a window no longer cancels minutes
   of work.** The fleet health scan and the network discover used to live and
   die with their dialog: an Esc mid-scan (or, for discover, one stray click

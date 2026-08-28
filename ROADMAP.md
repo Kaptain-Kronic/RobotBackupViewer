@@ -108,6 +108,35 @@ Each of these is deliberately scoped to land on its own. Good places to start.
   usable it is here: it is ONE fused mesh at its saved pose, not per-link
   parts, so it cannot be posed by joint angles without a split — fine as a
   static body, not a substitute for per-link geometry.
+- 🐛 **Mesh-renderer regressions (field-reported 2026-08-28; PARKED, circle
+  back)** — after the 2026-08-20 perf engine (`28b960f`): occasional missing
+  triangles, and wrong in-front/behind stacking, in the camera mesh viewer.
+  Ranked suspects, most likely first, each with its fix direction:
+  1. **One global cull orientation vs multi-component meshes.** An internal
+     void or second shell is *legitimately* wound opposite the outer skin, so
+     the directed-edge pairing proof still passes while the single `cullSign`
+     (leaned off the max-x vertex) culls that component's FRONT faces —
+     missing geometry wherever a void or nested shell shows. Fix: label
+     connected components (edge adjacency), orient each independently — or
+     refuse to cull any multi-component mesh.
+  2. **Perspective-mode approximations at the silhouette.** The per-face
+     centroid ray can cull a large triangle that is still partly visible,
+     and run batching keys winding on the ortho view-dot, which can disagree
+     with true projected winding under perspective — opposite windings in
+     one nonzero-rule path cancel to holes. Fix: cull only when all three
+     corners face away; key batches on the actual projected 2D winding sign
+     (exact in both projections).
+  3. **Quantized-depth ties.** The O(n) counting sort holds order to 1/4096
+     of the depth range; near-coplanar overlaps that the old exact comparator
+     kept stable can now flip frame-to-frame across bucket boundaries
+     (stacking shimmer). Fix: more buckets, or an exact polish pass.
+  4. **Coarse drag frames** (0.6× store, hairline skipped) reading as
+     dropout/sparkle on fine meshes — a tuning knob (`COARSE_SCALE`,
+     `COARSE_TRIS`), not a defect; the settle frame is always full quality.
+  Kill-switch while parked, if it bites in the field: force `cullOn = false`
+  in meshview.js `redraw()` (one line) — forfeits the cull's half, keeps the
+  batching/sort/coarse speedups, and suspects 1 and the cull half of 2
+  vanish with it.
 - 📋 **Program points in 3D** — plot a program's Cartesian positions among
   the zones (compose their UFRAME); joint-rep points can now use the same
   forward kinematics the posed arm runs on.
