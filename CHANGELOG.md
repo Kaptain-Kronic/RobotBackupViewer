@@ -1,6 +1,6 @@
 # Changelog
 
-## unreleased — the camera gets its 3d view, the files tab extracts, the scan window tightens up, long scans go background, the 3d viewports share their instruments and find their speed, the remote views join the tab strip, and the background settings stop lying
+## v1.6 — the camera's 3d view, background scans, and remotes on the tab strip
 - **The Keyence remote stops "freezing" between clicks.** The live screen
   streams as MJPEG, and Chromium renders a multipart frame only once the
   boundary that *ends* it arrives — the server framed parts lazily, so the
