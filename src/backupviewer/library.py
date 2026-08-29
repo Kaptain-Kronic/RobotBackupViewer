@@ -1209,30 +1209,108 @@ def _verify_tree(src: Path, dst: Path, *, strict: bool = False) -> bool:
     return True
 
 
+def _copy_tree_verified(src, dst, on_file=None) -> None:
+    """Copy a folder tree: copy to a .__part sibling, verify, rename into
+    place. The source is only ever READ. A crash mid-copy can only ever leave
+    a .__part dir - never a partial tree at the destination's final name,
+    which a later look could mistake for a complete snapshot (walkers skip
+    .__part by name). `on_file(path, nbytes)` fires after each copied file
+    and may raise to abort. Any failure removes the .__part and re-raises."""
+    src, dst = Path(src), Path(dst)
+    part = dst.with_name(dst.name + ".__part")
+    if part.exists():
+        shutil.rmtree(part, ignore_errors=True)    # stale leftover from a prior crash
+
+    def _copy(s, d):
+        shutil.copy2(s, d)
+        if on_file:
+            try:
+                n = os.path.getsize(d)
+            except OSError:
+                n = 0
+            on_file(s, n)                # may raise (cancel) - propagates out
+
+    try:
+        shutil.copytree(src, part, copy_function=_copy)
+        if not _verify_tree(src, part):
+            raise OSError(f"verify failed copying {src} -> {dst}")
+        os.replace(part, dst)
+    except BaseException:
+        shutil.rmtree(part, ignore_errors=True)
+        raise
+
+
+def _zip_group_verified(members, dst, on_file=None, on_member=None) -> None:
+    """Zip one or more source folders' CONTENTS into dst (…/<name>.zip,
+    deflated): write to a .__part sibling, CRC-verify every entry, rename
+    into place - the same crash contract as _copy_tree_verified (a died zip
+    can only ever be a .__part file, never a complete-looking archive at the
+    final name). members = [(src_dir, inner_rel)]: each source's tree lands
+    under inner_rel inside the archive ("" = the archive root); a boundary
+    above the snapshot level rolls several snapshots into one archive this
+    way. Sources are only ever read. Empty dirs are stored too - the tree is
+    evidence, all of it. `on_file(path, nbytes)` fires per archived file and
+    may raise to abort; `on_member(i)` fires as each member finishes."""
+    import zipfile
+    dst = Path(dst)
+    part = dst.with_name(dst.name + ".__part")
+    if part.exists():
+        try:
+            part.unlink()                      # stale leftover from a prior crash
+        except OSError:
+            pass
+    total = 0
+    try:
+        # strict_timestamps=False: plant files carry pre-1980 mtimes often
+        # enough that a hard error would be the wrong trade - they clamp
+        with zipfile.ZipFile(part, "w", zipfile.ZIP_DEFLATED,
+                             strict_timestamps=False) as zf:
+            for i, (src, irel) in enumerate(members):
+                src = Path(src)
+                prefix = (str(irel) + "/") if irel else ""
+                for p in sorted(src.rglob("*")):
+                    if p.is_file():
+                        zf.write(p, prefix + p.relative_to(src).as_posix())
+                        total += 1
+                        if on_file:
+                            try:
+                                n = p.stat().st_size
+                            except OSError:
+                                n = 0
+                            on_file(p, n)      # may raise (cancel) - propagates
+                    elif p.is_dir():
+                        try:
+                            next(p.iterdir())
+                        except StopIteration:
+                            zf.write(p, prefix + p.relative_to(src).as_posix() + "/")
+                            total += 1
+                        except OSError:
+                            pass
+                if on_member:
+                    on_member(i)
+        with zipfile.ZipFile(part) as zf:
+            if zf.testzip() is not None or len(zf.namelist()) != total:
+                raise OSError(f"verify failed zipping into {dst}")
+        os.replace(part, dst)
+    except BaseException:
+        try:
+            part.unlink()
+        except OSError:
+            pass
+        raise
+
+
 def _move_tree(src, dst) -> None:
-    """Move a folder: atomic os.rename on the same volume, else copy to a .__part
-    staging dir, verify, rename into place, then delete the source. A crash
-    mid-copy can only ever leave a .__part dir - never a partial tree at the
-    destination's final name, which a later merge could mistake for a complete
-    snapshot. Raises OSError (source intact) if anything short of the final
-    source delete fails."""
+    """Move a folder: atomic os.rename on the same volume, else the verified
+    .__part copy (_copy_tree_verified), then delete the source. Raises OSError
+    (source intact) if anything short of the final source delete fails."""
     src, dst = Path(src), Path(dst)
     try:
         os.rename(src, dst)
         return
     except OSError:
         pass
-    part = dst.with_name(dst.name + ".__part")
-    if part.exists():
-        shutil.rmtree(part, ignore_errors=True)    # stale leftover from a prior crash
-    try:
-        shutil.copytree(src, part)
-        if not _verify_tree(src, part):
-            raise OSError(f"verify failed copying {src} -> {dst}")
-        os.replace(part, dst)
-    except OSError:
-        shutil.rmtree(part, ignore_errors=True)
-        raise
+    _copy_tree_verified(src, dst)
     shutil.rmtree(src)
 
 
@@ -1994,3 +2072,496 @@ def stage_backups(picks: list, days: int, keep: int, progress=None) -> dict:
             _reconcile(data)
             _write(data)
         return {"staged": staged, "failed": failed, "staging": staging_status(root)}
+
+
+# -- export: copy the newest N completed snapshots elsewhere --------------------
+#
+# Read-only over the library: exports COPY snapshot folders to a user-picked
+# destination (USB stick, share, folder) laid out by a user-ordered template
+# of path segments. Nothing in the library moves, changes, or is deleted, and
+# the index is never touched - which is why none of this holds _LOCK during
+# the copies.
+
+EXPORT_SEGMENTS = ("plant", "line", "robot", "date", "time")
+
+
+class ExportCancelled(Exception):
+    """Raised out of the per-file hook to abort a copy mid-tree. Deliberately
+    NOT an OSError: shutil.copytree collects OSErrors per-file and keeps
+    going, and a cancel must stop the walk immediately."""
+
+
+def _seg_value(e: dict, b: dict, seg) -> str:
+    """One path component for a segment, or "" when this entry has nothing for
+    it (the level is then skipped, same as a plant-less robot in the library
+    tree). A custom segment ({"custom": name}) is that literal name for every
+    row. date/time use the library's own folder naming (2026_08_01 /
+    10_00_00) so a full plant/line/robot/date/time export IS a valid library
+    tree a rescan can adopt."""
+    if isinstance(seg, dict):
+        return str(seg.get("custom", "") or "")
+    if seg in ("plant", "line", "robot"):
+        return str(e.get(seg, "") or "")
+    taken = str(b.get("taken", "") or "")
+    if seg == "date":
+        return taken[:10].replace("-", "_") if len(taken) >= 10 else "undated"
+    if seg == "time":
+        return taken[11:19].replace(":", "_") if len(taken) >= 19 else "undated"
+    return ""
+
+
+# characters Windows refuses in a path component, plus the names it reserves
+_CUSTOM_BAD_CHARS = set('<>:"/\\|?*')
+_WIN_RESERVED = ({"con", "prn", "aux", "nul"}
+                 | {f"com{i}" for i in range(1, 10)}
+                 | {f"lpt{i}" for i in range(1, 10)})
+
+
+def _check_segments(segments) -> list:
+    """Normalize/validate a layout: known segment names (each at most once)
+    and {"custom": <literal folder name>} entries, in caller order. Custom
+    names must be usable Windows path components; customs MAY repeat - they
+    are structure, not identity."""
+    segs: list = []
+    seen: set = set()
+    for s in (segments or []):
+        if isinstance(s, dict):
+            name = str(s.get("custom", "")).strip()
+            if not name:
+                raise ValueError("a custom folder needs a name")
+            if (any(c in _CUSTOM_BAD_CHARS or ord(c) < 32 for c in name)
+                    or name in (".", "..") or name[-1] in (".", " ")
+                    or name.lower() in _WIN_RESERVED or len(name) > 80):
+                raise ValueError(f"not a usable folder name: {name!r}")
+            segs.append({"custom": name})
+            continue
+        s = str(s)
+        if s not in EXPORT_SEGMENTS:
+            raise ValueError(f"unknown layout segment: {s}")
+        if s in seen:
+            raise ValueError("a layout segment repeats")
+        seen.add(s)
+        segs.append(s)
+    return segs
+
+
+def export_plan(robots: list, picks: list, count: int, segments: list,
+                dest: str = "", days: int = 0, sidecar: bool = False,
+                zip_at: int | None = None, now: str = "") -> dict:
+    """What an export WOULD copy and where - the single source of truth the
+    preview renders and export_backups re-runs at copy time (the UI's request
+    is a request, never an authority). Pure over the passed entries except the
+    dest existence probes (dest given -> each target is stat'ed so the
+    preview can say "already there").
+
+    Per picked robot: the newest `count` COMPLETED dated snapshots - within
+    the last `days` days when days > 0 (undated records can't prove their age
+    and drop out of a windowed export). Partials never export - a copy of a
+    died pull handed to someone reads as a fresh complete backup, the exact
+    lie this app exists to prevent. Flat imports (records whose path IS the
+    robot folder) are skipped by name: copying one would drag the whole robot
+    tree along.
+
+    rows[].rel is the destination-relative target built from `segments` in
+    order (empty values skip their level; customs are literal names). Plain
+    mode (zip_at None): the snapshot's files land DIRECTLY inside the rel
+    dir. Zipping: `zip_at` picks the folder level that BECOMES the archive -
+    -1 = the leaf (one zip per backup), otherwise an index into `segments`;
+    that level turns into `<name>.zip`, its parents stay real folders, and
+    everything below it goes inside. Rows sharing the archive (a boundary
+    above the snapshot level) are its members: rows[].arel is the archive's
+    path, rows[].irel the member's path inside it. A row with nothing at the
+    boundary (no such level, or an empty value there) is skipped, said
+    plainly.
+
+    rows[].sidecar_rel names where the robot's robot.json rides along ("" =
+    it doesn't): only when `sidecar` is asked for AND the layout keeps a
+    robot level below any plant/line as a REAL folder (customs and date/time
+    under it are fine; a zip boundary at or above the robot level swallows
+    the robot folder, so no ride-along).
+
+    collisions: in plain mode, every rel that two rows share plus any rel
+    that is a path prefix of another (the deeper copy would land INSIDE the
+    shallower one). Zipping: archives are files, so nesting can't merge and
+    the prefix rule stands down BETWEEN archives - instead, members of one
+    archive collide when their inner paths are equal or nested (they would
+    silently merge inside it). The caller refuses to export while any
+    exist."""
+    segs = _check_segments(segments)
+    count = max(1, int(count or 1))
+    days = max(0, int(days or 0))
+    cutoff = ""
+    if days:
+        if not now:
+            now = _dt.datetime.now().isoformat(timespec="seconds")
+        try:
+            cutoff = (_dt.datetime.fromisoformat(now)
+                      - _dt.timedelta(days=days)).isoformat(timespec="seconds")
+        except ValueError:
+            cutoff = ""
+    zip_on = zip_at is not None
+    if zip_on:
+        try:
+            zip_at = int(zip_at)
+        except (TypeError, ValueError):
+            raise ValueError("the zip level is not in the layout")
+        if zip_at != -1 and not (0 <= zip_at < len(segs)):
+            raise ValueError("the zip level is not in the layout")
+    by_id = {e.get("id"): e for e in robots or []}
+    rows: list = []
+    skipped: list = []
+    known = [s for s in segs if not isinstance(s, dict)]
+    # robot.json rides only when robot is the layout's deepest IDENTITY level
+    # (customs/date/time below it keep the robot folder real; plant/line below
+    # it would scatter identity) - and, zipping, only when the boundary sits
+    # strictly BELOW the robot level: a boundary at or above it swallows the
+    # robot folder, leaving nowhere for a sidecar to sit.
+    sidecar_ok = (bool(sidecar) and "robot" in known
+                  and all(s in ("date", "time")
+                          for s in known[known.index("robot") + 1:]))
+    if zip_on and sidecar_ok:
+        bsi = len(segs) - 1 if zip_at == -1 else zip_at
+        if segs.index("robot") >= bsi:
+            sidecar_ok = False
+    for rid in picks or []:
+        e = by_id.get(rid)
+        if e is None:
+            skipped.append({"robot_id": rid, "robot": "", "reason": "not in the library"})
+            continue
+        ident = {"robot_id": rid, "robot": e.get("robot", "")}
+        if e.get("hidden"):
+            skipped.append({**ident, "reason": "hidden"})
+            continue
+        dated = [b for b in (e.get("backups") or [])          # newest-first
+                 if not b.get("partial") and b.get("path") and _is_dated(Path(b["path"]))]
+        if not dated:
+            flat = any(not b.get("partial") for b in (e.get("backups") or []))
+            skipped.append({**ident, "reason":
+                            "flat import - copy its folder by hand" if flat
+                            else "no completed backups"})
+            continue
+        if cutoff:
+            eligible = [b for b in dated if (b.get("taken") or "") >= cutoff]
+            if not eligible:
+                skipped.append({**ident, "reason":
+                                f"nothing completed in the last {days} days"})
+                continue
+        else:
+            eligible = dated
+        zip_skip = ""
+        for b in eligible[:count]:
+            parts: list[str] = []
+            sidecar_rel = ""
+            bpart = -1                         # part index the boundary landed on
+            for i, s in enumerate(segs):
+                v = _seg_value(e, b, s)
+                if v:
+                    parts.append(v)
+                    if zip_on and i == zip_at:
+                        bpart = len(parts) - 1
+                if s == "robot" and sidecar_ok and v:
+                    sidecar_rel = "/".join(parts)
+            row = {
+                "robot_id": rid, "plant": e.get("plant", ""),
+                "line": e.get("line", ""), "robot": e.get("robot", ""),
+                "taken": b.get("taken", ""), "path": b.get("path", ""),
+                "bytes": b.get("bytes", 0) or 0, "files": b.get("files", 0) or 0,
+                "rel": "/".join(parts), "sidecar_rel": sidecar_rel,
+            }
+            if zip_on:
+                if zip_at == -1:
+                    bpart = len(parts) - 1     # the leaf itself is the archive
+                if bpart < 0:                  # no level, or an empty value there
+                    if zip_at == -1:
+                        zip_skip = "nothing to name the archive - add a folder level"
+                    else:
+                        s = segs[zip_at]
+                        lab = s["custom"] if isinstance(s, dict) else s
+                        zip_skip = f"nothing at the {lab} level to zip at"
+                    continue
+                row["arel"] = "/".join(parts[:bpart + 1])
+                row["irel"] = "/".join(parts[bpart + 1:])
+            rows.append(row)
+        if zip_skip:
+            skipped.append({**ident, "reason": zip_skip})
+    rows.sort(key=lambda r: (r["plant"], r["line"], r["robot"], r["rel"]))
+
+    if zip_on:
+        # members of one archive collide when their inner paths are equal or
+        # nested - they would silently merge INSIDE it. Between archives the
+        # plain-mode prefix rule stands down: a/b.zip beside the a/b/ that
+        # holds c.zip never merges.
+        by_arel: dict[str, list] = {}
+        for r in rows:
+            by_arel.setdefault(r["arel"], []).append(r)
+        collide = set()
+        for arel, members in by_arel.items():
+            irels = sorted(m["irel"] for m in members)
+            for a, b in zip(irels, irels[1:]):
+                if a == b or not a or b.startswith(a + "/"):
+                    collide.add(arel)
+                    break
+            if arel in collide:
+                for m in members:
+                    m["collides"] = True
+    else:
+        by_rel: dict[str, int] = {}
+        for r in rows:
+            by_rel[r["rel"]] = by_rel.get(r["rel"], 0) + 1
+        collide = {rel for rel, n in by_rel.items() if n > 1}
+        rels = sorted(by_rel)
+        for a, b in zip(rels, rels[1:]):
+            # one target nested inside another: the deeper copy would land
+            # INSIDE the shallower export (possible when a robot name equals
+            # a plant's)
+            if a and b.startswith(a + "/"):
+                collide.update((a, b))
+        for r in rows:
+            if r["rel"] in collide:
+                r["collides"] = True
+
+    existing = 0
+    if dest:
+        base = Path(dest)
+        for r in rows:
+            try:
+                if zip_on:
+                    r["exists"] = (base / (r["arel"] + ".zip")).is_file()
+                else:
+                    # non-empty final dir = a prior export (or anything else)
+                    # is already there; we will never write into it. rel ""
+                    # means "straight into dest", which is legitimately
+                    # non-empty - no honest exists-test exists for it, so it
+                    # is never marked.
+                    t = base / r["rel"] if r["rel"] else base
+                    r["exists"] = bool(r["rel"]) and t.is_dir() and any(t.iterdir())
+            except OSError:
+                r["exists"] = False
+            existing += 1 if r.get("exists") else 0
+
+    totals = {"count": len(rows), "bytes": sum(r["bytes"] for r in rows),
+              "unsized": sum(1 for r in rows if not r["bytes"]),
+              "existing": existing}
+    return {"rows": rows, "skipped": skipped,
+            "collisions": sorted(collide), "totals": totals,
+            "count": count, "segments": segs, "dest": dest,
+            "days": days, "sidecar": bool(sidecar), "zip": zip_on,
+            "zip_at": zip_at if zip_on else None}
+
+
+def export_backups(picks: list, count: int, segments: list, dest: str,
+                   days: int = 0, sidecar: bool = False, zip_at: int = None,
+                   progress=None, cancel=None) -> dict:
+    """Copy the planned snapshots to `dest`. The plan is re-derived HERE from
+    the current index (export_plan, same days/sidecar/zip options) - and
+    refused outright while any collision stands, because colliding copies
+    would silently merge. Sources are only ever read; targets that already
+    hold data are skipped, never overwritten.
+
+    Per snapshot: a verified .__part copy - or, zipping, a CRC-verified
+    .__part archive at the chosen boundary level (`zip_at`: -1 = one zip per
+    backup, else the segment whose folder becomes the archive; a boundary
+    above the snapshot level rolls that folder's snapshots into ONE archive)
+    - renamed into place, so a crash or cancel can only leave a .__part at
+    the destination, never a complete-looking half copy. After the
+    snapshots, when `sidecar` was asked for, each exported robot's
+    robot.json is copied beside its dated folders (best-effort - identity
+    metadata, not evidence).
+
+    `progress(done, total, bytes_done, current)` fires per snapshot and
+    periodically during large copies. `cancel()` truthy stops before the next
+    file; already-finished copies stay (they are complete and verified).
+    Raises ValueError on a refused configuration; per-snapshot trouble comes
+    back in `failed` instead."""
+    if not dest:
+        raise ValueError("no destination folder picked")
+    base = _safe_resolve(Path(dest))
+    root = _root()
+    if base == root or _within(base, root):
+        raise ValueError("the destination is inside the library - "
+                         "the scan would re-adopt every exported copy")
+    plan = export_plan(list_robots().get("robots") or [], picks, count, segments,
+                       str(base), days=days, sidecar=sidecar, zip_at=zip_at)
+    if plan["collisions"]:
+        raise ValueError("two backups would land in the same folder - "
+                         "add a date/time segment back, or export fewer")
+    rows = plan["rows"]
+    total = len(rows)
+    exported: list = []
+    failed: list = []
+    skipped: list = [{"robot_id": s["robot_id"], "robot": s.get("robot", ""),
+                      "taken": "", "reason": s["reason"]} for s in plan["skipped"]]
+    done = 0
+    copied_bytes = 0
+    cancelled = False
+
+    def _tick(current=""):
+        if progress:
+            progress(done, total, copied_bytes, current)
+
+    _tick()
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except OSError as ex:
+        raise ValueError(f"could not create the destination: {ex}")
+
+    def _guard(target):
+        if _within(_safe_resolve(target), root) or _safe_resolve(target) == root:
+            return "target lands inside the library"       # belt: per-target too
+        return ""
+
+    if zip_at is not None:
+        # one archive per distinct boundary path; its rows are the members
+        groups: dict[str, list] = {}
+        order: list[str] = []
+        for r in rows:
+            if r["arel"] not in groups:
+                order.append(r["arel"])
+            groups.setdefault(r["arel"], []).append(r)
+        for arel in order:
+            members = groups[arel]
+            if cancelled or (cancel and cancel()):
+                cancelled = True
+                break
+            if members[0].get("exists"):       # archive-level: all or none
+                for r in members:
+                    skipped.append({"robot_id": r["robot_id"], "robot": r["robot"],
+                                    "taken": r["taken"], "reason": "already there"})
+                done += len(members)
+                _tick(arel)
+                continue
+            target = base / (arel + ".zip")
+            err = ""
+            if any(not Path(r["path"]).is_dir() for r in members):
+                err = "snapshot folder missing"
+            else:
+                err = _guard(target)
+            g_done = 0
+
+            def _on_file(_p, n, _label=arel):
+                nonlocal copied_bytes
+                copied_bytes += n
+                if cancel and cancel():
+                    raise ExportCancelled()
+                _tick(_label)
+
+            def _member_done(i, _members=members):
+                nonlocal done, g_done
+                done += 1
+                g_done += 1
+                _tick((_members[i]["robot"] + " " + _members[i]["taken"]).strip())
+
+            if not err:
+                try:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    _zip_group_verified(
+                        [(Path(r["path"]), r.get("irel", "")) for r in members],
+                        target, on_file=_on_file, on_member=_member_done)
+                except ExportCancelled:
+                    cancelled = True
+                    break
+                except OSError as ex:
+                    err = str(ex)
+            if err:
+                for r in members:
+                    failed.append({"robot_id": r["robot_id"], "robot": r["robot"],
+                                   "taken": r["taken"], "error": err})
+                done += len(members) - g_done
+                _tick(arel)
+                continue
+            for r in members:
+                exported.append({"robot_id": r["robot_id"], "robot": r["robot"],
+                                 "taken": r["taken"], "rel": arel,
+                                 "bytes": r["bytes"]})
+            _tick(arel)
+    else:
+        for r in rows:
+            label = (r["robot"] + " " + r["taken"]).strip()
+            if cancelled or (cancel and cancel()):
+                cancelled = True
+                break
+            if r.get("exists"):
+                skipped.append({"robot_id": r["robot_id"], "robot": r["robot"],
+                                "taken": r["taken"], "reason": "already there"})
+                done += 1
+                _tick(label)
+                continue
+            src = Path(r["path"])
+            target = base / r["rel"] if r["rel"] else base
+            err = ""
+            if not src.is_dir():
+                err = "snapshot folder missing"
+            else:
+                err = _guard(target)
+
+            def _on_file(_p, n, _label=label):
+                nonlocal copied_bytes
+                copied_bytes += n
+                if cancel and cancel():
+                    raise ExportCancelled()
+                _tick(_label)
+
+            if not err:
+                try:
+                    if r["rel"]:
+                        _copy_tree_verified(src, target, on_file=_on_file)
+                    else:
+                        # rel "": the snapshot's files go straight into dest,
+                        # which already exists (and may hold unrelated things)
+                        # - copy the CHILDREN, each through the same verified
+                        # .__part path
+                        for c in sorted(src.iterdir()):
+                            t = base / c.name
+                            if t.exists():
+                                raise OSError(f"{c.name} already exists in the destination")
+                            if c.is_dir():
+                                _copy_tree_verified(c, t, on_file=_on_file)
+                            else:
+                                shutil.copy2(c, t)
+                                _on_file(c, t.stat().st_size)
+                except ExportCancelled:
+                    cancelled = True
+                    break
+                except OSError as ex:
+                    err = str(ex)
+            if err:
+                failed.append({"robot_id": r["robot_id"], "robot": r["robot"],
+                               "taken": r["taken"], "error": err})
+            else:
+                exported.append({"robot_id": r["robot_id"], "robot": r["robot"],
+                                 "taken": r["taken"], "rel": r["rel"],
+                                 "bytes": r["bytes"]})
+            done += 1
+            _tick(label)
+
+    # identity ride-along: one robot.json per exported robot level - the disk
+    # copy when the robot folder has one (files are law), else materialized
+    # from the entry, exactly what the library does for its own folders.
+    # Never overwriting: an earlier export's copy is just as true. Best-effort
+    # throughout - identity metadata, not evidence.
+    seen: set = set()
+    for r in rows:
+        if not r["sidecar_rel"] or r["sidecar_rel"] in seen:
+            continue
+        if not any(x["robot_id"] == r["robot_id"] and x["taken"] == r["taken"]
+                   for x in exported):
+            continue
+        seen.add(r["sidecar_rel"])
+        e = get_robot(r["robot_id"])
+        if e is None:
+            continue
+        src_dir = _robot_folder(e)
+        sc = (src_dir / SIDECAR) if src_dir else None
+        t = base / r["sidecar_rel"] / SIDECAR
+        if t.exists():
+            continue
+        if sc is not None and sc.is_file():
+            try:
+                shutil.copy2(sc, t)
+            except OSError:
+                log.warning("could not copy %s to %s (the snapshots themselves "
+                            "copied fine)", SIDECAR, t)
+        else:
+            _write_robot_sidecar(e, t.parent)      # logs for itself on failure
+    return {"exported": exported, "failed": failed, "skipped": skipped,
+            "cancelled": cancelled, "dest": str(base)}

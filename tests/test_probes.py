@@ -49,6 +49,7 @@ ROOT = Path(__file__).parents[1]
 PROBES = [
     "libraryimporter_probe.py",
     "perf_probe.py",
+    "ui_backup_export_probe.py",
     "ui_batch_probe.py",
     "ui_bgfx_probe.py",
     "ui_cleanup_probe.py",

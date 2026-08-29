@@ -1,6 +1,30 @@
 # Changelog
 
-## v1.6 — the camera's 3d view, background scans, and remotes on the tab strip
+## unreleased
+- **Export backups to a stick — the manage-backups modal grows a third tab.**
+  Pick robots and/or cameras (grouped plant → line, tri-state select-alls,
+  a robots/cameras/both filter), choose how many of each device's newest
+  *completed* backups to copy — optionally only those from the last X days —
+  and hand them to any folder outside the library. The folder layout is a
+  row of drag-to-reorder chips — plant / line / robot / date / time, each
+  omittable, plus **+** for fixed folders you name yourself (those carry ✕
+  instead of a checkbox) — defaulting to `Plant\Line\Robot\Date\(backup
+  data)`. The preview tree is computed by the same Python engine the copy
+  re-runs, so what you see is what lands; it folds like the rest of the app
+  (right-click a folder = toggle its whole subtree). A layout that would
+  drop two backups into one folder is flagged as a collision and refuses to
+  run rather than silently merging. Copies are verified `.__part` trees
+  renamed into place (a crash or cancel can never leave a complete-looking
+  half copy), sources are only ever read, targets already holding data are
+  skipped and marked "already there", and partials never export (a copy of
+  a died pull would read as a fresh complete backup). Two opt-ins: *include
+  robot.json* rides each robot's identity sidecar along, making a full
+  plant/line/robot/date/time export a rescannable library tree; *zip* turns
+  the folder at a level you pick into a CRC-verified `.zip` — "backup data"
+  makes one archive per backup, a higher level (say, robot) rolls
+  everything under that folder into one archive — while its parent folders
+  stay real. The copy runs as a background job with live progress and a
+  cancel that stops between files.
 - **The Keyence remote stops "freezing" between clicks.** The live screen
   streams as MJPEG, and Chromium renders a multipart frame only once the
   boundary that *ends* it arrives — the server framed parts lazily, so the

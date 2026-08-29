@@ -23,6 +23,16 @@ Legend: ✅ shipped · 🔨 being built · 📋 decided, not started · ❓ open
 Each of these is deliberately scoped to land on its own. Good places to start.
 
 - 📋 **Report export** — CSV per table, self-contained HTML report, print-to-PDF.
+- ✅ **Backup export** — the manage-backups modal's third tab: copy the newest
+  N completed backups of picked robots/cameras to a folder/USB stick, laid
+  out by a drag-to-reorder template (plant/line/robot/date/time, each
+  omittable, plus typed-name custom folders; default `Plant\Line\Robot\Date`).
+  Engine-planned foldable preview, collision refusal, an only-the-last-X-days
+  window, verified copies or CRC-verified `.zip` archives at a chosen folder
+  level, read-only over the library, opt-in `robot.json` identity ride-along.
+  The natural next slice if it's wanted: an "import from a stick" counterpart
+  (today the receiving side is copy-into-library + rescan, which a full-shape
+  export already satisfies).
 - ✅ **Browser-style tabs** — several backups open at once; tear a tab off
   downward (or out of the window) to float it. Shipped with the per-session
   refactor (`_sessions` dict); the compare `side` parameter is

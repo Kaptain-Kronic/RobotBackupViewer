@@ -3698,6 +3698,9 @@ class Api:
         prior = getattr(self, "_stage_job", None)
         if prior and prior.get("running"):
             raise ApiError("BUSY", "a staging move is already running")
+        xjob = getattr(self, "_export_job", None)
+        if xjob and xjob.get("running"):
+            raise ApiError("BUSY", "an export is copying - stage after it finishes")
         picks = [p for p in (picks or []) if isinstance(p, dict)]
         if not picks:
             raise ApiError("BAD_ARGS", "nothing to stage")
@@ -3775,6 +3778,127 @@ class Api:
         if inside and picked.name.lower() != "_staged":
             raise ApiError("BAD_PATH", "that folder is inside the library - "
                                        "the scan would re-adopt staged snapshots there")
+        return str(picked)
+
+    @_endpoint
+    def lib_export_plan(self, picks: list, count: int = 1, segments: list = None,
+                        dest: str = "", days: int = 0, sidecar: bool = False,
+                        zip_at: int = None):
+        """What an export of these robots would copy and where (see
+        library.export_plan - the preview renders this and never re-derives
+        it; lib_export re-runs the same plan at copy time). Cheap: index-only,
+        plus an exists-probe per target when a destination is given."""
+        if segments is None:                       # absent != "no folders at all"
+            segments = ["plant", "line", "robot", "date"]
+        try:
+            return library.export_plan(
+                library.list_robots().get("robots") or [],
+                [str(p) for p in (picks or [])], count, segments, dest or "",
+                days=days, sidecar=bool(sidecar), zip_at=zip_at)
+        except ValueError as ex:
+            raise ApiError("BAD_ARGS", str(ex))
+
+    @_endpoint
+    def lib_export(self, picks: list, count: int = 1, segments: list = None,
+                   dest: str = "", days: int = 0, sidecar: bool = False,
+                   zip_at: int = None):
+        """Start copying the newest `count` completed backups of the picked
+        robots into `dest`, laid out by `segments` (library.export_backups:
+        verified .__part copies - or CRC-verified archives at the zip_at
+        boundary level (-1 = one per backup, else a segment index whose
+        folder becomes the archive) - sources only ever read, nothing
+        overwritten; `days` windows the snapshots, `sidecar` opts
+        robot.json in).
+
+        Runs in a worker and returns a stub immediately - poll
+        lib_export_progress; lib_export_cancel stops it between files. A USB
+        destination is a real file-by-file copy that can take minutes."""
+        if self._backups_active():
+            raise ApiError("BUSY", "backups are running - export after the run finishes")
+        sjob = getattr(self, "_stage_job", None)
+        if sjob and sjob.get("running"):
+            raise ApiError("BUSY", "a staging move is running - export after it finishes")
+        prior = getattr(self, "_export_job", None)
+        if prior and prior.get("running"):
+            raise ApiError("BUSY", "an export is already running")
+        picks = [str(p) for p in (picks or [])]
+        if not picks:
+            raise ApiError("BAD_ARGS", "nothing to export")
+        if not dest:
+            raise ApiError("BAD_ARGS", "no destination folder picked")
+        if segments is None:                       # absent != "no folders at all"
+            segments = ["plant", "line", "robot", "date"]
+
+        job = {"running": True, "done": 0, "total": 0, "bytes": 0,
+               "current": "", "cancel": False, "result": None, "error": ""}
+        self._export_job = job
+
+        def _prog(done, total, nbytes, current):
+            job["done"], job["total"] = done, total
+            job["bytes"], job["current"] = nbytes, current
+
+        def _run():
+            try:
+                # read-only over the library: no tree claim, no library push
+                job["result"] = library.export_backups(
+                    picks, count, segments, dest,
+                    days=days, sidecar=bool(sidecar), zip_at=zip_at,
+                    progress=_prog, cancel=lambda: job["cancel"])
+            except Exception as ex:  # noqa: BLE001 - config refusals (ValueError) included
+                job["error"] = str(ex)
+            finally:
+                job["running"] = False
+
+        self._export_thread = threading.Thread(target=_run, name="libexport", daemon=True)
+        self._export_thread.start()
+        return {"started": True}
+
+    @_endpoint
+    def lib_export_progress(self):
+        """The current (or last finished) export job: {running, done, total,
+        bytes, current, error, result}. Reads only the job dict - it never
+        waits on the copy."""
+        job = getattr(self, "_export_job", None)
+        if not job:
+            return {"running": False, "done": 0, "total": 0, "bytes": 0,
+                    "current": "", "result": None, "error": ""}
+        return {"running": job["running"], "done": job["done"],
+                "total": job["total"], "bytes": job["bytes"],
+                "current": job["current"], "result": job["result"],
+                "error": job["error"]}
+
+    @_endpoint
+    def lib_export_cancel(self):
+        """Ask the running export to stop before its next file. Finished
+        copies stay (each is complete and verified); the in-flight one is
+        removed with its .__part - never left half-written at its final name."""
+        job = getattr(self, "_export_job", None)
+        if job and job.get("running"):
+            job["cancel"] = True
+            return {"cancelling": True}
+        return {"cancelling": False}
+
+    @_endpoint
+    def pick_export_dest(self):
+        """Folder picker for the backup-export destination. Refuses a folder
+        inside the library - the scan would re-adopt every exported copy."""
+        import webview
+
+        start = str(settings.get("export_dir", "") or "")
+        result = self._window.create_file_dialog(
+            webview.FOLDER_DIALOG, directory=start if Path(start or ".").exists() else ""
+        )
+        if not result:
+            return ""
+        picked = Path(result[0] if isinstance(result, (list, tuple)) else result)
+        try:
+            root = Path(settings.library_root()).resolve()
+            inside = picked.resolve() == root or root in picked.resolve().parents
+        except OSError:
+            inside = False
+        if inside:
+            raise ApiError("BAD_PATH", "that folder is inside the library - "
+                                       "the scan would re-adopt every exported copy")
         return str(picked)
 
     @_endpoint

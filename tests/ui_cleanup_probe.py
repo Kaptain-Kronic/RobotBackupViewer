@@ -120,9 +120,9 @@ def probe(window):
         open_manage(window)
         check("open.report_default", bool(poll(window,
               "document.querySelector('.mb-modal .mb-runpane') ? 'y' : ''")))
-        check("open.two_tabs_no_title", bool(js(window, """(function(){
+        check("open.three_tabs_no_title", bool(js(window, """(function(){
             var m=document.querySelector('.mb-modal');
-            return m.querySelectorAll('.mb-tabs .mb-tab').length===2 && !m.querySelector('h2')
+            return m.querySelectorAll('.mb-tabs .mb-tab').length===3 && !m.querySelector('h2')
                 ? 'y' : '';
         })()""")))
 

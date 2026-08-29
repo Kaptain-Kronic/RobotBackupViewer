@@ -1609,7 +1609,7 @@ def probe(window):
                 ? 'y' : '';
         })()""")
         check("fns.link_cams_in_menu", mi == "y")
-        # the "manage backups…" entry opens the two-tab modal on report; the
+        # the "manage backups…" entry opens the tabbed modal on report; the
         # old tidy-up actions bar is gone for good (those live in this menu)
         js(window, """(function(){
             var items=[].slice.call(document.querySelectorAll('.ctx-menu .ctx-item'));
@@ -1624,7 +1624,7 @@ def probe(window):
         })()""")
         mb = json.loads(mb or "{}")
         check("fns.manage_opens_tabbed_report",
-              mb.get("actbar") is False and mb.get("tabs") == 2 and mb.get("run") is True,
+              mb.get("actbar") is False and mb.get("tabs") == 3 and mb.get("run") is True,
               f"({mb})")
         js(window, "document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))")
         check("manage.modal_closes", bool(poll(window,
