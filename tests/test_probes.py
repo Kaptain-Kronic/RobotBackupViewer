@@ -4,7 +4,7 @@ The probes are the only thing that checks the app actually WORKS - real DOM in
 a real WebView2 - and until now pytest never ran any of them, because none of
 them is named test_*.py. This file is the missing wiring.
 
-Why a subprocess per probe rather than ten in-process pytest modules:
+Why a subprocess per probe rather than in-process pytest modules:
 
   * each probe pins APPDATA and BV_NO_WATCHER at import time and then imports
     backupviewer; two of them in one interpreter and the second one's sandbox
@@ -29,8 +29,8 @@ pyproject.toml, because ~2.5 minutes is long enough that a fast suite stops
 being run at all:
 
     python -m pytest tests                          # unit only, ~40s
-    python -m pytest tests -m probe                 # the ten probes, ~2.5 min
-    python -m pytest tests -m "probe or not probe"  # EVERYTHING, ~3.5 min
+    python -m pytest tests -m probe                 # the probes, ~3 min
+    python -m pytest tests -m "probe or not probe"  # EVERYTHING, ~4 min
 
 (the everything form is spelled out rather than -m "" because PowerShell drops
 an empty argument before pytest ever sees it.)
@@ -52,20 +52,28 @@ PROBES = [
     "ui_backup_export_probe.py",
     "ui_batch_probe.py",
     "ui_bgfx_probe.py",
+    "ui_camwall_probe.py",
     "ui_cleanup_probe.py",
     "ui_cvx3d_probe.py",
     "ui_cvxremote_probe.py",
     "ui_edit_probe.py",
     "ui_files_extract_probe.py",
     "ui_fk_probe.py",
+    "ui_import_probe.py",
     "ui_jobs_probe.py",
     "ui_logic_probe.py",
+    "ui_netstatus_probe.py",
     "ui_sim_export_probe.py",
     "ui_tabs_probe.py",
+    "ui_theme_palette_probe.py",
     "ui_updatecheck_probe.py",
+    "ui_view3d_probe.py",
 ]
 
-# The slowest today is ui_edit at ~57s. Generous, because this is a hang
+# Measured 2026-08-26: ui_edit ~70s, ui_camwall ~50s, the rest under 30s.
+# ui_camwall is the deliberate long one - it watches a real wall rotate over
+# several beats, and there is no way to be sure a tile is being refreshed
+# except to wait for the next fetch. Generous, because this is a hang
 # detector, not a benchmark - a plant PC is slower than a dev box.
 TIMEOUT = 300
 

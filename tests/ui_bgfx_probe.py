@@ -511,16 +511,17 @@ def probe(window):
         prefs = json.loads(got or "{}")
         check("prefs.sections",
               prefs.get("heads") == ["3d view", "library", "cv-x simulator",
-                                     "staging", "updates"],
+                                     "matrox cameras", "staging", "updates"],
               f"({prefs.get('heads')})")
         check("prefs.rows",
               prefs.get("rows") == ["invert rotate x", "invert rotate y",
                                     "library folder", "simulator folder",
+                                    "photos per backup",
                                     "staging destination",
                                     "auto-stage partial backups",
                                     "check on startup"],
               f"({prefs.get('rows')})")
-        # every one of the 14 controls has exactly one home
+        # every one of the 15 controls has exactly one home
         check("prefs.no_display_rows",
               not any(r in (prefs.get("rows") or [])
                       for r in ("theme", "font", "text size", "frost", "effect")),

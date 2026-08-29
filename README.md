@@ -28,11 +28,13 @@ A selection toolbar acts on whatever robots you check:
 The library holds **vision cameras alongside robots**, each over whatever the camera
 actually speaks, and linked cameras nest under the robot they inspect:
 
-- **Matrox (MTX)**: back up its Design Assistant `da/` folder + the newest day of saved
-  images over **SMB**, and browse it with a **photos** view — the most recent inspection
-  image (green-boxes/raw toggle), pass/fail, and the metadata parsed from the camera's own
-  sidecar. **🖥 remote** embeds the camera's web UI in-app with tabs for the portal home
-  and its auto-discovered Design Assistant operator page(s).
+- **Matrox (MTX)**: back up its Design Assistant `da/` folder + its **last 25 inspection
+  photos** (a setting) over **SMB**, and browse them with a **photos** view — the image
+  (green-boxes/raw toggle), pass/fail, and the metadata parsed from the camera's own
+  sidecar. Back one up again and the new photos are added to the snapshot they match
+  rather than stacking a second near-identical folder, so a camera's photo history grows
+  in one place. **🖥 remote** embeds the camera's web UI in-app with tabs for the portal
+  home and its auto-discovered Design Assistant operator page(s).
 - **Keyence (CV-X)**: back up its `cv-x/setting/` config tree over **anonymous FTP**, and
   **remote into its live screen** — a fullscreen-capable mirror of the controller's 1024×768
   display with mouse control, speaking the CV-X's own remote-desktop protocol (no Keyence
@@ -104,7 +106,7 @@ One panel for backup hygiene and library tidy-up:
 | **3d view** (`0` key) | DCS cartesian zones drawn to scale — free orbit + viewport cube (26 snap directions), ortho/persp, pan/zoom, per-zone show/hide, pendant detail inline | `DCSPOS.VA`, `DCSVRFY.DG` |
 | **mh valves** | material-handling gripper / valve configuration (and magnet EOATs) | `MHGRIPDT.VA`, `MAG*.PC` |
 | **system vars** | the full `SYSTEM.VA` tree; KAREL `.PC` program variables | `SYSTEM.VA`, `*.VA`/`*.VR` |
-| **photos** *(camera)* | the most recent Matrox inspection image + pass/fail, recipe, exposure, camera identity and per-tool results, over a pass/fail-filterable thumbnail grid | `SavedImages/*.jpg` `.png` `.txt` |
+| **photos** *(camera)* | the camera's recent inspection images + pass/fail, recipe, exposure, camera identity and per-tool results, over a pass/fail-filterable thumbnail grid | `SavedImages/*.jpg` `.png` `.txt` |
 | **files** | raw browser for every file; text viewer + hex preview for binaries | everything |
 | **compare** | two backups side by side, per-category, with program diffs | — |
 
@@ -177,7 +179,7 @@ src/backupviewer/
   ftpbackup.py    the FTP backup engine (MD: "all of above", gentle/throttled)
   healthscan.py   the fleet health-scan engine (check registry + worker job)
   backuplog.py    the durable backup-run log (survives the post-backup refresh)
-  mtxbackup.py    the Matrox camera SMB backup (da/ + newest SavedImages, per-camera)
+  mtxbackup.py    the Matrox camera SMB backup (da/ + the last N photos, per-camera)
   keyencebackup.py the Keyence CV-X camera FTP backup (cv-x/setting, per-camera)
   cvx_remote.py   the Keyence CV-X live remote desktop (screen mirror + mouse, MJPEG bridge)
   cvx_handshake/  captured CV-X remote-desktop handshake blobs, replayed at connect time

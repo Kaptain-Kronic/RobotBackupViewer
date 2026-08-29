@@ -413,6 +413,51 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .modal .contrast-hint .warn { color: var(--warn); }
 .modal .contrast-hint .note { opacity: 0.7; }
 
+/* the same color, typed: a pasteable code beside each picker */
+.modal .editor-row .editor-hex {
+  appearance: none; font: inherit; font-size: 0.78rem; text-align: center;
+  width: 5.4rem; flex: none; margin-left: auto;
+  background: var(--bg2); color: var(--text);
+  border: 1px solid var(--edge); border-radius: 6px; padding: 0.2rem 0.3rem;
+}
+.modal .editor-row .editor-hex:focus { outline: none; border-color: var(--accent); }
+.modal .editor-row .editor-hex.bad { border-color: var(--error); color: var(--error); }
+
+/* the row a palette swatch will paint (the last one touched) */
+.modal .editor-row.pal-target { box-shadow: inset 2px 0 0 var(--accent); }
+
+/* saved-palette strip: swatches wrap, ＋ stays last */
+.modal .pal-strip {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end;
+  gap: 0.35rem; margin-left: auto; min-width: 0;
+}
+.modal .pal-swatch {
+  position: relative; width: 1.35rem; height: 1.35rem; flex: none; padding: 0;
+  cursor: pointer; border: 1px solid var(--edge); border-radius: 4px;
+}
+.modal .pal-swatch .pal-x {
+  position: absolute; top: -0.45rem; right: -0.45rem;
+  width: 0.9rem; height: 0.9rem; line-height: 0.85rem; font-size: 0.7rem;
+  background: var(--bg2); color: var(--error);
+  border: 1px solid var(--edge); border-radius: 50%;
+  /* invisible must mean unclickable too — the × overhangs the swatch corner
+     and the strip gaps, so a hit-testable ghost would eat apply clicks as
+     silent, persisted deletes */
+  opacity: 0; pointer-events: none; transition: opacity var(--trans);
+}
+.modal .pal-swatch:hover .pal-x, .modal .pal-swatch:focus-visible .pal-x {
+  opacity: 1; pointer-events: auto;
+}
+.modal .pal-add {
+  width: 1.35rem; height: 1.35rem; flex: none; padding: 0; cursor: pointer;
+  font: inherit; font-size: 0.85rem; line-height: 1;
+  background: var(--bg2); color: var(--sub);
+  border: 1px dashed var(--edge); border-radius: 4px;
+  transition: border-color var(--trans), color var(--trans);
+}
+.modal .pal-add:hover { border-color: var(--accent); color: var(--accent); }
+.modal .pal-hint { font-size: 0.68rem; color: var(--sub); }
+
 /* unsaved-draft restore offer at the top of the theme editor */
 .modal .draft-bar {
   display: flex; align-items: center; gap: 0.5rem;
@@ -1482,6 +1527,13 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .home-lib-selacts { display: flex; align-items: center; gap: 0.35rem; }
 .lib-sel-count { font-size: 0.78rem; text-align: right; }
 .home-lib-actions { display: flex; align-items: center; gap: 0.4rem; flex: none; }
+/* the CV-X switch sits at the far right of the same bar as "+ add robot" —
+   margin-left:auto rather than a spacer element, so a wrapped toolbar still
+   pushes it to the end of whatever row it lands on */
+.lib-cvx-live { margin-left: auto; flex: none; }
+.lib-cvx-live[aria-pressed="true"] { color: var(--ok); }
+/* off is a STATE, not a disabled button: it still reads as clickable */
+.lib-cvx-live.is-off { color: var(--sub); }
 .lib-cancel-all { color: var(--error); }
 .lib-cancel-all:hover { color: var(--error); background: color-mix(in srgb, var(--error) 14%, var(--bg2)); }
 .empty-lib { color: var(--sub); font-size: 0.9rem; padding: 0.8rem 0.2rem; }
@@ -1517,6 +1569,10 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .cam-tile .cam-live + .cam-tile-note { display: none; }
 .cam-tile.cam-off .cam-live { visibility: hidden; position: absolute; inset: 0; }
 .cam-tile.cam-off .cam-live + .cam-tile-note { display: block; }
+/* ...and the same for a tile that has not had its first picture YET. A tile
+   the tick has not reached is not a broken camera, but a blank black box
+   cannot say so - which is precisely how a starved tile used to read. */
+.cam-tile.cam-wait .cam-live + .cam-tile-note { display: block; }
 .cam-tile-main { padding: 0.45rem 0.6rem 0.55rem; }
 
 /* plant/line combo: input + a "▾" picker of existing values */
@@ -1835,6 +1891,9 @@ button.btn.danger:disabled { opacity: 0.5; cursor: default; }
 .ctx-item .ctx-act:hover { color: var(--accent); border-color: var(--accent); }
 .ctx-item:hover { background: color-mix(in srgb, var(--accent) 14%, var(--bg2)); color: var(--accent); }
 .ctx-item.danger:hover { background: color-mix(in srgb, var(--error) 14%, var(--bg2)); color: var(--error); }
+/* divider between two groups of actions in one menu (a backup tab lists the
+   robot's actions above its own) — the same hairline the menu is framed in */
+.ctx-sep { height: 0; margin: 0.25rem 0.35rem; border-top: 1px solid var(--edge); }
 
 /* fleet health scan modal (scan_ui.js) */
 .hs-info { font-size: 0.82rem; color: var(--sub); }
@@ -2184,6 +2243,22 @@ button.btn.danger:disabled { opacity: 0.5; cursor: default; }
   .disc-left { flex: none; }
 }
 
+/* import backup folder: the drop zone + scan leftovers. Colors derive from
+   the theme variables (drag state tints with the accent, never a hardcode). */
+.imp-drop {
+  border: 2px dashed var(--sub-alt); border-radius: var(--radius);
+  padding: 1.2rem 0.8rem; text-align: center; color: var(--sub);
+  display: flex; flex-direction: column; gap: 0.2rem;
+}
+.imp-drop.drag {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text);
+}
+.imp-drop-big { font-size: 0.95rem; font-weight: 600; }
+.imp-extras { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.78rem; }
+.imp-extras:empty { display: none; }
+
 /* discover: adapter picker + advanced toggle */
 .disc-adapter { width: 100%; text-align: left; justify-content: flex-start; }
 .disc-adapter::after { content: "▾"; margin-left: auto; opacity: 0.6; }
@@ -2368,6 +2443,126 @@ text.v3-ax-z { fill: var(--accent); }
 .v3-row-body { padding: 0.15rem 0.6rem 0.5rem; border-top: 1px solid var(--edge-soft); }
 .v3-swatch { width: 11px; height: 11px; border-radius: 3px; flex: none; }
 
+/* ---- a program's path in the viewport (tabs/view3d.js) ----
+   The scene groups carry no visual properties of their own - they exist so a
+   per-frame redraw can rewrite one layer and leave the painter sort alone. */
+.v3-path {
+  fill: none; stroke: var(--accent); stroke-width: 2.2;
+  stroke-linejoin: round; stroke-linecap: round;
+  vector-effect: non-scaling-stroke; opacity: 0.85;
+}
+/* taught points ride the pixel overlay like the tcp crosshair, so they stay
+   the same size (and the same click target) at every zoom */
+.v3-pt { fill: var(--bg); stroke: var(--accent); stroke-width: 1.6; cursor: pointer; pointer-events: auto; }
+.v3-pt:hover { fill: var(--accent); }
+.v3-pt.sel { fill: var(--accent); stroke: var(--text); stroke-width: 1.8; }
+.v3-pt-lab { fill: var(--accent); pointer-events: none; }
+
+/* ---- the program section of the side panel ---- */
+.v3-prog-head { display: flex; align-items: baseline; gap: 0.4rem; padding: 0 0 0.35rem; min-width: 0; }
+.v3-prog-name { font-size: 0.86rem; }
+.v3-prog-cmt { font-size: 0.74rem; color: var(--sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.v3-prog-notes {
+  font-size: 0.72rem; color: var(--sub); line-height: 1.45;
+  border-left: 2px solid var(--warn); padding: 0.1rem 0 0.1rem 0.5rem;
+  margin: 0 0 0.4rem; overflow-wrap: break-word;
+}
+.v3-prog-notes div + div { margin-top: 0.2rem; }
+.v3-steps {
+  max-height: 40vh; overflow-y: auto; border: 1px solid var(--edge);
+  border-radius: var(--radius); background: var(--panel); margin-bottom: 0.4rem;
+}
+.v3-step {
+  display: flex; align-items: center; gap: 0.4rem; cursor: pointer;
+  padding: 0.2rem 0.45rem; font-size: 0.76rem; min-width: 0;
+}
+.v3-step + .v3-step { border-top: 1px solid var(--edge-soft); }
+.v3-step:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.v3-step.sel { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+/* placed, but the arm cannot reach it - the point still draws */
+.v3-step.unreached .v3-step-t { color: var(--warn); }
+.v3-step-n { flex: none; min-width: 2.5ch; text-align: right; color: var(--sub-alt); font-family: var(--font-mono); }
+.v3-step-t { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
+.v3-step-tags { display: flex; gap: 0.2rem; flex: none; align-items: center; }
+/* the frame and tool a move was taught in. Mono so the numbers line up down
+   the list, and never truncated - it is short and it is the thing you scan
+   for when a program changes tool part-way. */
+.v3-step-ft {
+  flex: none; font-family: var(--font-mono); font-size: 0.68rem;
+  color: var(--sub-alt); white-space: nowrap;
+}
+.v3-step.sel .v3-step-ft { color: var(--sub); }
+/* a move the tool filter is skipping: still listed, visibly not in the run */
+.v3-step.offtool { opacity: 0.45; }
+.v3-step.offtool .v3-step-t { text-decoration: line-through; }
+
+/* ---- the one-tool-at-a-time filter ---- */
+.v3-tools {
+  display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+  padding: 0.1rem 0 0.4rem;
+}
+.v3-tools-lab { font-size: 0.72rem; color: var(--sub); flex: none; }
+.v3-tool {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  font-family: var(--font-mono); font-size: 0.74rem; cursor: pointer;
+}
+.v3-tool input { width: 14px; height: 14px; accent-color: var(--accent); }
+.v3-tool-n { color: var(--sub-alt); font-size: 0.68rem; }
+.v3-prog-detail { margin-bottom: 0.4rem; }
+
+/* ---- the program picker, in the side panel ----
+   The list is a BLOCK, not a flex column. As a flex column every row inherits
+   flex-shrink:1, so a library of six hundred programs inside a max-height box
+   crushed all six hundred rows into slivers of overlapping text. */
+.v3-pick { display: block; margin-bottom: 0.4rem; }
+.v3-pick input[type="search"] {
+  width: 100%; padding: 0.25rem 0.4rem; font-size: 0.82rem; margin-bottom: 0.3rem;
+}
+.v3-pick-list {
+  display: block; max-height: 40vh; overflow-y: auto;
+  border: 1px solid var(--edge); border-radius: var(--radius); background: var(--panel);
+}
+.v3-pick-item {
+  display: flex; align-items: baseline; gap: 0.4rem; width: 100%;
+  text-align: left; background: none; border: 0; color: inherit;
+  padding: 0.22rem 0.45rem; font-size: 0.78rem; cursor: pointer;
+  min-height: 1.5em;              /* a row is never shorter than its own text */
+  flex: none;
+}
+.v3-pick-item + .v3-pick-item { border-top: 1px solid var(--edge-soft); }
+.v3-pick-item:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.v3-pick-name { flex: none; font-family: var(--font-mono); }
+.v3-pick-cmt {
+  flex: 1 1 auto; min-width: 0; color: var(--sub); font-size: 0.72rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* the taught-point count: why this program is in the list at all */
+.v3-pick-n { flex: none; margin-left: auto; color: var(--sub-alt); font-size: 0.7rem; }
+.v3-pick-note { font-size: 0.72rem; line-height: 1.45; padding: 0.25rem 0.1rem; }
+/* the programs tab's jump-into-3d button, in the positions card header */
+.v3-jump { margin-left: auto; padding: 0.05rem 0.5rem; font-size: 0.72rem; }
+
+/* ---- the player bar ----
+   A real element inside .v3-vp (which is position:relative), NOT markup in
+   the overlay: the overlay is pointer-events:none by design, and a scrubber
+   you cannot grab is not a scrubber. */
+.v3-player {
+  position: absolute; left: 0.6rem; right: 0.6rem; bottom: 0.5rem;
+  display: flex; align-items: center; gap: 0.45rem;
+  padding: 0.3rem 0.5rem; border-radius: var(--radius);
+  background: var(--panel); border: 1px solid var(--edge);
+  backdrop-filter: blur(var(--glass-blur));
+}
+.v3-player[hidden] { display: none; }
+.v3-pb { flex: none; min-width: 2.2rem; padding: 0.1rem 0.4rem; }
+.v3-scrub { flex: 1 1 auto; min-width: 0; accent-color: var(--accent); }
+.v3-clock {
+  flex: none; font-family: var(--font-mono); font-size: 0.74rem;
+  color: var(--sub); min-width: 9ch; text-align: right;
+}
+/* the tool centre while it moves - the drawn path is this point's track */
+.v3-tcp-live { fill: var(--accent); stroke: var(--bg); stroke-width: 1.5; }
+
 /* ---- the ⚙ settings dialog (settings_ui.js) ---- */
 .modal.settings-win { width: min(43rem, 94vw); }
 .settings-win .set-tabs {
@@ -2414,3 +2609,81 @@ text.v3-ax-z { fill: var(--accent); }
 .bv-drop-body { overflow: auto; padding: 0.35rem 0.4rem 0.5rem; }
 .theme-pick-search { padding: 0.15rem 0.3rem 0.4rem; }
 .theme-pick-search .search-box { max-width: none; }
+
+/* ---- plant link panel (netstatus.js) ---- */
+/* Mounted INSIDE #chrome-bottom (which is position:relative) rather than
+   floated, and pinned by its BOTTOM edge to the top of that slab. That single
+   choice is what makes it reliable: the panel grows upward as the device list
+   fills and as the folds open, so nothing has to measure it, and there is no
+   placement to go stale. Floating it did measure it — while it was still empty
+   — and put 92% of the panel below the bottom of the window.
+   Height is capped against the viewport, not in rem, so it uses the room a tall
+   window actually has while never becoming a full-screen takeover. */
+.bv-drop.net-drop {
+  position: absolute; inset: auto 1.65rem 100% auto;
+  width: min(34rem, 94vw);
+  max-height: min(72vh, calc(100vh - 7rem));
+  margin-bottom: 0.45rem;
+  /* above #toast and .card.expanded (60), below .cvx-remote (80) and the
+     modal root (90); it never opens from a dialog so it needs no more */
+  z-index: 70;
+}
+/* the list scrolls inside .bv-drop-body, which is what keeps wireDismiss's
+   scroll-to-close from firing on our own scrolling */
+.net-head { padding: 0.25rem 0.35rem 0.5rem; border-bottom: 1px solid var(--edge-soft); }
+.net-head-top { display: flex; align-items: baseline; gap: 0.5rem; }
+.net-head-state { font-weight: 600; color: var(--text); }
+.net-head-where { color: var(--sub); margin-left: auto; font-size: 0.86em; }
+.net-head-detail { color: var(--sub); font-size: 0.86em; margin-top: 0.25rem;
+  overflow-wrap: break-word; }
+/* the full link facts, two columns of label/value. break-word (not
+   word-break) so a long adapter name wraps at spaces instead of per glyph */
+.net-facts { margin-top: 0.45rem; display: grid;
+  grid-template-columns: minmax(min(5rem, 100%), auto) 1fr;
+  gap: 0.1rem 0.6rem; font-size: 0.82em; }
+.net-fact { display: contents; }
+.net-fact-k { color: var(--sub-alt); }
+.net-fact-v { color: var(--sub); overflow-wrap: break-word; }
+.net-sub { display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.35rem 0.35rem 0.2rem; color: var(--sub); font-size: 0.82em; }
+.net-sub .btn { margin-left: auto; padding: 0.1em 0.6em; font-size: 0.95em; }
+.net-sec { margin-top: 0.5rem; }
+.net-sec-head { display: flex; align-items: center; gap: 0.4rem;
+  color: var(--sub-alt); font-size: 0.78em; letter-spacing: 0.04em;
+  padding: 0.25rem 0.35rem; }
+.net-sec-note { color: var(--sub-alt); font-size: 0.78em; padding: 0 0.35rem 0.3rem; }
+.net-row { display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.16rem 0.35rem; border-radius: calc(var(--radius) / 2); }
+.net-row:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.net-name { flex: 1 1 auto; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.net-ip { flex: none; color: var(--sub); font-variant-numeric: tabular-nums; }
+.net-row .pill { flex: none; }
+
+/* the dot vocabulary. `absent` is a HOLLOW ring, never red: a device the laptop
+   simply hasn't spoken to since the cable went in has no neighbour entry while
+   running perfectly. Painting that as a fault would make the panel lie. */
+.net-dot { flex: none; width: 0.55rem; height: 0.55rem; border-radius: 50%;
+  background: var(--sub-alt); }
+.net-dot.live { background: var(--ok); }
+.net-dot.known { background: color-mix(in srgb, var(--ok) 45%, transparent); }
+.net-dot.gone { background: var(--error); }
+.net-dot.absent { background: transparent; box-shadow: inset 0 0 0 1px var(--sub-alt); }
+.net-dot.unknown { background: transparent; box-shadow: inset 0 0 0 1px var(--sub); }
+/* one 600ms pulse when a device's neighbour entry just went reachable - i.e.
+   frames really were exchanged. Nothing else in this panel ever animates. */
+.net-dot.hit { animation: netdothit 0.6s ease-out 1; }
+@keyframes netdothit {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 70%, transparent); }
+  100% { box-shadow: 0 0 0 0.4rem transparent; }
+}
+.net-foot { margin-top: 0.5rem; padding: 0.4rem 0.35rem 0.1rem;
+  border-top: 1px solid var(--edge-soft); color: var(--sub-alt); font-size: 0.78em; }
+.net-pick { padding: 0.1rem 0.35rem 0.3rem; }
+.net-pick-row { display: flex; align-items: center; gap: 0.5rem; width: 100%;
+  padding: 0.2rem 0.35rem; border-radius: calc(var(--radius) / 2);
+  background: none; border: 0; color: inherit; font: inherit; cursor: pointer;
+  text-align: left; }
+.net-pick-row:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.net-pick-row.on { color: var(--accent); }
+.net-pick-why { margin-left: auto; color: var(--sub-alt); font-size: 0.85em; }

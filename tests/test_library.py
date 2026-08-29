@@ -72,6 +72,29 @@ def test_register_backup_matches_then_creates(monkeypatch, tmp_path):
     assert len(library.list_robots()["robots"]) == 2
 
 
+def test_register_backup_replaces_the_row_for_a_topped_up_snapshot(monkeypatch, tmp_path):
+    """A camera re-run that added photos to an existing snapshot rather than
+    stacking a new folder (mtxbackup._settle) re-registers that same path: one
+    folder must stay one row, or its files would be counted twice forever, and
+    "last backup" is the top-up - the camera WAS visited today."""
+    _iso(monkeypatch, tmp_path)
+    snap = str(tmp_path / "b1")
+    library.register_backup(
+        {"robot": "RB172R01", "line": "RBB01", "device_type": "camera-mtx"},
+        {"path": snap, "taken": "2026-06-16T10:00:00", "files": 5, "bytes": 500},
+    )
+    library.register_backup(
+        {"robot": "RB172R01", "line": "RBB01", "device_type": "camera-mtx"},
+        {"path": snap, "taken": "2026-06-16T10:00:00", "updated": "2026-06-20T08:30:00",
+         "files": 8, "bytes": 900},
+    )
+    e = library.list_robots()["robots"][0]
+    assert len(e["backups"]) == 1
+    assert e["backups"][0]["files"] == 8 and e["backups"][0]["bytes"] == 900
+    assert e["backups"][0]["taken"] == "2026-06-16T10:00:00"   # the snapshot's own moment
+    assert e["last_backup"] == "2026-06-20T08:30:00"           # when it last gained files
+
+
 def test_bulk_add_dedupes(monkeypatch, tmp_path):
     _iso(monkeypatch, tmp_path)
     library.add_robot({"robot": "R1", "line": "L1"})  # already present

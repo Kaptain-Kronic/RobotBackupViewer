@@ -420,7 +420,10 @@ def test_start_reports_connect_failure():
 # -- MJPEG frame server ------------------------------------------------------
 
 class _FakeStreamSession:
-    """Duck-types what _MjpegHandler reads: alive / frames / latest_frame()."""
+    """Duck-types what _MjpegHandler reads: alive / frames / latest_frame() /
+    wait_frame(). The handler waits on the session rather than polling, so the
+    fake has to answer that too - a stub without it makes the handler raise
+    inside its own thread and the test sees only a stalled socket."""
     def __init__(self, jpg):
         self.alive = True
         self.frames = 0
@@ -428,6 +431,16 @@ class _FakeStreamSession:
 
     def latest_frame(self):
         return self._jpg
+
+    def wait_frame(self, last, timeout):
+        """No producer here, so this is the real thing's timeout path: sleep
+        the window out and report whether the counter moved (a test that bumps
+        `frames` still gets noticed on the next pass)."""
+        import time as _t
+        if self.frames != last:
+            return True
+        _t.sleep(timeout)
+        return self.frames != last
 
 
 def _read_stream(conn, pred, secs):

@@ -129,7 +129,8 @@
       case "Escape": {
         /* back out of detail routes */
         var parts = location.hash.slice(1).split("/");
-        if (parts.length > 1 && (parts[0] === "programs" || parts[0] === "files")) {
+        if (parts.length > 1 && (parts[0] === "programs" || parts[0] === "files" ||
+                                 parts[0] === "view3d")) {
           location.hash = "#" + parts[0];
         }
         break;

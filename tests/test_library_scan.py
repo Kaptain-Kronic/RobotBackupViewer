@@ -116,6 +116,29 @@ def test_scan_attaches_camera_snapshot(monkeypatch, tmp_path):
     assert e["latest_path"].endswith(os.path.join("2026_07_14", "17_20_24"))
 
 
+def test_scan_reads_a_topped_up_snapshot_as_freshly_visited(monkeypatch, tmp_path):
+    """A Matrox snapshot that a later run added photos to carries `updated`
+    alongside its original `taken` (mtxbackup._settle). A rescan must read the
+    top-up as the last backup - otherwise the camera reappears on the stale list
+    the moment the library is rebuilt, minutes after it was actually pulled."""
+    _iso(monkeypatch, tmp_path)
+    root = tmp_path / "lib"
+    snap = root / "FakePlant" / "RBB01" / "RB172R01" / "2026_07_07" / "14_00_00"
+    (snap / "CAM1" / "da").mkdir(parents=True)
+    (snap / "CAM1" / "da" / "cam.dcf").write_text("dcf", encoding="utf-8")
+    (snap / "backup.json").write_text(json.dumps({
+        "robot": "RB172R01", "line": "RBB01", "plant": "FakePlant",
+        "taken": "2026-07-07T14:00:00", "updated": "2026-08-26T06:15:00", "topups": 4,
+        "type": "matrox da + recent images", "device_type": "camera-mtx",
+        "files": 19, "bytes": 900, "source": "smb", "complete": True,
+    }), encoding="utf-8")
+
+    e = library.scan_library_root(root)["robots"][0]
+    assert e["backups"][0]["taken"] == "2026-07-07T14:00:00"    # when it was pulled
+    assert e["backups"][0]["updated"] == "2026-08-26T06:15:00"
+    assert e["last_backup"] == "2026-08-26T06:15:00"            # when it last gained files
+
+
 def test_rescan_preserves_config_but_identity_follows_disk(monkeypatch, tmp_path):
     """Files are law: the folder's location/name IS the identity, so a rescan
     reverts a registry-only rename (real renames go through relocate_robot,

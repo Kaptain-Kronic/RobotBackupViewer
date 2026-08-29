@@ -486,8 +486,14 @@ def register_backup(match: dict, backup: dict, *, latest_path: str = "") -> dict
                 if ip and ip not in ips:
                     ips.append(ip)
             e["ips"] = ips
+        # One row per folder: a run that topped an existing snapshot up (rather
+        # than stacking a near-twin beside it) REPLACES that snapshot's row -
+        # two rows for one path would double-count the same files forever.
+        path = backup.get("path", "")
+        if path:
+            e["backups"] = [b for b in e.get("backups", []) if b.get("path") != path]
         e["backups"].insert(0, backup)
-        e["last_backup"] = backup.get("taken", e.get("last_backup", ""))
+        e["last_backup"] = _when(backup) or e.get("last_backup", "")
         if latest_path:
             e["latest_path"] = latest_path
         _reconcile(data)
@@ -629,6 +635,10 @@ def _backup_record(snap: Path, meta: dict) -> dict:
         "source": meta.get("source", "") or ("ftp" if meta else "import"),
         "note": note,
     }
+    # a snapshot a later run added photos to rather than stacking a near-twin
+    # beside it (mtxbackup._settle) - `taken` still means when it was pulled
+    if meta.get("updated"):
+        rec["updated"] = meta["updated"]
     # complete:false = OUR OWN pull that died mid-download (the backup engine
     # writes the marker first and only flips it true as its last step). Only an
     # explicit false marks a partial - a legacy sidecar without the field was
@@ -637,6 +647,15 @@ def _backup_record(snap: Path, meta: dict) -> dict:
     if meta.get("complete") is False:
         rec["partial"] = True
     return rec
+
+
+def _when(b: dict | None) -> str:
+    """When a snapshot last GAINED files: its top-up time if it has one, else
+    when it was taken. "Last backup" means the freshest evidence, and a camera
+    snapshot that today's run added photos to is fresher than its own take time
+    (mtxbackup._settle) - reading `taken` alone would report a camera visited an
+    hour ago as weeks stale."""
+    return (b.get("updated") or b.get("taken", "")) if b else ""
 
 
 def _pick_latest(backups: list) -> dict | None:
@@ -722,7 +741,7 @@ def _finalize_group(g: dict) -> dict:
     out["backups"] = snaps
     newest = _pick_latest(snaps)
     out["latest_path"] = newest["path"] if newest else ""
-    out["last_backup"] = newest["taken"] if newest else ""
+    out["last_backup"] = _when(newest)
     return out
 
 
@@ -748,7 +767,7 @@ def _favorite_preview(e: dict) -> dict | None:
     }
     newest = _pick_latest(snaps)
     g["latest_path"] = newest["path"] if newest else ""
-    g["last_backup"] = newest.get("taken", "") if newest else ""
+    g["last_backup"] = _when(newest)
     return g
 
 
@@ -982,7 +1001,7 @@ def _union_disk(e: dict, disk: dict) -> int:
     newest = _pick_latest(e["backups"])
     if newest:
         e["latest_path"] = newest["path"]
-        e["last_backup"] = newest.get("taken", e.get("last_backup", ""))
+        e["last_backup"] = _when(newest) or e.get("last_backup", "")
     for a in disk.get("aliases", []) or []:
         _add_alias(e, a.get("plant", ""), a.get("line", ""), a.get("robot", ""))
     return added
@@ -1388,7 +1407,7 @@ def _rebuild_backups(e: dict, robot_dir, root) -> None:
     e["backups"] = out
     newest = _pick_latest(out)
     e["latest_path"] = newest["path"] if newest else ""
-    e["last_backup"] = newest.get("taken", "") if newest else \
+    e["last_backup"] = _when(newest) if newest else \
         ("" if out else e.get("last_backup", ""))
 
 

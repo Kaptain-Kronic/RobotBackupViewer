@@ -5,6 +5,8 @@ GUI - the session class and pywebview's create_window are both faked.
 The rules these pin, all of them about the controller's ONE remote slot:
 reload hangs up before it redials and keeps the same session id; popping out
 does NOT dial again; and closing the window (or the app) stops the session."""
+import time
+
 import pytest
 
 from backupviewer import api as api_mod
@@ -34,6 +36,11 @@ class FakeSession:
     def stop(self):
         self.stopped = True
         self.alive = False
+
+    def wait_frame(self, last, timeout):
+        # insurance: if an MJPEG handler ever streams this fake, idle politely
+        time.sleep(min(timeout, 0.05))
+        return False
 
 
 class _Event:

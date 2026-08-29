@@ -25,6 +25,10 @@
   "use strict";
 
   var CHROME_BASE_PX = 15;
+  /* how many inspection photos a Matrox pull carries back. Mirrors
+     mtxbackup.MAX_PHOTOS - the python side owns the real default; this is what
+     the slider starts at when the setting has never been written. */
+  var MTX_PHOTOS = 25, MTX_PHOTOS_MAX = 100;
   /* shop-floor friendly defaults - old eyes and young eyes both read this */
   var DEFAULT_FONT = 15;
   var DEFAULT_CHROME = 1.0;
@@ -446,6 +450,16 @@
           BV.simExport(function () { BV.uiPrefs.modal("preferences"); });
         });
 
+        /* ---- how much of a Matrox camera a backup carries back ----
+           A photo is a triple (jpg + png + txt), so this counts INSPECTIONS,
+           not files. The pull walks SavedImages newest-first until it has this
+           many; the newest day comes whole and older photos drop the lossless
+           png, which is why 25 costs single-digit MB rather than sixty. */
+        section(into, "matrox cameras");
+        sliderRow(into, "photos per backup", 1, MTX_PHOTOS_MAX, 1,
+          (s.mtx_photos > 0 ? s.mtx_photos : MTX_PHOTOS),
+          function (v) { return v + (v === 1 ? " photo" : " photos"); },
+          function (v) { persist("mtx_photos", v); });
         /* ---- staging: where "move to staging" parks snapshots ----
            (below the cv-x rows: the sim row sits directly under the library
            row by probe-pinned design). library = <root>/_staged (one-folder

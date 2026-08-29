@@ -79,6 +79,33 @@ def probe(window):
               shown.get("btns") == ["copy", "change…", "load cameras…"],
               f"({shown.get('btns')})")
 
+        # ---- matrox cameras: photos per backup ----
+        # how much of a camera a pull carries back is a setting now, so the row
+        # has to exist, read out in PHOTOS (a photo is a triple, not a file),
+        # and actually reach settings.json - the backup job reads it from there.
+        check("settings.has_photo_row", "photos per backup" in rows, f"({rows})")
+        shot = js(window, """(function(){
+          var r = [...document.querySelectorAll('#modal-root .set-row')].find(function(x){
+            return (x.querySelector('.name')||{}).textContent === 'photos per backup'; });
+          if (!r) return null;
+          var i = r.querySelector('input[type=range]');
+          var was = (r.querySelector('.range-val')||{}).textContent || '';
+          i.value = '7';
+          i.dispatchEvent(new Event('input', {bubbles:true}));
+          return {was: was, now: (r.querySelector('.range-val')||{}).textContent || '',
+                  max: Number(i.max), state: BV.state.settings.mtx_photos};
+        })()""") or {}
+        check("settings.photo_row_default", shot.get("was") == "25 photos", f"({shot})")
+        check("settings.photo_row_live",
+              shot.get("now") == "7 photos" and shot.get("state") == 7, f"({shot})")
+        check("settings.photo_row_range", shot.get("max") == 100, f"({shot})")
+        for _ in range(16):                 # the write is debounced per key, 400 ms
+            if bv_settings.load().get("mtx_photos") == 7:
+                break
+            time.sleep(0.25)
+        check("settings.photo_row_persists", bv_settings.load().get("mtx_photos") == 7,
+              f"({bv_settings.load().get('mtx_photos')!r})")
+
         # the copy button is the whole point of the row - it must reach the
         # clipboard helper, not throw (WebView2 has no async clipboard by default)
         copied = js(window, """(function(){

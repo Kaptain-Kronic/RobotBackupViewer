@@ -1,6 +1,6 @@
 # Changelog
 
-## unreleased
+## unreleased — backups drag in and export out, the statusbar finds the switch, a program plays in 3d, the camera wall lights up all the way down, and a matrox pull brings home its photo history
 - **Export backups to a stick — the manage-backups modal grows a third tab.**
   Pick robots and/or cameras (grouped plant → line, tri-state select-alls,
   a robots/cameras/both filter), choose how many of each device's newest
@@ -25,6 +25,403 @@
   everything under that folder into one archive — while its parent folders
   stay real. The copy runs as a background job with live progress and a
   cancel that stops between files.
+- **The star check samples five pairs, and `star_off` finally gets a budget.**
+  Two sessions fixed `perf_probe`'s favourite-star flake at the same time and
+  their fixes disagreed, so this is what survived the merge. One session went
+  at the symptom: the check was a single sample of a 2400-row rebuild against
+  a 500 ms line — four consecutive runs gave 532, 466, 397 and 463 ms, and
+  only the first failed, straight after `ui_camwall_probe` and its sixteen
+  local HTTP servers — so it took the best of five pairs and moved the budget
+  to 700. The other session had already gone at the cause: the surgical star
+  repaint, which stopped the toggle rebuilding the tree at all.
+  On the merged tree the cause fix wins the number. A toggle costs 33.9–67.0
+  ms now (`star_off` 32.7–69.2) across four runs of five pairs, so the 700
+  would have been ten times the real cost — wide enough for a full rebuild to
+  slide back onto the click path unnoticed, which is the entire cliff this
+  guards. **The budget stays 150.**
+  The sampling is kept regardless, because it is nearly free and the noise
+  here is one-sided — a scheduler slice or a GC pause only ever *adds* time —
+  so the fastest of a few is the honest floor, and a real regression lifts the
+  floor along with everything else. What it buys now is drift resolution
+  rather than flake protection: the flake itself is gone at the source, and
+  the run taken deliberately straight after `ui_camwall_probe` came back
+  40.9 / 37.0 ms, in line with the three idle ones.
+  `star_off`, measured all along and asserted never, gets the same 150 rather
+  than staying a number nobody checks. And the pair now asserts that it is its
+  own undo — same robot every time, same row count afterwards — because the
+  favourites strip renders its own copy of the row, which shifts every index
+  below it, and the samples are only comparable if that puts itself back.
+- **Every move shows the frame and tool it was taught in, and a program can be
+  played one tool at a time.** A move's utool is what decides where its TCP
+  physically is, so a program that changes tool part-way — most of a drop on
+  one tool, a couple of points on another — is really two paths in two
+  different frames, and playing it straight through makes the arm lurch
+  between them.
+  So each row in the step list now carries its `uf`/`ut`, and a program that
+  uses more than one tool gets a checkbox per tool above the list. Unchecked
+  tools leave the drawn path, the point markers, the run and the framing;
+  their moves stay in the list, struck through, because they are still
+  evidence about the program. A program that only uses one tool gets no
+  checkboxes at all, and the last tool cannot be unchecked — an empty run is
+  not a filter.
+  The honest part: skipping a move means the next one is joined **directly**,
+  which is not a path the robot ever takes. Its interior waypoints were solved
+  along a straight line from the point now being skipped, so keeping them
+  would bow the arm through space the run no longer visits; they are dropped,
+  and the panel says plainly that the joins are not real path.
+- **The program picker moved into the panel, and stopped listing programs it
+  cannot draw.** It was a dropdown under the toolbar button, which on a real
+  controller meant six hundred lines of crushed, clipped text covering the very
+  viewport you were picking a program to look at. It is a section in the side
+  panel now, at the bottom, with room to breathe: one row per program, its
+  comment beside it, and its taught-point count on the right.
+  It offers only listings that carry taught positions, because a program with
+  no `/POS` section has nothing to draw — on a real controller that turned out
+  to be 58 of 400. Nothing is hidden for good: "show all" lists the rest, the same way
+  "show disabled" reaches the empty zone slots, and a line underneath says how
+  many are being held back and why.
+  The toolbar's `program` button went with the dropdown. The picker is in the
+  panel; a second door into the same list is one door too many.
+  Counting the points is deliberately cheap — anchored at `/POS`, ids only,
+  about 19 ms across 660 programs against the 10 ms the existing header pass
+  already spends on the same text. It counts taught points, not references, so
+  a `P[1]` sitting in a motion line is read as the reference it is; counting
+  those would call every program positional and the filter would be a lie.
+- **Press play, and the robot runs the program.** The 3d view gained a player
+  bar: play, pause, back to the start, a scrubber, and a quarter/one/four-times
+  speed. The arm walks the taught path through the DCS zones, and clicking any
+  move in the list jumps it there.
+  Between two taught points it interpolates in joint space, which is exactly
+  what a FANUC joint move does — all axes starting and stopping together — so
+  a J move is not an approximation of anything. A linear or circular move is
+  walked in substeps along the drawn line, so the arm follows the path instead
+  of bowing off it.
+  Timing is the programmed speed wherever the listing proves it: a feedrate
+  over a computed distance, or a time-specified move. A percentage move is a
+  percentage of an axis speed no backup file anywhere records, so that one is
+  an assumption and is labelled one. There is no acceleration, no
+  deceleration, and no CNT blending, and the viewport says so the whole time
+  it is running: this is a path preview, not a cycle time.
+  It works with no `requestAnimationFrame` at all — the same fallback a plant
+  PC on the software-rendering rescue path may need — and the playhead runs
+  off the wall clock in both paths, so a throttled window advances by real
+  time rather than stalling.
+- **The arm goes where the program says.** Pick a step in the 3d view and the
+  robot poses at that point. A joint-recorded point uses its own taught angles
+  — exact, no solver involved, and labelled `exact` to say so. A cartesian
+  point is solved for, by a damped-least-squares inverse over the same chain
+  the forward pose has always used, and the answer is only accepted when
+  running it back forward reproduces the taught point inside half a
+  millimetre. When it doesn't, the point still draws and its row goes amber
+  with the residual the solver actually reached — "not reached", which is a
+  different finding from "not placed" and is kept a different one.
+  One thing the app cannot check and therefore says out loud: a robot can
+  reach the same point with its elbow up or down, and both are correct to
+  within nothing. The taught CONFIG string records which one the robot used,
+  but nothing in this app has ever proven what its letters mean, so it is
+  carried verbatim and not read. The solver instead starts from the previous
+  step, which keeps the posture continuous the way real motion is — and the
+  viewport says plainly that a solved posture may differ from the one the
+  robot used. Anything that would make that claim stronger needs a pendant.
+- **A program's path, drawn where it actually is.** The 3d view gained a
+  program picker in its toolbar (and a "view in 3d" button on the programs
+  tab's positions card): pick a program and its taught points draw among the
+  DCS zones, in the same millimetres, with the line between them. The side
+  panel lists every move — line number, the instruction verbatim, and what we
+  could make of it — and the selected one opens its evidence: the raw CONFIG
+  string, the taught numbers, the uf/ut as written, the world position we
+  computed, the distance and how long the move takes.
+  A cartesian point is a pose *in its user frame, measured to the tool*, so
+  neither number means anything alone; the composition is the inverse of the
+  one the flange measurement already proves against a controller's own report,
+  reused rather than re-derived. A joint-recorded point needs no frames at all
+  — forward kinematics places it exactly, through the same chain the arm poses
+  on, and it is labelled `exact` to say so.
+  Nothing is placed that cannot be proven, and nothing that cannot be placed
+  is dropped. A move whose position the program never recorded, an anonymous
+  `P[...]`, an indirect `P[R[4]]`, a masked value, an uninitialized position
+  register or one a running program overwrites, a missing or uninitialized
+  frame, `uf: F` resolved to whatever was current, a point taught for a
+  different motion group — each stays in the list, dimmed, saying which of
+  those it is. The viewport prints how many.
+  The contradiction gate extends to it: a backup whose kinematics disagree
+  with its own position report already refuses to draw the arm, and now
+  refuses to place joint-recorded points too — while its cartesian path still
+  draws, because that composition never touched the kinematics.
+- **The 3d view has a test at last.** Its own subsystem doc called the
+  unprobed viewport "the uncomfortable part" — the forward-kinematics probe
+  pinned the *math* while nothing pinned the pixels. `ui_view3d_probe.py` now
+  boots the tab hidden on two fabricated backups and asserts on real DOM: the
+  zones draw, the arm poses, the scene layers stay in paint order, the view
+  cube snaps and refits, elevation stops exactly at the pole, per-tab state
+  survives leaving and coming back, and the whole program-path surface behaves
+  — including the contradiction case, end to end.
+- **A program's moves are read as structure, not text.** A new parser
+  (`parsers/ls_motion.py`) turns the `/MN` instruction stream into moves: type
+  (J/L/C/A), destination, speed with its unit, termination (FINE, CNT, or a
+  register-driven CNT whose value a listing cannot know), and the option
+  tokens. Nothing shows this on screen yet — it is the groundwork for drawing a
+  program's path in the 3D view.
+  Two rules it exists to get right. The destination is the reference
+  **immediately after the motion letter**, never "the first `P[..]` in the
+  line": options carry references of their own (`Offset,PR[7]`, `Skip,LBL[3]`,
+  `TIME BEFORE 0.5sec,DO[1]=ON`), and reading one of those as the destination
+  would put the arm somewhere the robot never went. And bracket contents nest,
+  so `P[R[4]]` is scanned by bracket depth rather than by a character class
+  that would quietly truncate it. A circular move collapses into one move: the
+  numbered line names the via point, its continuation row names the end point.
+  Durations say how well they are known. A linear feedrate over a computed
+  distance, and a time-specified move (`3sec`), are **derived**. A percentage
+  move is **assumed** — no `.VA`, `.DG` or listing in a FANUC backup records
+  per-model maximum joint rates, so the number rests on an assumption and says
+  so. A register-driven speed is **unknown** and yields no number at all.
+  Alongside it, the `/MN` scan itself moved into the parser that owns the
+  format (`ls_program.mn_stream`) — numbered lines plus the continuation rows
+  of circular moves, remark state inherited. The health scan now reads that
+  instead of its own copy; it was the third place needing the same scan.
+- **Every robot's actions ride its backup tab.** Right-clicking an open
+  backup's tab offered exactly two things — pop out and close — so acting on
+  the robot you were already looking at meant going back to the library first:
+  the listing is off the screen while a backup is open, and with it went every
+  way to edit that robot, note it, open its folder, or send its programs to the
+  editor. A tab's right-click now carries the robot's own menu above a divider,
+  with pop out and close still beneath it. It is not a copy of the library
+  row's menu, it IS that menu — one builder serves the row, the row's ⋯ and the
+  tab, so an action added to one appears on all three (the probe asserts the
+  two match rather than a frozen list, which is the part that keeps it true).
+  A backup with no library entry behind it still gets the plain two-item menu
+  rather than actions that would do nothing. Adding a note from a tab uses the
+  row's own inline editor when the listing is on screen — scrolled to first, so
+  the cursor never lands somewhere you can't see — and the edit window's notes
+  box when it isn't.
+- **"Add all programs to edit workspace" takes the whole selection.** Ticking
+  four robots and clicking it on one of them added one robot's programs and
+  quietly ignored the other three ticks. It now acts on every selected robot,
+  and the label says which — "add all programs from 4 selected robots to edit
+  workspace" — so the menu can never act on rows you had forgotten were lit;
+  right-clicking a row that is NOT ticked still means that row alone, and a
+  tab's menu, which has no selection behind it, always means its one robot.
+  One robot that can't be read no longer sinks the batch: everything readable
+  is added and the rest are named in the toast, the way the other batch flows
+  report. A backup that simply holds no TP programs now says so, instead of
+  claiming they were "already in the workspace".
+- **The camera wall stops going dark past the twelfth tile.** On a wall of
+  fifteen cameras the first nine showed pictures and the last six were black
+  rectangles with no message on them at all — while every one of those cameras
+  was up and serving a picture, several of them *newer* than the ones the wall
+  was showing. Nothing was wrong with the cameras or the network. The wall
+  starts at most six new pictures every two seconds, which is a deliberate
+  kindness to the plant network, but it handed those six out by starting at the
+  top of the list every single time. A picture takes about a second and a tile
+  wants a fresh one every two, so the same twelve tiles at the top used up the
+  whole allowance forever and the thirteenth onward was **never asked for a
+  picture at all** — with 56 cameras in the library, 44 of them could never
+  appear. Never being asked is also why they had nothing to say: a tile only
+  knows it is in trouble when a request fails, and no request was ever made,
+  so it sat there blank, which looks exactly like a dead camera. The allowance
+  now goes **round the wall** instead of restarting at the top: a tile that has
+  never shown a picture jumps the queue (so a row you have just scrolled to
+  fills in on the next beat), and the ordinary refresh picks up where the last
+  one left off, so every tile gets its turn. A bigger wall now means each tile
+  refreshes a little less often — never that some of them never refresh at all.
+  Two smaller things came with it: the wall no longer spends its allowance on
+  tiles up to two screens away that nobody is looking at, and a tile still
+  waiting for its first picture now says **"waiting for its first frame…"**
+  instead of showing an empty black box. This was hidden by a test that used
+  nine cameras (fewer than the twelve that worked), drove the tiles by hand
+  instead of letting the wall's own timer do it, and only ever tested Keyence
+  cameras — which are the one kind this never affected, because a Keyence tile
+  only spends the allowance once, when it first connects. Matrox tiles pay
+  every time, and Matrox is where the wall went dark. The test now uses
+  twenty-four cameras of both makes, lets the real timer drive, and refuses to
+  run at all if fewer than thirteen tiles are on screen.
+- **A "CV-X live" switch on the library toolbar.** On the right-hand end of the
+  same bar as "+ add robot", while you are on the camera wall: one click takes
+  every Keyence camera off the wall, and another puts them back. It is not just
+  a filter — mirroring a CV-X takes that controller's *single* remote slot for
+  as long as its tile is on screen, so a wall left open on a Keyence line is a
+  terminal nobody at the HMI can use. Switching them off hangs up every one of
+  those sessions immediately rather than waiting out the eight-second lease, so
+  the slots go back at once. Matrox tiles are unaffected and keep running. The
+  setting is remembered, and if switching them off empties the wall it says so
+  ("… CV-X cameras are switched off") instead of reading as an empty library.
+- **The camera wall sorts by camera type.** The sort button gains a fourth
+  option while you are on the wall — name, IP, last backup, and now **camera
+  type** — which groups the Keyence tiles together and the Matrox tiles
+  together inside each line instead of interleaving them. Worth having because
+  the two vendors are genuinely different animals: they mirror through
+  different paths and they fail in different ways, so working through one of
+  them means working through one of them. Picking the same option twice
+  reverses it, like every other sort. It is offered only on the wall, where it
+  means something, and reads as plain "name" back in the backup lens. Fixed
+  alongside: the sort button never updated its own label — it looked in the
+  wrong place for itself, so it kept showing whatever it started as no matter
+  how many times you changed the sort.
+- **A camera that is up no longer gets called dead.** Three Matrox tiles read
+  "no image — not answering" about cameras that answer in a thirtieth of a
+  second. The frame a tile polls, `SavedImages/HMIImage.jpg`, is not something
+  a Design Assistant camera serves on its own — a step inside the camera's
+  project writes it, and a project built without that step has nothing at that
+  address, ever. A dark tile now asks once (and at most once a minute) which
+  kind of dark it is: a camera that replies at all, even to say "no such file",
+  is up, so its tile reads **"no HMI image published"**; only a camera that
+  does not reply at all still reads "not answering". Nothing the viewer can do
+  will produce a picture for those cameras — that needs a change to the
+  camera's own project — but a tech reading the wall is now pointed at the
+  project instead of at a power cable.
+- **The camera wall lights up all the way down.** On a real line every CV-X
+  tile read "no image — not answering" while clicking that same camera opened
+  it instantly. The tiles were not wrong about anything they could see: each
+  one held its mirror open as a never-ending stream, all of them from the one
+  local bridge address, and a browser only allows six connections to an
+  address at a time — so from the seventh camera on the picture was never
+  refused, just never sent, and a tile that stayed dark once was never asked
+  again. A tile now asks for a single still frame on the same two-second beat
+  the Matrox tiles already used: the connection is handed straight back, the
+  wall scales to as many cameras as a line has, and a tile that misses a
+  picture simply tries again on the next beat instead of staying dark until
+  the app restarts. Live mirroring is unchanged where it belongs — the
+  full-screen remote and its pop-out window still stream. Tiles also learned a
+  third thing to say: a controller that is connected but has not sent a
+  picture yet now reads "connected — no picture yet" rather than claiming the
+  camera is not answering, and a tile that once reported a held slot no longer
+  keeps saying so after the slot comes free. Nine cameras on one wall is now a
+  test (every other camera test used one, which is exactly why this reached
+  the plant floor).
+- **The theme editor takes color codes, and keeps a palette.** Every color
+  row grew a hex field beside its picker — paste `#0d3b3e` and it applies
+  the moment the code is whole (a letter O reads as zero, because codes
+  hand-copied from chat and screenshots carry them), half-typed codes never
+  flash a wrong color, and junk marks the field instead of painting. Next to
+  the colors sits a saved palette: ＋ keeps the highlighted row's color,
+  clicking a swatch paints the highlighted row, × forgets one. The palette
+  is yours rather than any theme's — it lives in settings and follows you
+  across every theme you build. A draft restore now also repaints all nine
+  pickers (the four main ones used to keep their stale colors), and a quick
+  save no longer resurrects its own draft — the debounced draft write used
+  to fire after save had cleared it, so the next open grew a ghost
+  "unsaved edits" bar for a theme that saved fine.
+- **Existing backups drag-and-drop into the library.** `+ add robot` grew a
+  third entry — *import backup folder…* — for the coworker question "how do I
+  add a backup I already have?" without teaching anyone the folder
+  convention. Drop a folder (or browse to it): one robot's backup or a whole
+  slice of robots, dated trees, bare flat folders, even a stray `Latest/`
+  mirror — the scan groups it per robot (mirrors dedup against their dated
+  twins), reads device types off the same markers the library trusts, and
+  shows it all pre-ticked with sizes and honest leftovers (junk says "no
+  backups found inside", a folder already under the root says so, a capped
+  walk says it was capped). Pick plant &amp; line (the discover flow's own
+  step, now shared) and the copy runs in the background: file-for-file
+  through the MAX_PATH-safe path with modified times kept, staged to
+  `.__part` and verified before landing, *never* touching the source. A
+  snapshot that already exists lands as a skipped duplicate when it verifies
+  identical, a reported conflict when it doesn't — never an overwrite. No
+  fabricated sidecars: a bare folder's dated home comes from its own
+  `backup.json` when it has one, and a folder-mtime stand-in is labeled
+  "date from folder timestamp" right in the list. The landed tree is adopted
+  by the normal rescan, exactly as if Explorer had copied it in — the import
+  is that same supported path, with the plant/line question asked for you.
+  (A drop while the import window is closed gets a pointer to the flow —
+  never a silent ignore, never a surprise import.)
+- **CV-X cameras join the camera wall.** The cam lens used to tile Matrox
+  only; Keyence controllers now tile beside them, each tile mirroring the
+  controller's live screen through the same remote-desktop bridge the overlay
+  uses — strictly view-only: no input path is ever wired to a tile, and the
+  mouse endpoint refuses a tile session outright. Tiles dial staggered under
+  the grid's existing per-beat cap, back off honestly when a camera is off or
+  another terminal holds its one remote slot (and say which of those it is),
+  and hold that slot only while actually being watched: sessions are leases
+  the grid renews each tick, and a reaper hangs up anything unwatched for
+  ~8 seconds — lens flipped, window hidden, tile scrolled away, an overlay or
+  modal up — so the slot frees itself for Keyence Terminal on another PC.
+  Clicking a tile opens the full remote by adopting the tile's live session;
+  the controller is never asked for its slot twice.
+- **The CV-X remote paints its final frame.** When the controller's screen
+  settled, the browser held the last frame of the burst un-painted until the
+  mouse moved — Chromium's multipart parser releases frame N only when frame
+  N+1's boundary arrives, and the CV-X pushes frames on change only, so the
+  stream simply went silent at exactly the wrong moment. The bridge now
+  re-sends the settled frame once after a 150 ms idle (the duplicate becomes
+  the held part, so what is on screen is always current), stops nagling the
+  loopback socket, and paces the writer on a per-frame condition instead of a
+  40 ms poll. Applies everywhere the mirror renders: the overlay, the pop-out
+  window, and the phone view behind it. The MJPEG writer also gains its first
+  tests — a real session handshakes against a loopback fake controller and a
+  raw HTTP client reads the stream a browser would.
+- **The statusbar says whether you are actually on the plant switch.** When a
+  backup fails on the floor, the first question is whether it is you, the
+  network, or the device, and until now the app had no opinion at all. A pill
+  now sits between the status line and the version reading one of five things —
+  `no plant adapter`, `no link`, `no ip`, `no gateway`, `connected` — each
+  naming the next thing to check rather than just going red. It is read
+  entirely from this laptop: adapter link state, address, gateway and the
+  neighbour (ARP) table, straight out of `iphlpapi` through ctypes
+  (`netlink.py`). **The switch is never contacted** — no SSH, no SNMP, no
+  credentials anywhere in it. Two measurements shaped the design: the whole
+  read costs 12 ms (the PowerShell cmdlets that answer the same questions cost
+  3.8 s, which is why the discover dialog's adapter list was never poll-able),
+  and on a healthy plant segment 13 of 15 neighbours sit in ARP state `stale` —
+  so `stale` renders as *known and quiet*, never as a fault, or the panel would
+  cry wolf on a perfectly good network.
+- **Clicking it lists what is on that switch.** The OS's neighbour table merged
+  with the library: known devices by name, and anything answering that is *not*
+  in the library flagged rather than hidden — an unexpected device on a robot
+  subnet is exactly what you want to see. A device the laptop simply has not
+  spoken to since the cable went in shows a hollow ring and says so; it is
+  never painted as down. Devices on other subnets are honestly out of scope,
+  because they are reached through the gateway and cannot be seen from here.
+  A dot pulses only when that device's entry genuinely just refreshed, so a
+  blink always means real traffic. Which adapter counts as the plant link is
+  decided by where your own library devices live (on the dev machine: 83 on the
+  dongle, 0 on wi-fi, 0 on the tunnel) and the panel shows that reasoning and
+  lets you pin a different one — wi-fi is never promoted on a hunch, because
+  calling a phone hotspot "connected" would answer a question nobody asked.
+- **"check now" is one ARP request per listed address.** Layer 2 only, touching
+  no service on the device — strictly gentler than opening a camera's FTP or
+  SMB port — and it refreshes the very table the panel already reads, so there
+  is no second set of answers to disagree with the first.
+- **A Matrox backup now brings home the last 25 photos, not the last one.**
+  The pull used to take the newest `SavedImages/<date>/` folder, which on a
+  real shop-floor camera is usually a single inspection — a 367-file backup
+  whose photos tab had exactly one photo in it. It now walks the date folders
+  newest-first until it has 25 photos (a slider in ⚙ → preferences → matrox
+  cameras, 1–100), so a camera arrives with a run of recent inspections to
+  scroll back through. Photos, not files: a photo is the camera's jpg + png +
+  txt triple. Only the newest day's come whole — an older photo brings its jpg
+  and its sidecar and leaves the png behind, because the two images are the
+  same 1920×1200 frame and the png is ten times the size (measured on a real
+  pull: 2.29 MB against 213 KB). A photo the camera saved as a png only still
+  comes, as its png: a photo listed but not showable is the dishonest kind of
+  small.
+- **Backing a camera up again adds to the snapshot instead of cloning it.**
+  Two pulls of one camera minutes apart used to leave two ~400-file folders
+  differing by a single photo (there are two such pairs in the field library
+  right now). A re-run whose `da/` tree matches the camera's newest complete
+  snapshot file-for-file now folds its new photos into that snapshot and
+  removes the folder it just pulled into, so a camera's photo history
+  accumulates in one place. The snapshot keeps its own `taken` and records the
+  visit as `updated` + `topups`; the library reads "last backup" from the
+  top-up, so a camera pulled this morning never reads as weeks stale, and the
+  camera's overview carries a **photos added** stamp beside the take time (in
+  the hero chips and in every dated-backup row) so a top-up run never looks
+  like it did nothing. This is
+  the one place the app writes inside a backup folder and it stays one — it
+  only ADDS files the camera itself produced, never rewrites or deletes one,
+  never touches a partial snapshot, and runs only after the pull has already
+  landed as a complete snapshot of its own, so a death mid-fold leaves two
+  honest folders and never a hole. A real `da/` change still earns its own
+  dated snapshot, exactly as before.
+- **Two old bugs fell out of building it.** The `Latest/` mirror copied with
+  plain paths, so a deep Matrox tree tripped Windows' 260-char limit and the
+  mirror silently stopped tracking while every dated snapshot looked perfect —
+  it now uses the same `\\?\` prefix the downloads have used since v0.99h. And
+  the camera writes hours before 10:00 with no leading zero
+  (`…-2026_07_07-9.14.30.020`), so sorting those filenames as text called a 9am
+  shot the newest of the day: that decided the photos grid's order and which
+  sidecar a camera was named from, and now the timestamp parts are padded
+  before they are compared.
+
+## v1.6 — the camera's 3d view, background scans, and remotes on the tab strip
 - **The Keyence remote stops "freezing" between clicks.** The live screen
   streams as MJPEG, and Chromium renders a multipart frame only once the
   boundary that *ends* it arrives — the server framed parts lazily, so the

@@ -293,12 +293,29 @@
       el.addEventListener("auxclick", function (e) {
         if (e.button === 1) BV.session.close(t.sid);
       });
+      /* right-click = everything you can do with this backup: the ROBOT's own
+         actions (whatever the library row offers it — home.js owns them, this
+         strip only asks) above the two that belong to the tab itself. A robot
+         is reachable from wherever it is open, so sending one to the edit
+         workspace no longer means routing back to the listing first.
+
+         The items arrive through a promise (the listing may not be loaded
+         yet); it is already settled in the normal case, so the menu still
+         opens under the cursor. A backup with no library entry behind it —
+         and a window that can't reach the listing at all — keeps the plain
+         two-item menu rather than showing actions that would do nothing. */
       el.addEventListener("contextmenu", function (e) {
         e.preventDefault();
-        BV.menu({ x: e.clientX, y: e.clientY }, [
+        var at = { x: e.clientX, y: e.clientY };
+        var own = [
           { label: "pop out", onClick: function () { BV.session.popOut(t.sid); } },
           { label: "close", onClick: function () { BV.session.close(t.sid); } },
-        ]);
+        ];
+        var ask = (BV.libActions && BV.libActions.robotMenu)
+          ? BV.libActions.robotMenu(t.robotId) : Promise.resolve([]);
+        ask.then(function (items) {
+          BV.menu(at, items.length ? items.concat([{ sep: true }], own) : own);
+        });
       });
       _dr.wire(el);
       bar.appendChild(el);

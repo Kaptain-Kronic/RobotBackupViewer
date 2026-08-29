@@ -7,6 +7,7 @@ Every public method returns an envelope and never raises across the bridge:
 from __future__ import annotations
 
 import base64
+import concurrent.futures as futures
 import fnmatch
 import functools
 import hashlib
@@ -33,9 +34,11 @@ from . import ftpbackup
 from . import healthscan
 from . import keyence_workspace
 from . import keyencebackup
+from . import libimport
 from . import library
 from . import modeldb
 from . import mtxbackup
+from . import netlink
 from . import phoneview
 from . import qr
 from . import screengrab
@@ -43,9 +46,10 @@ from . import search as search_mod
 from . import settings
 from .parsers import (alarms, callgraph, curpos, cvx_image, cvx_inspect,
                       cvx_models, cvx_program, dcs, dcszones, frames, gmwizlog, io_dg,
-                      kinematics, ls_edit, ls_program, macros, magnet,
-                      mastering, mhvalves, mtx_portal, mtx_saved_image,
-                      payloads, registers, styles, summary_dg, sysvars)
+                      kinematics, ls_edit, ls_motion, ls_program, macros,
+                      magnet, mastering, mhvalves, mtx_portal, mtx_saved_image,
+                      payloads, program_path, registers, styles, summary_dg,
+                      sysvars)
 from .parsers.common import is_binary, read_text
 from .session import BackupSession, looks_like_backup
 
@@ -187,23 +191,17 @@ def _endpoint(fn):
     return wrapper
 
 
-def _tree_size(root) -> tuple:
-    r"""(file count, total bytes) under `root`, walked through the \\?\ prefix so a
-    deep camera tree is measured rather than silently reported as empty (the same
-    MAX_PATH trap that once emptied the photos index). Best effort: an unreadable
-    file is skipped, never raised - this only feeds a size label."""
-    files = total = 0
-    try:
-        for dirpath, _dirs, names in os.walk(ftpbackup.long_path(root)):
-            for n in names:
-                try:
-                    total += os.path.getsize(os.path.join(dirpath, n))
-                    files += 1
-                except OSError:
-                    continue
-    except OSError:
-        pass
-    return files, total
+# promoted into libimport (the import scan sizes drafts with the same walk);
+# the local name stays so every size-label call site reads unchanged
+_tree_size = libimport.tree_size
+
+
+# How long a cam-lens tile session survives without the grid renewing its
+# lease (cvx_tile_sync) before the reaper hangs it up. Four beats of the
+# grid's 2 s tick: generous enough that a slow pass never kills a watched
+# tile, short enough that an unwatched wall frees every controller's single
+# remote slot in seconds.
+CVX_TILE_TTL = 8.0
 
 
 def _require_ip(spec: dict) -> str:
@@ -219,23 +217,31 @@ def _require_ip(spec: dict) -> str:
     return ip
 
 
-def _probe_http(url: str, timeout: float = 4.0):
+def _probe_http(url: str, timeout: float = 4.0, read: int = 262144):
     """GET url; returns (status, headers, final_url, body_text). An HTTP error
     response (401/404/...) is still a live server and is returned, not raised;
-    only socket-level failures propagate (as OSError). Injectable for tests."""
+    only socket-level failures propagate (as OSError). Injectable for tests.
+
+    `read=0` asks for the status and headers only - for probing a URL whose
+    body is a picture, where decoding 256 kB of JPEG as utf-8 would be pure
+    waste. Headers come back lower-cased so callers never guess at casing."""
     import urllib.error
     import urllib.request
     req = urllib.request.Request(url, headers={"User-Agent": "BackupViewer"})
+
+    def _h(headers):
+        return {str(k).lower(): v for k, v in dict(headers or {}).items()}
+
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            body = r.read(262144).decode("utf-8", "replace")
-            return r.status, dict(r.headers), r.geturl(), body
+            body = r.read(read).decode("utf-8", "replace") if read else ""
+            return r.status, _h(r.headers), r.geturl(), body
     except urllib.error.HTTPError as e:
         try:
-            body = e.read(262144).decode("utf-8", "replace")
+            body = e.read(read).decode("utf-8", "replace") if read else ""
         except Exception:  # noqa: BLE001
             body = ""
-        return e.code, dict(e.headers or {}), url, body
+        return e.code, _h(e.headers), url, body
 
 
 # -- merge-identity evidence ------------------------------------------------------
@@ -293,6 +299,17 @@ def _watch_step(last: str | None, pending: bool, sig: str) -> tuple[str, bool, b
 # chains. "" is the FANUC robot default row; job rows get the common
 # (host, root, plant, line, robot, note, run_id, on_complete) plus their job_kw.
 
+def _mtx_photo_count() -> int:
+    """How many photos a Matrox pull carries back - the `mtx_photos` setting, or
+    the module default when it is unset or junk. Never 0: a stray value in
+    settings.json must not quietly turn a camera backup into a photo-less one."""
+    try:
+        n = int(settings.get("mtx_photos", mtxbackup.MAX_PHOTOS))
+    except (TypeError, ValueError):
+        return mtxbackup.MAX_PHOTOS
+    return n if n > 0 else mtxbackup.MAX_PHOTOS
+
+
 _DEVICE_REGISTRY = {
     "camera-mtx": {   # SMB - no port/passive; blank creds -> burned-in camera login
         "probe": lambda host, spec: mtxbackup.probe_camera(
@@ -306,6 +323,7 @@ _DEVICE_REGISTRY = {
             "cameras": spec.get("cameras"),
             "user": spec.get("user") or mtxbackup.MTX_USER,
             "passwd": spec.get("passwd") or mtxbackup.MTX_PASS,
+            "max_photos": _mtx_photo_count(),
         },
     },
     "camera-keyence": {   # anonymous FTP
@@ -359,6 +377,13 @@ class Api:
         self._sessions_lock = threading.Lock()  # registry mutations only
         self._jobs: dict[str, ftpbackup.BackupJob] = {}  # active/finished backup jobs
         self._scans: dict[str, discover._ScanJob] = {}  # folder + network scan jobs
+        self._link = discover.LinkWatch()  # the plant-link pill's state machine
+        self._link_ips: tuple[int, ...] = ()  # library addresses, packed + cached
+        self._link_by_ip: dict[str, dict] = {}  # ip -> the library entry claiming it
+        self._link_lib_at = 0.0
+        self._link_last_adapter: dict | None = None  # bounds net_check to our segment
+        self._net_check_at = 0.0
+        self._net_checking = False   # an ARP refresh is in flight (drives the button)
         self._lib_sig: str | None = None  # tree signature at the last scan (None = never)
         self._cvx: dict[str, cvx_remote.CvxRemoteSession] = {}  # live CV-X remote sessions
         self._cvx_server = None  # lazy MJPEG frame server (one for all sessions)
@@ -366,6 +391,14 @@ class Api:
         # The session MOVES (the overlay in the sending window closes), so a
         # controller's single remote slot is never asked for twice.
         self._cvx_windows: dict[str, object] = {}
+        # CV-X tile sessions (the cam lens): sid -> last-sync monotonic. A
+        # LEASE, not ownership - the grid renews it every tick it is actually
+        # watching, and the reaper hangs up anything unsynced past
+        # CVX_TILE_TTL, so an unwatched wall frees every controller's single
+        # remote slot on its own (lens flipped, window hidden, JS gone).
+        self._cvx_tiles: dict[str, float] = {}
+        self._cvx_tiles_lock = threading.Lock()
+        self._cvx_tile_reaper: threading.Thread | None = None
         # which windows are borderless-fullscreen right now, by window key
         # ("main" or a popped-out sid) - pywebview only toggles, it doesn't tell
         self._fullscreen: set[str] = set()
@@ -380,6 +413,14 @@ class Api:
         self._lib_progress_lock = threading.Lock()
         self._scan_thread: threading.Thread | None = None  # the one background library scan
         self._scan_thread_lock = threading.Lock()
+        # drop-import copy job (one at a time): progress snapshot for the UI
+        # poll + the cancel event the modal's cancel button sets
+        self._import_progress = {"active": False, "robot": "", "robot_no": 0,
+                                 "robot_total": 0, "bytes_done": 0,
+                                 "bytes_total": 0, "results": [], "cancelled": False}
+        self._import_lock = threading.Lock()
+        self._import_thread: threading.Thread | None = None
+        self._import_cancel: threading.Event | None = None
 
     def bind(self, window, initial_backup: str | None = None):
         self._window = window
@@ -427,6 +468,10 @@ class Api:
     def _backups_active(self) -> bool:
         return self._active_backup_count() > 0
 
+    def _import_active(self) -> bool:
+        t = self._import_thread
+        return t is not None and t.is_alive()
+
     def _confirm_close(self):
         """pywebview `closing` handler: returning False keeps the window open.
         Closing kills the daemon backup threads mid-download (the .part protocol
@@ -464,8 +509,8 @@ class Api:
         while True:
             time.sleep(self._WATCH_POLL_S)
             try:
-                if self._backups_active():
-                    continue
+                if self._backups_active() or self._import_active():
+                    continue    # both write bursts into the watched tree
                 sig = library.scan_signature(settings.library_root())
                 last, pending, fire = _watch_step(last, pending, sig)
                 # fire only when the tree differs from what the UI last saw:
@@ -948,7 +993,9 @@ class Api:
             seen_stems = set()
             for p in sorted(s.program_files, key=lambda p: p.name.upper()):
                 try:
-                    h = ls_program.parse_ls_header(read_text(p))
+                    text = read_text(p)
+                    h = ls_program.parse_ls_header(text)
+                    npos = ls_program.count_positions(text)
                 except Exception:
                     log.exception("header parse failed: %s", p.name)
                     continue
@@ -973,6 +1020,11 @@ class Api:
                     "styles": style_by_prog.get(name.upper(), []),
                     "system": a.get("owner", "") == "BACKGRND" or name.startswith("-"),
                     "binary": False,
+                    # taught points the listing carries. The 3D view offers only
+                    # programs that have some - a listing with none has nothing
+                    # to draw - and the count is cheap enough to take here
+                    # (~19 ms across 660 programs, on text already read).
+                    "positions": npos,
                 })
             # program files that exist only in binary form (.TP/.PC/.MR with no
             # .LS listing) - shown so the program list is truly complete.
@@ -988,6 +1040,9 @@ class Api:
                     "name": p.stem, "file": p.name,
                     "prog_type": ext + " (binary)",
                     "comment": "", "owner": "", "create": "", "modified": "",
+                    # a binary .TP is never decoded, so its point count is not
+                    # zero - it is unknown, and 0 would read as "nothing here"
+                    "positions": None,
                     "line_count": None, "prog_size": p.stat().st_size, "protect": "",
                     "styles": style_by_prog.get(p.stem.upper(), []),
                     "system": p.stem.startswith("-"),
@@ -1590,8 +1645,12 @@ class Api:
         CURPOS.DG pose snapshot, and the flange correction measured from
         this backup's own numbers (see kinematics.measure_flange). All
         fields degrade to None - the view falls back honestly."""
-        s = self._side_session(side, sid)
+        return self._robot_pose(self._side_session(side, sid))
 
+    def _robot_pose(self, s: BackupSession) -> dict:
+        """The pose ladder itself. Private so the program-path builder can
+        reuse the same matched chain, the same measured flange and the same
+        contradiction gate rather than growing a second copy of them."""
         robot_type = ""
         if s.find("DCSVRFY.DG"):
             rep = self._dcs_report(s, "DCSVRFY.DG")
@@ -1647,11 +1706,102 @@ class Api:
             "kin": entry["kin"] if entry else None,
             "counts": modeldb.counts(),
             "q": q, "q_source": "curpos" if q else None,
+            "world": world, "tool": tool,
             "pose_date": pose_date,
             "flange_dz": flange_dz,
             "calib": calib,
             "suggested_library": "" if entry else modeldb.default_library(),
         }
+
+    def _posable_chain(self, robot: dict):
+        """The chain only when it is honest to pose on it.
+
+        Mirrors view3d's robotFrames gate (never pose on contradiction): a
+        backup whose own position report contradicts the kinematics gets no
+        arm, and must get no FK-placed program points either.
+        """
+        if not robot.get("kin"):
+            return None, 0.0
+        calib = robot.get("calib")
+        if calib and not calib["ok"]:
+            return None, 0.0
+        return robot["kin"], robot.get("flange_dz") or 0.0
+
+    def _program_path(self, s: BackupSession, file_name: str) -> dict:
+        p = s.find(file_name)
+        if p is None or p not in s.program_files:
+            raise ApiError("NOT_FOUND", f"Program not found: {file_name}")
+        robot = self._robot_pose(s)
+        kin, flange_dz = self._posable_chain(robot)
+        # the chain identity rides the cache key: importing kinematics changes
+        # what modeldb.match answers while this session lives on, and a joint
+        # point placed by the OLD chain would be served forever otherwise
+        key = "progpath:%s:%s:%s" % (p.name.upper(),
+                                     robot["type_name"] if kin else "",
+                                     flange_dz)
+
+        def build():
+            text = read_text(p)
+            prog = ls_program.parse_ls_program(text)
+            motions = ls_motion.parse_motions(text)
+            try:
+                fm = self._build_frames(s)
+            except ApiError:
+                fm = None                      # no SYSFRAME.VA - said honestly per step
+            posreg_text = s.text("POSREG.VA")
+            posreg = registers.parse_posreg(posreg_text) if posreg_text else []
+            out = program_path.build_path(
+                prog, motions, fm, posreg,
+                pr_written=program_path.pr_writers(self._program_texts(s)),
+                group=1, kin=kin, flange_dz=flange_dz,
+                start_world=robot.get("world"))
+            out["file"] = p.name
+            out["name"] = prog["name"] or p.stem
+            out["comment"] = prog["attrs"].get("comment", "")
+            out["robot"] = {
+                "matched": bool(robot["kin"]), "posable": bool(kin),
+                "type_name": robot["type_name"], "flange_dz": flange_dz,
+                "calib_ok": None if not robot["calib"] else robot["calib"]["ok"],
+            }
+            return out
+
+        return s.cached(key, build)
+
+    @_endpoint
+    def get_program_path(self, file_name: str, sid: str | None = None,
+                         side: str = "a"):
+        """A program's taught points resolved to world millimetres - the path
+        the 3D view draws. Needs no kinematics: cartesian points compose
+        through their own user frame. Joint-recorded points do need the chain,
+        and say so when there isn't one."""
+        return self._program_path(self._side_session(side, sid), file_name)
+
+    def _program_pose(self, s: BackupSession, file_name: str) -> dict:
+        path = self._program_path(s, file_name)
+        robot = self._robot_pose(s)
+        kin, flange_dz = self._posable_chain(robot)
+        key = "progpose:%s:%s:%s" % (path["file"].upper(),
+                                     robot["type_name"] if kin else "",
+                                     flange_dz)
+
+        def build():
+            out = program_path.build_pose(path, kin, flange_dz, robot.get("q"))
+            out["file"] = path["file"]
+            out["type_name"] = robot["type_name"] if kin else ""
+            out["flange_dz"] = flange_dz
+            out["q_seed"] = robot.get("q")
+            return out
+
+        return s.cached(key, build)
+
+    @_endpoint
+    def get_program_pose(self, file_name: str, sid: str | None = None,
+                         side: str = "a"):
+        """Joint angles that put the arm at each of a program's taught points,
+        plus the knots between them. A joint-recorded point poses at its own
+        angles - exact, no solver. A cartesian point is solved and the answer
+        accepted only when the forward chain reproduces the taught pose."""
+        return self._program_pose(self._side_session(side, sid), file_name)
 
     # -- system vars ----------------------------------------------------------
 
@@ -2757,6 +2907,10 @@ class Api:
         sess = self._cvx.get(session_id)
         if sess is None:
             raise ApiError("NO_SESSION", "unknown remote session")
+        if getattr(sess, "video_only", False):
+            # a cam-lens tile session mirrors, never drives - defense in depth
+            # behind the fact that no tile ever wires an input handler
+            raise ApiError("VIEW_ONLY", "tile sessions are view-only - open the remote to drive")
         if seq is None:
             sess.send_mouse(int(event_id), int(x), int(y))
         else:
@@ -2885,6 +3039,137 @@ class Api:
             sess.stop()
         return True
 
+    # -- CV-X live tiles (the cam lens) -----------------------------------------------
+    # The multicam wall mirrors CV-X screens through the same bridge as the
+    # overlay, but a tile is strictly VIEW-ONLY and its session is a lease:
+    # the grid renews it on every tick it is actually showing the tile, and
+    # the reaper hangs up anything unsynced past CVX_TILE_TTL. That single
+    # mechanism covers every way a wall stops being watched - lens flipped,
+    # window hidden or closed, tile scrolled away, a modal or overlay up, or
+    # the JS side simply gone - and it is what frees the controllers' single
+    # remote slots for other terminals.
+
+    def _cvx_tile_shape(self, sid: str, sess) -> dict:
+        port = self._cvx_frame_server().server_address[1]
+        base = f"http://127.0.0.1:{port}"
+        # A tile POLLS the still (a wall of never-ending streams starves on the
+        # browser's six-connections-per-origin cap - see cvx_remote.SHOT_PATH).
+        # The stream url rides along anyway so a tile clicked open into the
+        # overlay has it in hand without asking again.
+        return {"session_id": sid,
+                "shot_url": f"{base}{cvx_remote.SHOT_PATH}{sid}",
+                "stream_url": f"{base}{cvx_remote.STREAM_PATH}{sid}",
+                "screen": {"w": cvx_remote.SCREEN_W, "h": cvx_remote.SCREEN_H}}
+
+    def _reap_cvx_tiles(self, now: float):
+        """Stop tile sessions whose lease ran out. A plain method so tests can
+        drive it without sleeping. Sessions leave the registries under the
+        lock (so adopt can never lose the race and get its session reaped) and
+        are stopped after it (stop() closes sockets - not lock territory)."""
+        doomed = []
+        with self._cvx_tiles_lock:
+            for sid in [s for s, t in self._cvx_tiles.items() if now - t > CVX_TILE_TTL]:
+                self._cvx_tiles.pop(sid)
+                sess = self._cvx.pop(sid, None)
+                if sess is not None:
+                    doomed.append(sess)
+        for sess in doomed:
+            sess.stop()
+
+    def _cvx_tile_reap_loop(self):
+        while True:
+            time.sleep(2.0)
+            try:
+                self._reap_cvx_tiles(time.monotonic())
+            except Exception:  # noqa: BLE001 - the reaper must survive anything
+                log.exception("cvx tile reaper")
+
+    @_endpoint
+    def cvx_tile_start(self, spec: dict):
+        """Open (or return) the view-only tile session for the camera at
+        spec['ip']. Idempotent per ip: a page reload that lost the JS registry
+        heals onto the live session instead of asking the controller's single
+        remote slot twice. A NON-tile session (overlay / pop-out) to that ip
+        is BUSY, never joined - a tile must not piggyback a session the user
+        is driving."""
+        ip = _require_ip(spec)
+        with self._cvx_tiles_lock:
+            for sid in list(self._cvx_tiles):
+                sess = self._cvx.get(sid)
+                if sess is not None and sess.ip == ip and sess.alive:
+                    self._cvx_tiles[sid] = time.monotonic()
+                    return self._cvx_tile_shape(sid, sess)
+        for sid, sess in list(self._cvx.items()):
+            if sess.ip == ip and sess.alive and sid not in self._cvx_tiles:
+                raise ApiError("CVX_BUSY", "a remote session is already open to this camera")
+        sess = cvx_remote.CvxRemoteSession(ip)
+        sess.video_only = True
+        if not sess.start():
+            raise ApiError("CVX_CONNECT", sess.error or "could not connect to the camera")
+        sid = uuid.uuid4().hex
+        self._cvx[sid] = sess
+        with self._cvx_tiles_lock:
+            self._cvx_tiles[sid] = time.monotonic()
+            if self._cvx_tile_reaper is None:
+                self._cvx_tile_reaper = threading.Thread(
+                    target=self._cvx_tile_reap_loop, name="cvx-tile-reaper", daemon=True)
+                self._cvx_tile_reaper.start()
+        return self._cvx_tile_shape(sid, sess)
+
+    @_endpoint
+    def cvx_tile_sync(self, sids: list):
+        """Renew the lease on every tile the grid is actually showing; report
+        which are still alive. An unknown or dead sid answers alive: False and
+        the tile redials on its own backoff."""
+        out = {}
+        now = time.monotonic()
+        with self._cvx_tiles_lock:
+            for sid in sids or []:
+                sess = self._cvx.get(sid)
+                if sid in self._cvx_tiles and sess is not None and sess.alive:
+                    self._cvx_tiles[sid] = now
+                    out[sid] = {"alive": True, "frames": sess.frames}
+                else:
+                    out[sid] = {"alive": False}
+        return out
+
+    @_endpoint
+    def cvx_tile_stop(self, session_id: str):
+        """Prompt release when the lens flips away - the TTL is the net
+        underneath. Only ever stops a TILE session: an unknown or non-tile sid
+        is a quiet no-op, so this can never hang up an overlay."""
+        with self._cvx_tiles_lock:
+            if session_id not in self._cvx_tiles:
+                return True
+            self._cvx_tiles.pop(session_id)
+            sess = self._cvx.pop(session_id, None)
+        if sess is not None:
+            sess.stop()
+        return True
+
+    @_endpoint
+    def cvx_tile_adopt(self, session_id: str):
+        """Promote a tile session into a full remote: drop the lease (the
+        reaper keeps its hands off) and clear the view-only flag, then answer
+        the cvx_remote_info shape - the overlay adopts it exactly like a
+        pop-out window does, and the controller is never dialled twice."""
+        with self._cvx_tiles_lock:
+            leased = self._cvx_tiles.pop(session_id, None)
+            sess = self._cvx.get(session_id)
+            alive = leased is not None and sess is not None and sess.alive
+            if not alive and leased is not None:
+                # leased but dead: retire the corpse instead of stranding it
+                self._cvx.pop(session_id, None)
+        if not alive:
+            if leased is not None and sess is not None:
+                sess.stop()
+            raise ApiError("NO_SESSION", "that tile session is gone")
+        sess.video_only = False
+        port = self._cvx_frame_server().server_address[1]
+        return {"session_id": session_id, "ip": sess.ip,
+                "stream_url": f"http://127.0.0.1:{port}/cvx/{session_id}",
+                "screen": {"w": cvx_remote.SCREEN_W, "h": cvx_remote.SCREEN_H}}
+
     # -- Matrox live remote (the camera's own web UI) ---------------------------------
     # A Matrox camera is operated through the web page it serves on port 80, so
     # "remote" = that page. Preferred: embed it in an in-app overlay (iframe).
@@ -2920,6 +3205,33 @@ class Api:
                 pass
         return {"url": final or url, "embeddable": embeddable, "status": status,
                 "pages": pages}
+
+    @_endpoint
+    def mtx_tile_probe(self, spec: dict):
+        """WHY is a cam-lens Matrox tile dark? One request separates the two
+        halves, because a camera that answers AT ALL - even with a 404 - is a
+        camera that is up.
+
+        `SavedImages/HMIImage.jpg` is not something a Design Assistant camera
+        serves natively: a project step writes it, and a project without that
+        step serves nothing at that path, forever. Field-measured on a real
+        line: 12 of 12 cameras answered in ~30 ms, 9 published the frame and 3
+        did not - so the tile was calling three perfectly healthy cameras "not
+        answering", which is the honesty rule backwards and sends a tech to
+        look at the wrong thing.
+
+        Called only when a tile has gone dark, never on the polling beat."""
+        ip = _require_ip(spec)
+        try:
+            status, headers, _final, _body = _probe_http(
+                f"http://{ip}/SavedImages/HMIImage.jpg", timeout=3.0, read=0)
+        except OSError:
+            return {"state": "down"}
+        if status == 200 and (headers.get("content-type") or "").lower().startswith("image/"):
+            return {"state": "ok"}
+        # the web server answered, so the camera is up; it just has no frame
+        # to publish at that path
+        return {"state": "no_image", "status": status}
 
     @_endpoint
     def mtx_remote_window(self, spec: dict):
@@ -4410,6 +4722,160 @@ class Api:
             "fallback": {"cidr": discover.default_cidr(), "ip": discover.local_ipv4()},
         }
 
+    # -- plant link watch -------------------------------------------------------
+    # Polled ~every 2s by web/js/netstatus.js. Reads only this laptop's own
+    # adapter/gateway/neighbour tables - the switch is never contacted.
+
+    _LINK_LIB_TTL = 30.0     # the library changes on human timescales, not tick ones
+
+    def _link_library(self):
+        """(packed ips, {ip: entry}) for the link watch, rebuilt at most every
+        _LINK_LIB_TTL seconds.
+
+        Deliberately library.load() and not list_robots(): the latter reconciles
+        stale flags by stat-ing every entry AND every historical backup, which on
+        a plant-scale library over a network drive is far too heavy to run on a
+        poll. Nothing here needs those flags.
+        """
+        now = time.monotonic()
+        if self._link_by_ip and now - self._link_lib_at < self._LINK_LIB_TTL:
+            return self._link_ips, self._link_by_ip
+        by_ip: dict[str, dict] = {}
+        for e in library.load().get("robots", []):
+            for ip in e.get("ips") or []:
+                if not ip:
+                    continue
+                # first claim wins; two entries on one address is a library
+                # problem to surface elsewhere, not something to guess about here
+                by_ip.setdefault(ip, {
+                    "robot": e.get("robot") or "",
+                    "device_type": e.get("device_type") or "robot",
+                    "line": e.get("line") or "",
+                })
+        self._link_by_ip = by_ip
+        self._link_ips = discover.pack_ips(by_ip)
+        self._link_lib_at = now
+        return self._link_ips, self._link_by_ip
+
+    def _link_devices(self, sample, by_ip):
+        """The segment's devices: everything the OS has seen, plus every library
+        device that belongs on this subnet, merged on IP.
+
+        A union, not an intersection. A camera the laptop simply hasn't spoken to
+        since the cable went in has no neighbour entry while running perfectly, so
+        it appears as `absent` - never as a fault. Evidence never vanishes.
+        """
+        cidr = sample.get("cidr") or ""
+        gateway = sample.get("gateway") or ""
+        seen = {n["ip"]: n for n in sample.get("neighbours") or []}
+
+        # What vendor owns an OUI is learned from the library's own devices rather
+        # than shipped as a table: a guessed vendor map would be exactly the kind
+        # of unverified claim the honesty rules forbid.
+        oui_kind: dict[str, str] = {}
+        for ip, n in seen.items():
+            entry = by_ip.get(ip)
+            if entry:
+                oui_kind.setdefault(netlink.oui(n.get("mac") or ""), entry["device_type"])
+
+        rows = []
+        for ip, n in seen.items():
+            entry = by_ip.get(ip)
+            state = n.get("state") or ""
+            rows.append({
+                "ip": ip, "mac": n.get("mac") or "",
+                "dot": ("live" if state == netlink.LIVE_STATE
+                        else "known" if state in netlink.KNOWN_STATES else "gone"),
+                "reach_ms": n.get("reach_ms") or 0,
+                "in_library": bool(entry),
+                "name": (entry or {}).get("robot") or "",
+                "device_type": (entry or {}).get("device_type") or "",
+                "line": (entry or {}).get("line") or "",
+                "vendor_kind": oui_kind.get(netlink.oui(n.get("mac") or ""), ""),
+                "gateway": ip == gateway,
+            })
+        for ip, entry in by_ip.items():
+            if ip in seen or not discover._in_network(ip, cidr):
+                continue
+            rows.append({
+                "ip": ip, "mac": "", "dot": "absent", "reach_ms": 0,
+                "in_library": True, "name": entry["robot"],
+                "device_type": entry["device_type"], "line": entry["line"],
+                "vendor_kind": "", "gateway": False,
+            })
+        # gateway first, then live before quiet, then by address
+        order = {"live": 0, "known": 1, "gone": 2, "absent": 3}
+        rows.sort(key=lambda r: (not r["gateway"], order.get(r["dot"], 9),
+                                 discover.pack_ips([r["ip"]]) or (0,)))
+        return rows
+
+    @_endpoint
+    def net_status(self, detail: bool = False):
+        """The plant link, read from THIS laptop only - never from the switch.
+
+        Passive: adapter, gateway and neighbour tables the OS already holds, at
+        zero added packets. `detail` adds the per-device list for the open panel.
+        Argument order is frozen - add new parameters AFTER `detail`.
+        """
+        packed, by_ip = self._link_library()
+        pin = settings.load().get("net_adapter") or None
+        sample = self._link.sample(pin=pin, library_ips=packed,
+                                   arp_fn=netlink.send_arp)
+        self._link_last_adapter = sample.get("adapter")   # net_check's segment guard
+        out = {k: v for k, v in sample.items() if k != "neighbours"}
+        out["states"] = list(discover.LINK_STATES)
+        out["seen"] = len(sample.get("neighbours") or [])
+        out["checking"] = self._net_checking
+        if detail:
+            out["devices"] = self._link_devices(sample, by_ip)
+            out["adapters"] = discover.link_adapter_choices(packed)
+        return out
+
+    #: an unanswered ARP blocks for about a second, so keep the fan-out small -
+    #: this is a status panel button, not the discover dialog's 48-wide sweep
+    _NET_CHECK_WORKERS = 8
+    _NET_CHECK_MAX = 256          # a full /24; the cap is reported, never silent
+    _NET_CHECK_EVERY = 10.0
+
+    @_endpoint
+    def net_check(self, ips: list):
+        """Refresh the neighbour evidence for these addresses, gently.
+
+        One ARP request each: layer 2 only, touching no service on the device -
+        strictly lighter than a TCP connect to a camera's FTP or SMB port, and
+        something every device on the wire answers constantly anyway.
+
+        There is no separate result channel on purpose. ARP *populates the very
+        table the panel already reads*, so the next poll shows the truth rather
+        than a second, possibly disagreeing, set of answers.
+        """
+        now = time.monotonic()
+        if now - getattr(self, "_net_check_at", 0.0) < self._NET_CHECK_EVERY:
+            return {"started": 0, "throttled": True}
+        cidr = discover.adapter_cidr(self._link_last_adapter or {})
+        wanted = [ip for ip in (ips or [])
+                  # off-segment addresses would resolve the GATEWAY's mac and read
+                  # as a confident answer about a device we never reached
+                  if isinstance(ip, str) and discover._in_network(ip, cidr)]
+        targets = wanted[: self._NET_CHECK_MAX]
+        if not targets:
+            return {"started": 0, "skipped": 0, "throttled": False}
+        self._net_check_at = now
+        self._net_checking = True
+
+        def run():
+            try:
+                with futures.ThreadPoolExecutor(
+                        max_workers=self._NET_CHECK_WORKERS) as ex:
+                    list(ex.map(netlink.send_arp, targets))
+            finally:
+                self._net_checking = False
+
+        threading.Thread(target=run, name="netcheck", daemon=True).start()
+        # skipped is surfaced so a bounded sweep never reads as "checked everything"
+        return {"started": len(targets), "skipped": len(wanted) - len(targets),
+                "throttled": False}
+
     @_endpoint
     def net_scan_start(self, spec: dict):
         """Sweep a subnet for FANUC controllers + cameras on a worker thread; poll
@@ -4544,3 +5010,116 @@ class Api:
             return res
 
         return self._claim_tree_changes(apply)
+
+    # -- backup-folder import (drag-and-drop) ---------------------------------
+    # A dropped tree OUTSIDE the library root is scanned (libimport.scan_paths),
+    # confirmed in the UI, then copied in on a background thread - after which
+    # the NORMAL rescan adopts the folders exactly like an Explorer copy (no
+    # hand registration, no _claim_tree_changes: the tree is honestly dirty
+    # until the scan has looked at it).
+
+    def handle_drop(self, event) -> None:
+        """pywebview DOM drop handler (wired by app._wire_drop, not called over
+        the bridge): native drops only surface real OS paths on the PYTHON side
+        (`pywebviewFullPath`); the paths are pushed to JS, which decides what
+        the drop means - the import modal scans them, anywhere else shows a
+        hint toast pointing at + add robot."""
+        files = ((event or {}).get("dataTransfer") or {}).get("files") or []
+        paths = [f.get("pywebviewFullPath") for f in files
+                 if isinstance(f, dict) and f.get("pywebviewFullPath")]
+        w = self._window
+        if not paths or w is None:
+            return
+        try:
+            w.evaluate_js("window.BV && BV.importDrop && BV.importDrop(%s)"
+                          % json.dumps(paths))
+        except Exception:  # noqa: BLE001 - window mid-teardown at app exit
+            pass
+
+    @_endpoint
+    def import_scan(self, paths: list):
+        """What a drop/browse holds: per-robot drafts + honest leftovers.
+        Read-only - nothing is copied until import_start."""
+        existing = [{"plant": e.get("plant", ""), "line": e.get("line", ""),
+                     "robot": e.get("robot", ""), "id": e.get("id", "")}
+                    for e in library.load().get("robots", [])]
+        return libimport.scan_paths(paths or [], settings.library_root(), existing)
+
+    @_endpoint
+    def import_start(self, drafts: list, plant: str = "", line: str = ""):
+        """Copy the chosen drafts under plant/line on a background thread
+        (poll import_progress). One import at a time, and never during a
+        backup - both write file bursts into the same watched tree."""
+        if not (line or "").strip():
+            raise ApiError("BAD_SPEC", "a line name is required")
+        if not drafts:
+            raise ApiError("BAD_SPEC", "nothing is selected to import")
+        if self._backups_active():
+            raise ApiError("BUSY", "a backup is running - import when it finishes")
+        if self._import_active():
+            raise ApiError("BUSY", "an import is already running")
+        root = Path(settings.library_root())
+        try:
+            root.mkdir(parents=True, exist_ok=True)   # a brand-new library is BUILT, not refused
+        except OSError as ex:
+            raise ApiError("BAD_PATH",
+                           f"could not create the library folder {root}: {ex}")
+        ids = {e.get("id") for e in library.load().get("robots", []) if e.get("id")}
+        cancel = threading.Event()
+        with self._import_lock:
+            self._import_progress = {
+                "active": True, "robot": "", "robot_no": 0,
+                "robot_total": len(drafts), "bytes_done": 0,
+                "bytes_total": sum(int(d.get("bytes") or 0) for d in drafts),
+                "results": [], "cancelled": False}
+        self._import_cancel = cancel
+        t = threading.Thread(
+            target=self._import_runner,
+            args=(list(drafts), (plant or "").strip(), line.strip(), root, ids, cancel),
+            name="libimport", daemon=True)
+        self._import_thread = t
+        t.start()
+        return {"started": len(drafts)}
+
+    def _import_runner(self, drafts, plant, line, root, existing_ids, cancel):
+        def tick(ev):
+            with self._import_lock:
+                p = self._import_progress
+                if "robot" in ev:
+                    p["robot"] = ev["robot"]
+                    p["robot_no"] += 1
+                if "bytes" in ev:
+                    p["bytes_done"] += ev["bytes"]
+
+        try:
+            out = libimport.run_import(drafts, plant, line, root,
+                                       progress=tick, cancel=cancel,
+                                       existing_ids=existing_ids)
+        except Exception:  # noqa: BLE001 - a copy crash must not kill the app
+            log.exception("drop-import failed")
+            out = {"results": [{"robot": "", "dest": "", "status": "error",
+                                "copied": 0, "duplicates": 0, "conflicts": 0,
+                                "errors": ["internal error - see app.log"]}],
+                   "cancelled": False}
+        with self._import_lock:
+            self._import_progress.update(active=False, results=out["results"],
+                                         cancelled=out["cancelled"])
+        # landed like any Explorer copy: the normal rescan adopts it and
+        # pushes library-updated when the cache settles
+        self._start_background_scan(settings.library_root())
+
+    @_endpoint
+    def import_progress(self):
+        """The running (or last finished) import's snapshot - polled by the
+        progress modal. `results` fills in only once the copy ends."""
+        with self._import_lock:
+            return dict(self._import_progress)
+
+    @_endpoint
+    def import_cancel(self):
+        """Stop after the file in flight; snapshots already landed stay (they
+        are complete and verified), the one mid-copy is abandoned."""
+        c = self._import_cancel
+        if c is not None:
+            c.set()
+        return {"cancelling": c is not None}

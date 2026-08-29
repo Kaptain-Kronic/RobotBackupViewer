@@ -6,6 +6,12 @@ api layer polls it through the shared scan endpoints: sweep a subnet for FANUC
 controllers over FTP and return the reachable ones, best-effort named from the
 controller (IP as the fallback).
 
+Also home to the plant-link watch (LinkWatch): a passive read of THIS laptop's
+adapter, gateway and neighbour tables that answers "am I actually on the switch?"
+without ever contacting the switch. The raw Windows bindings it reads through
+live in netlink.py; the policy — which adapter is the plant link, and what the
+evidence adds up to — lives here.
+
 Network code lives only here. The job accepts injectable factories so it runs
 fully offline under test (see tests/test_discover.py), the same way
 ftpbackup.probe_controller takes an ftp_factory.
@@ -25,7 +31,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from . import ftpbackup, keyencebackup, mtxbackup, session
+from . import ftpbackup, keyencebackup, mtxbackup, netlink, session
 from .parsers import summary_dg
 
 log = logging.getLogger(__name__)
@@ -205,6 +211,323 @@ def _tcp_open(host: str, port: int, timeout: float) -> bool:
             return True
     except OSError:
         return False
+
+
+# -- plant link watch ------------------------------------------------------------
+# "Am I actually plugged into the plant switch?" answered from THIS laptop only:
+# adapter, gateway and neighbour tables the OS already maintains (netlink.py).
+# The switch is never contacted - no SSH, no SNMP, no management plane at all.
+#
+# Every published state comes from ONE netlink read, which costs ~11 ms, so there
+# is no snapshot cache and no cheap-vs-full tiering to get out of step: each tick
+# is a fresh, self-consistent instant.
+
+#: every state the pill can show, worst first. `unknown` is a real answer - it
+#: means the read itself failed, and it must never be rendered as ok or as a fault.
+LINK_STATES = ("unknown", "no-adapter", "no-link", "no-ip", "no-gateway", "ok")
+
+#: a worse state must be seen this many times running before it is published, so a
+#: single dropped sample can't flash a false alarm. Good news needs no such proof.
+DOWNGRADE_SAMPLES = 2
+#: the gateway is normally in the neighbour table already; when it isn't, resolve
+#: it at most this often - an unanswered ARP blocks for about a second.
+GATEWAY_ARP_EVERY = 5.0
+
+
+def _in_network(ip: str, cidr: str) -> bool:
+    if not ip or not cidr:
+        return False
+    try:
+        return ipaddress.ip_address(ip) in ipaddress.ip_network(cidr, strict=False)
+    except ValueError:
+        return False
+
+
+def adapter_cidr(adapter: dict) -> str:
+    """The adapter's own subnet in CIDR form, or "" when it has no usable IPv4."""
+    ip, prefix = adapter.get("ip") or "", adapter.get("prefix") or 0
+    if not ip or not prefix:
+        return ""
+    try:
+        return str(ipaddress.ip_network(f"{ip}/{int(prefix)}", strict=False))
+    except (ValueError, TypeError):
+        return ""
+
+
+def is_apipa(ip: str) -> bool:
+    """A 169.254 address means DHCP never answered - link is up, network isn't."""
+    return bool(ip) and ip.startswith("169.254.")
+
+
+def pack_ips(ips) -> tuple[int, ...]:
+    """Addresses as packed integers, skipping anything unparseable.
+
+    choose_adapter counts library addresses per adapter on every tick, and a
+    plant library holds thousands. Doing this once at the caller and comparing
+    plain ints is the difference between a 10 ms sample and an 80 ms one.
+    """
+    out = []
+    for ip in ips:
+        try:
+            out.append(int(ipaddress.ip_address(ip)))
+        except ValueError:
+            continue
+    return tuple(out)
+
+
+def segment_neighbours(neighbours: list[dict], adapter: dict) -> list[dict]:
+    """Real unicast neighbours on this adapter's own subnet.
+
+    Drops the noise Windows keeps alongside them: multicast and broadcast pseudo
+    entries are permanent fixtures of the table, not devices on the switch.
+    """
+    cidr = adapter_cidr(adapter)
+    ifindex = adapter.get("ifindex")
+    out = []
+    for n in neighbours:
+        ip, mac = n.get("ip") or "", (n.get("mac") or "").upper()
+        if n.get("ifindex") != ifindex or not _in_network(ip, cidr):
+            continue
+        if mac.startswith("01:00:5E") or mac in ("", "FF:FF:FF:FF:FF:FF"):
+            continue
+        if ip.endswith(".255") or ip == "0.0.0.0":
+            continue
+        out.append(n)
+    return out
+
+
+def choose_adapter(adapters: list[dict], neighbours: list[dict], *,
+                   pin: dict | None = None,
+                   library_ips=()) -> tuple[dict | None, str]:
+    """Which adapter is the plant link -> (adapter | None, why).
+
+    `library_ips` is packed integers (see pack_ips), cached by the caller.
+
+    The ordering exists to stop one specific lie. A laptop on wi-fi (or a phone
+    hotspot) with the dongle unplugged still has a perfectly good internet
+    connection, and calling that "connected" would answer a question nobody
+    asked. So only two things may name an adapter the plant link: the user
+    pinning it, or the library's own devices being on that subnet. Wi-fi is
+    never promoted on a hunch - with no evidence we say so and ask.
+
+    A pinned adapter wins even when it is down: that is how an unplugged dongle
+    reports `no link` instead of silently hopping to wi-fi.
+    """
+    usable = [a for a in adapters if a.get("kind") != "loopback"]
+    if pin:
+        mac = (pin.get("mac") or "").upper()
+        name = pin.get("name") or ""
+        for a in usable:
+            if mac and (a.get("mac") or "").upper() == mac:
+                return a, "pinned"
+        for a in usable:
+            if name and a.get("name") == name:
+                return a, "pinned"
+        # USB adapters usually vanish from the table when unplugged rather than
+        # reporting down, so a missing pin IS the unplugged case - say that,
+        # rather than re-picking and pretending nothing happened.
+        return None, "pinned-missing"
+
+    live = [a for a in usable if a.get("up") and a.get("ip") and not is_apipa(a["ip"])]
+    best, best_hits = None, 0
+    for a in live:
+        cidr = adapter_cidr(a)
+        if not cidr:
+            continue
+        net = ipaddress.ip_network(cidr, strict=False)
+        lo, hi = int(net.network_address), int(net.broadcast_address)
+        hits = sum(1 for v in library_ips if lo <= v <= hi)
+        if hits > best_hits:
+            best, best_hits = a, hits
+    if best:
+        return best, "library"
+
+    # Nothing in the library to go on (a fresh install). An ethernet port with
+    # devices answering on it is the next best evidence - a plant switch port
+    # sees a crowd, a tunnel sees nobody.
+    best, best_hits = None, 0
+    for a in live:
+        if a.get("kind") != "ethernet":
+            continue
+        hits = len(segment_neighbours(neighbours, a))
+        if hits > best_hits:
+            best, best_hits = a, hits
+    if best:
+        return best, "neighbours"
+    return None, "none"
+
+
+def classify_state(adapter: dict | None, why: str, neighbours: list[dict], *,
+                   arp_fn=None) -> tuple[str, str]:
+    """The link ladder -> (state, detail). Pure apart from the optional gateway
+    ARP, which is injectable so tests never touch a network.
+
+    `detail` is the whole point: each rung names the next thing to check, and
+    two different faults that share a rung get two different sentences.
+    """
+    if adapter is None:
+        if why in ("pinned-missing", "gone"):
+            return "no-link", "the plant adapter is gone — dongle unplugged?"
+        return ("no-adapter",
+                "nothing here looks like a plant link — pick the adapter "
+                "you plug into the switch")
+    name = adapter.get("name") or "?"
+    if not adapter.get("up"):
+        return ("no-link",
+                f"{name}: the OS reports no link — cable, dongle, or the "
+                "switch port. This is the laptop's view; the switch is not asked.")
+    ip = adapter.get("ip") or ""
+    if not ip or is_apipa(ip):
+        return ("no-ip", f"{name}: link is up but DHCP never answered")
+    gateway = adapter.get("gateway") or ""
+    if not gateway:
+        return ("no-gateway", f"{name}: no gateway is configured on this adapter")
+
+    entry = next((n for n in neighbours
+                  if n.get("ip") == gateway and n.get("ifindex") == adapter.get("ifindex")),
+                 None)
+    state = (entry or {}).get("state", "")
+    if entry is None and arp_fn is not None:
+        # never spoken to yet - one ARP settles it rather than guessing
+        state = "reachable" if arp_fn(gateway) else "unreachable"
+    if state in netlink.KNOWN_STATES:
+        if state == netlink.LIVE_STATE:
+            return "ok", f"gateway {gateway} answering"
+        # A resolved MAC parks in `stale` once nothing needs it. That is a quiet
+        # network, not a broken one - calling it a fault would be the first lie
+        # this feature tells.
+        return "ok", f"gateway {gateway} known (idle — nothing has needed it)"
+    if not state:
+        return "no-gateway", f"gateway {gateway} has not been seen yet"
+    return "no-gateway", f"gateway {gateway} is not answering"
+
+
+def link_adapter_choices(library_ips=(), adapters_fn=None,
+                         neighbours_fn=None) -> list[dict]:
+    """Every adapter the user could pin, with the evidence behind each:
+    [{name, mac, kind, up, ip, cidr, library, neighbours}].
+
+    The picker shows its reasoning rather than asking for blind faith - "17
+    library devices on this one" is why a tech can trust the automatic choice,
+    and is what lets them correct it when the heuristic guesses wrong.
+    """
+    adapters = (adapters_fn or netlink.adapters)()
+    neighbours = (neighbours_fn or netlink.neighbours)()
+    out = []
+    for a in adapters:
+        if a.get("kind") == "loopback":
+            continue
+        cidr = adapter_cidr(a)
+        hits = 0
+        if cidr:
+            net = ipaddress.ip_network(cidr, strict=False)
+            lo, hi = int(net.network_address), int(net.broadcast_address)
+            hits = sum(1 for v in library_ips if lo <= v <= hi)
+        out.append({
+            "name": a.get("name") or "?", "mac": a.get("mac") or "",
+            "kind": a.get("kind") or "other", "up": bool(a.get("up")),
+            "ip": a.get("ip") or "", "cidr": cidr,
+            "library": hits, "neighbours": len(segment_neighbours(neighbours, a)),
+        })
+    out.sort(key=lambda a: (not a["up"], -a["library"], -a["neighbours"], a["name"]))
+    return out
+
+
+class LinkWatch:
+    """Turns a stream of samples into a published state.
+
+    Holds the only mutable state in the feature: the last published verdict, how
+    long it has held, and how many consecutive samples are voting to make things
+    worse. Downgrades must win `DOWNGRADE_SAMPLES` in a row before they show, so
+    one unlucky read cannot flash a false alarm; upgrades publish at once,
+    because good news cannot raise one.
+    """
+
+    def __init__(self):
+        self.state = "unknown"
+        self.detail = ""
+        self.since = 0.0
+        self._pending = 0
+        self._last_arp = 0.0
+        self._known = None      # (mac, name) of the adapter we last settled on
+
+    def sample(self, *, pin=None, library_ips=(), now=None,
+               adapters_fn=None, neighbours_fn=None, arp_fn=None) -> dict:
+        now = time.monotonic() if now is None else now
+        adapters_fn = adapters_fn or netlink.adapters
+        neighbours_fn = neighbours_fn or netlink.neighbours
+
+        adapters = adapters_fn()
+        if not adapters:
+            # The read itself failed (no iphlpapi, or a frozen-exe quirk). Say so
+            # and hold the last verdict rather than inventing a new one - a tool
+            # that turns red when IT breaks teaches people to ignore it.
+            return self._hold(now, "couldn't read the adapter tables — "
+                                   "showing the last reading")
+        neighbours = neighbours_fn()
+        adapter, why = choose_adapter(adapters, neighbours, pin=pin,
+                                      library_ips=library_ips)
+        if adapter is None and why == "none" and self._known:
+            # We knew which adapter was the plant link a moment ago. Losing its
+            # address (unplugged, or DHCP gone) must not read as "nothing here
+            # looks like a plant link" - the honest answer is that THIS adapter
+            # went away. Without this, the commonest real event shows the most
+            # confusing words.
+            mac, name = self._known
+            prev = next((a for a in adapters
+                         if (mac and (a.get("mac") or "").upper() == mac)
+                         or (name and a.get("name") == name)), None)
+            adapter, why = (prev, "remembered") if prev else (None, "gone")
+        if adapter is not None:
+            self._known = ((adapter.get("mac") or "").upper(), adapter.get("name") or "")
+        gate = None
+        if arp_fn is not None and now - self._last_arp >= GATEWAY_ARP_EVERY:
+            gate = arp_fn
+            self._last_arp = now
+        state, detail = classify_state(adapter, why, neighbours, arp_fn=gate)
+        return self._publish(state, detail, now, adapter=adapter, why=why,
+                             neighbours=neighbours, probe_ok=True)
+
+    def _hold(self, now, detail) -> dict:
+        """Report the last verdict, flagged as unverified. Changes nothing: a
+        failed read is not evidence, so it may move the state neither way."""
+        return {
+            "state": self.state, "detail": detail,
+            "since_ms": int(max(0.0, now - self.since) * 1000),
+            "probe_ok": False, "why": "unread", "adapter": None,
+            "cidr": "", "gateway": "", "neighbours": [],
+        }
+
+    def _publish(self, state, detail, now, *, adapter, why, neighbours, probe_ok):
+        rank = LINK_STATES.index
+        if state != self.state:
+            worse = rank(state) < rank(self.state)
+            if worse and self.state != "unknown":
+                self._pending += 1
+                if self._pending < DOWNGRADE_SAMPLES:
+                    state, detail = self.state, self.detail   # hold the old verdict
+                else:
+                    self._pending = 0
+            else:
+                self._pending = 0
+            if state != self.state:
+                self.state, self.detail, self.since = state, detail, now
+        else:
+            self._pending = 0
+            self.detail = detail
+
+        seg = segment_neighbours(neighbours, adapter) if adapter else []
+        return {
+            "state": self.state,
+            "detail": self.detail,
+            "since_ms": int(max(0.0, now - self.since) * 1000),
+            "probe_ok": probe_ok,
+            "why": why,
+            "adapter": adapter,
+            "cidr": adapter_cidr(adapter) if adapter else "",
+            "gateway": (adapter or {}).get("gateway", ""),
+            "neighbours": seg,
+        }
 
 
 # -- EtherNet/IP identity (transport-independent camera discovery) ----------------

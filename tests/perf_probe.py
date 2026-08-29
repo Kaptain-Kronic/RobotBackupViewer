@@ -42,10 +42,73 @@ BUDGET = {
     # density landed.
     "editor_open": 110,   # double-click a note -> box is there
     "editor_close": 80,
-    "star_toggle": 500,   # pins the row + rebuilds the strip
+    # rebaselined 500 -> 150 with the surgical star repaint (2026-08): a
+    # toggle now redraws the star + favorites strip only, measured 49 on the
+    # day it landed. The cliff this guards is a full tree rebuild sneaking
+    # back onto the click path — ~490ms here at 2400 rows, which the old 500
+    # budget sat 3% under: it asserted this machine's speed, not the cliff.
+    "star_toggle": 150,   # pins the row + rebuilds the strip (never the tree)
+    # star_off - the unstar - was measured all along and asserted never;
+    # it gets the same budget rather than staying a number nobody checks.
+    "star_off": 150,      # and unpinning it repaints the same two places
     "shift_range": 800,   # selecting ~900 rows at once
     "picker_open": 900,   # the link/compare picker builds its own tree
 }
+
+
+# Starring is sampled STAR_REPS times and budgeted on the BEST pair, not on
+# one sample. Two sessions fixed this check at once and their fixes disagreed;
+# this is what survived the merge, measured 2026-08-26 on the merged tree:
+#
+#   * the flake that started it is GONE at the source. A star toggle used to
+#     rebuild all 2400 rows (~490ms, against a 500 budget it sat 3% under), so
+#     any run that landed behind something heavy went red with nothing wrong.
+#     The surgical repaint fixed that - a toggle now redraws this robot's star
+#     and the favourites strip and nothing else. Measured here over four runs
+#     of five pairs: star_on 33.9-67.0ms, star_off 32.7-69.2ms.
+#   * so the OTHER session's numbers do not apply. It measured 390-532ms and
+#     raised the budget to 700, which is honest arithmetic on a branch that
+#     did not have the repaint - and on this tree would be 10x the real cost,
+#     wide enough for a full rebuild to sneak back onto the click path
+#     unnoticed. That rebuild is the whole cliff this guards. The budget
+#     stays 150.
+#   * the sampling is kept anyway, because it is nearly free (five pairs cost
+#     ~250ms) and the noise here is ONE-SIDED - a scheduler slice or a GC
+#     pause only ever ADDS time - so the fastest of a few is the honest floor,
+#     and a real regression lifts the floor along with everything else. What
+#     it buys now is drift resolution, not flake protection.
+#   * each pair is its own evaluate_js: pairs batched inside one js call ramp
+#     (320 -> 924ms was measured on the rebuild path), because the browser
+#     never gets back to its event loop between them. There is no warm-up, and
+#     sample 0 is not special here - it was the most expensive of the five in
+#     three of the four runs, the reverse of what the rebuild path did.
+#   * load does not move it any more. The run taken straight after
+#     ui_camwall_probe and its sixteen local HTTP servers - the exact
+#     neighbour that used to push this red - best-of-five 40.9 / 37.0ms, in
+#     line with the three idle runs. 150 is ~2.2x the worst single sample
+#     seen across all four.
+STAR_REPS = 5
+
+# One on/off pair. Re-queried each time on purpose: the favourites strip
+# renders its own copy of the row, so while a robot is starred every index
+# below it shifts by one - and the pair puts that back, which is what
+# star.pair_is_its_own_undo below checks rather than assumes.
+STAR_PAIR = """(function(){
+  var row = document.querySelectorAll('.lib-robot')[1200];
+  var on = window.__time(function () { row.querySelector('.lib-fav').click(); });
+  var off = window.__time(function () {
+    document.querySelector('.lib-favs .lib-fav').click();
+  });
+  return {id: row.getAttribute('data-robot-id'), on: on, off: off,
+          rows: document.querySelectorAll('.lib-robot').length};
+})()"""
+
+
+def best(samples, key):
+    """The fastest `key` across the samples, or None if none of them reported
+    one (a budget() with None fails loudly rather than skipping)."""
+    vals = [s.get(key) for s in samples if isinstance(s.get(key), (int, float))]
+    return min(vals) if vals else None
 
 
 def budget(name, ms):
@@ -135,12 +198,6 @@ def probe(window, rows):
           out.editor_close = window.__time(function () {
             ta.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
           });
-          out.star_toggle = window.__time(function () {
-            document.querySelectorAll('.lib-robot')[1200].querySelector('.lib-fav').click();
-          });
-          out.star_off = window.__time(function () {
-            document.querySelector('.lib-favs .lib-fav').click();
-          });
           return out;
         })()""")
         print("  " + json.dumps(t))
@@ -150,13 +207,30 @@ def probe(window, rows):
         budget("editor_open", t.get("editor_open"))
         budget("keystroke", t.get("keystroke"))
         budget("editor_close", t.get("editor_close"))
-        budget("star_toggle", t.get("star_toggle"))
         check("editor.newline_cheap", t.get("newline", 999) <= BUDGET["keystroke"] * 2,
               f"({t.get('newline')}ms)")
 
-        # your place in the list survives a rebuild. Rows off screen have
-        # ESTIMATED heights, so restoring a raw pixel offset drifts (measured
-        # ~40 robots) - home.js anchors on the top robot instead.
+        star = [js(window, STAR_PAIR) or {} for _ in range(STAR_REPS)]
+        print("  " + json.dumps({"star_on": [s.get("on") for s in star],
+                                 "star_off": [s.get("off") for s in star]}))
+        # the samples are only comparable if each pair left the tree where it
+        # found it - same robot every time, same row count afterwards
+        check("star.pair_is_its_own_undo",
+              len({s.get("id") for s in star}) == 1 and
+              all(s.get("rows") == rows for s in star),
+              f"({sorted({s.get('id') for s in star})}, "
+              f"{sorted({s.get('rows') for s in star})} rows)")
+        budget("star_toggle", best(star, "on"))
+        budget("star_off", best(star, "off"))
+
+        # your place in the list survives the two shapes of repaint. Rows off
+        # screen have ESTIMATED heights, so restoring a raw pixel offset
+        # drifts (measured ~40 robots) - home.js anchors on the top robot
+        # instead. A star toggle is the SURGICAL shape (the strip gains a row
+        # above you, no rebuild); a sort-header click is a full reordered
+        # rebuild — starring used to be the rebuild trigger here, so when it
+        # went surgical the rebuild check had to move to a trigger that still
+        # rebuilds.
         r = json.loads(js(window, """(function(){
           var view = document.getElementById('view');
           function topRobot() {
@@ -177,10 +251,18 @@ def probe(window, rows):
           document.querySelectorAll('.lib-robot')[1500].querySelector('.lib-fav').click();
           var after = topRobot();
           document.querySelector('.lib-favs .lib-fav').click();      /* undo */
-          return JSON.stringify({before: before, after: after});
+          var before2 = topRobot();
+          /* the active header re-renders on click — re-query for the undo */
+          document.querySelector('.hlc-cell.hlc-sort.on').click();   /* flip dir */
+          var after2 = topRobot();
+          document.querySelector('.hlc-cell.hlc-sort.on').click();   /* restore */
+          return JSON.stringify({before: before, after: after,
+                                 before2: before2, after2: after2});
         })()""") or "{}")
-        check("scroll.anchored_across_rebuild", r.get("before") == r.get("after"),
+        check("scroll.anchored_across_star", r.get("before") == r.get("after"),
               f"(top row {r.get('before')} -> {r.get('after')})")
+        check("scroll.anchored_across_rebuild", r.get("before2") == r.get("after2"),
+              f"(top row {r.get('before2')} -> {r.get('after2')})")
 
         # shift+click across rows that were never on screen. This is the one
         # that cost 42 SECONDS: BV.checklist asked offsetParent per row, and

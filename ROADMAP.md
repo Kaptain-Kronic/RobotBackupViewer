@@ -76,6 +76,15 @@ Each of these is deliberately scoped to land on its own. Good places to start.
 - ✅ **Auto-update check** — shipped: the packaged exe pings GitHub releases
   once on boot (toast + statusbar pill, fully offline-tolerant), the about
   box checks manually anywhere; see CHANGELOG.
+- ✅ **Plant-link status indicator** — a statusbar pill that answers "is it me,
+  the network, or the device?" without leaving the app: no plant adapter / no
+  link / no ip / no gateway / connected, read from this laptop's own adapter,
+  gateway and neighbour tables via `iphlpapi` (netlink.py). **The switch is
+  never contacted** — no SSH, no SNMP, no management plane. Clicking it drops a
+  panel listing the segment, merged with the library, flagging devices that are
+  not in it. Passive by default at zero added packets; the explicit "check now"
+  sends one ARP per listed address (layer 2, no service touched) and refreshes
+  the very table the panel already reads, so there is no second source of truth.
 - 📋 **Library-wide content search** — "which robots call PROG_X / use R[57] /
   reference DI[279]" across the whole library, not just the open backup.
 - 📋 **Absorb `tools/restyle.py`** — the style-clone kit builder gets UI inside
@@ -118,6 +127,56 @@ Each of these is deliberately scoped to land on its own. Good places to start.
   usable it is here: it is ONE fused mesh at its saved pose, not per-link
   parts, so it cannot be posed by joint angles without a split — fine as a
   static body, not a substitute for per-link geometry.
+- ✅ **Program points in 3D** — pick a program in the 3D view (toolbar picker,
+  or "view in 3d" from the programs tab) and its taught path draws among the
+  zones: cartesian points composed through their own UFRAME, joint-recorded
+  ones placed by the same pendant-proven forward kinematics the arm poses on,
+  and every move that cannot be placed listed with the reason. Needs no
+  kinematics for the cartesian half. The slice also landed the viewport's
+  first tracked probe (`ui_view3d_probe.py`), which is why 3d-viewer.md §8
+  no longer opens with "the viewport renders under no test at all".
+- ✅ **Play the path** — pick a program, press play, and the arm walks it
+  through the zones. Joint-recorded points pose by their own taught angles
+  (exact, no solver); cartesian points go through a damped-least-squares
+  solve accepted only when the forward chain reproduces the taught pose.
+  Linear and circular moves are walked in substeps along the drawn line so
+  the arm follows the path rather than bowing off it, and playback is one
+  uniform rule — lerp in joint space between knots — which a joint move
+  satisfies exactly. Timing is the programmed feedrate where the listing
+  proves it and a stated assumption where it cannot; the viewport says "path
+  preview — not a cycle-time simulation" throughout.
+- 📋 **Say how much of a program the view could not draw, before you open it**
+  — the picker lists a program's taught-point count, but not how many of its
+  moves resolve. A listing whose points are all masked, or all behind runtime
+  offsets, looks as promising as one that draws perfectly until you pick it.
+- 📋 **Cycle time for real** — acceleration and deceleration ramps, CNT
+  blending between moves, and the per-model maximum joint rates a percentage
+  move is actually a percentage OF. The first two are motion-planner work; the
+  third is data no FANUC backup file carries, so it would have to come from a
+  table like the kinematics one, with the same validated/unvalidated honesty.
+- 📋 **Runtime offsets and INC** — a move carrying `Offset,PR[n]`,
+  `Tool_Offset,PR[n]` or `INC` is drawn at its taught point today and labelled
+  as such. Composing the register would place them properly, when the register
+  is one the backup can actually prove (an initialised PR nothing writes).
+- 📋 **Decode the taught CONFIG, and select the IK branch with it** — the
+  config string (`N U T, 0, 0, 0`) names the wrist flip, elbow up/down,
+  front/back and the J1/J4/J6 turn counts, and nothing in this repo has
+  pendant-paired any of it, so today it is carried verbatim and never read.
+  Until it is, a cartesian point poses at a **solver-chosen** branch: same
+  TCP, possibly a mirrored elbow, and the residual is ~0 so no runtime check
+  can catch it. Two things make this cheap when someone takes it. `CURPOS.DG`
+  prints joint angles **and** the config string the controller computed for
+  them, so every backup carries one free ground-truth pair (`parse_curpos`
+  reads the six world floats today and drops the string — a two-line change).
+  And with the letters proven, the closed-form **OPW** solution
+  (Brandstötter/Angerer/Hofbaur, the one the vendor's own SDK dispatches to)
+  enumerates all 8 branches so the taught one can be *chosen* rather than
+  labelled. Measured against the shipped table: 121 of 228 chains reduce to
+  OPW as written — 167 are 6-joint, 152 of those have a spherical wrist (the
+  15 misses are exactly the CRX family, which the vendor also solves
+  separately), and 36 more fail only because a side-slung or undersling mount
+  rotates the base. So OPW would need a numerical fallback either way, which
+  is why the numerical solver goes in first.
 - 🐛 **Mesh-renderer regressions (field-reported 2026-08-28; PARKED, circle
   back)** — after the 2026-08-20 perf engine (`28b960f`): occasional missing
   triangles, and wrong in-front/behind stacking, in the camera mesh viewer.
@@ -187,11 +246,56 @@ one click backs up the robot + all its cameras together.
   window it was pressed in (`viewfinder_start {window}` — a key naming one of
   our windows, never a raw title).
 
+- ✅ **The wall feeds every tile, and CV-X has an off switch** (`cam-fair`).
+  The per-beat load budget was handed out to a DOM-order prefix, so exactly
+  twelve tiles were ever fed however big the wall got — and the starved ones
+  were *silent*, not dark, because a tile that is never asked never fails.
+  The budget rotates now (never-painted first, then a resuming cursor), the
+  near-screen margin shrank so off-screen tiles stop competing, and a tile
+  with no picture yet says so. Alongside it, a **CV-X live** switch at the
+  right of the library toolbar drops the whole vendor off the wall and hangs
+  up its sessions at once, handing back the controllers' single remote slots.
+  See §7 of `docs/subsystems/remote-mobile.md` for why three separate test
+  gaps let this reach a plant floor.
+
 - ✅ **Both remote bars carry the same options** — reload · open in window ·
   phone · fullscreen · close, on Matrox and CV-X alike. CV-X reload is a
   Python-side hang-up-then-redial under the same session id, and its pop-out
   window boots on a `#cvx=` fragment and *adopts* the live session: the
   controller's single remote slot is never asked for twice.
+
+- ✅ **CV-X cameras in the cam lens — live tiles** (claimed and landed
+  2026-08-14, on `cvx-live-tiles` stacked on the stream-flush fix) — the
+  multicam wall tiles Keyence controllers beside Matrox by mirroring each
+  screen through the shipped remote-desktop bridge, strictly view-only: no
+  input path is ever wired to a tile, and `cvx_remote_mouse` refuses a tile
+  session outright. One session per controller (that is all the CV-X offers);
+  sessions are leased by the visible grid (`cvx_tile_sync` per tick) and
+  reaped within `CVX_TILE_TTL` (8 s) whenever the wall is not being watched —
+  lens flipped, window hidden, tile scrolled away, an overlay or modal up —
+  so the controllers' single remote slots free up for other terminals.
+  Clicking a tile *adopts* its live session into the full remote (the pop-out
+  pattern), never a second dial. Prerequisite landed first: the MJPEG bridge
+  re-sends a settled frame once after a 150 ms idle, because Chromium's
+  multipart parser only paints part N when part N+1's boundary arrives —
+  without that, a tile of a quiet camera would simply stay blank (live-proven:
+  a real CV-X pushes exactly one frame at connect, then silence).
+
+  ✅ **Corrected on the plant floor 2026-08-18 — a tile polls, it does not
+  stream.** Eight cameras on one line and every CV-X tile read "no image — not
+  answering" while the same camera opened fine on click. Nothing was wrong with
+  the sessions (python logged a clean handshake for all eight): a
+  multipart response never completes, every tile streamed from the one
+  `127.0.0.1:PORT` origin, and the browser caps connections per origin at six —
+  so the seventh tile onward never connected, got no `load` **and no `error`**,
+  and the 8 s honesty timer wrote "not answering" over a camera that was
+  answering. A successful dial also parked `_camDue` at `Infinity`, so a tile
+  that lost the race was never re-kicked and the wall latched dark tile by tile.
+  Tiles now GET a finite still (`/cvxshot/<sid>`) on the grid's existing 2 s
+  beat — the socket comes straight back, so the wall scales past six — and the
+  stream stays for the overlay, which is one viewer. The lesson worth keeping:
+  every CV-X test used ONE camera, and this failure mode is invisible at one and
+  total at eight; `tests/ui_camwall_probe.py` is now the plural case.
 
 - ✅ **A CV-X backup opens in the simulator** — the pull lands under `SD1/`
   with the simulator's `workspace.xml` beside it, so the camera folder in a
@@ -236,6 +340,21 @@ one click backs up the robot + all its cameras together.
   mostly taught masters; timestamped triggers only exist when a tech turned
   image logging on. Landing on the `cvx-photos` branch.
 
+- ✅ **A Matrox backup carries a run of photos, and re-runs stop cloning
+  folders** (landed on `mtx-photo-history`) — the pull took the newest
+  `SavedImages/<date>/` folder, which on a real camera is usually one
+  inspection: a 367-file snapshot with a single photo in it. It now takes the
+  newest N photos (`mtx_photos`, default 25, a slider in ⚙ → preferences),
+  walking date folders newest-first; the newest day comes whole and older
+  photos leave the png behind (same 1920×1200 frame as the jpg beside it, ten
+  times the bytes — measured). And a re-run whose `da/` tree is unchanged now
+  folds its new photos into the snapshot they match instead of stacking a
+  ~400-file near-twin, which is the ONE ruled exception to "nothing writes
+  into a backup folder" (CLAUDE.md · backup-capture.md §5 inv. 7): adds only,
+  never a partial, never a rewrite, and only after this pull is already a
+  complete snapshot in its own right. Verified against two real pulls of one
+  camera two minutes apart (425 non-photo files identical). Still owed: a run
+  against a live camera — everything so far is against real *pulled* trees.
 - ✅ **CV-X 3D models: viewer + STL extract** (landed on `cvx-camera-tabs`) —
   a camera backup's `TDC_L`/`WSM_L` blobs decode to the registered part CAD
   and workspace scans (zlib-wrapped binary-STL facets, `parsers/cvx_models.py`);
@@ -284,6 +403,12 @@ one click backs up the robot + all its cameras together.
 
 ## DCDL importer
 
+- 🔨 **Backup-folder import** (claimed 2026-08-14, branch `import-backups`) —
+  drag an existing backup folder (one robot or a whole slice) onto
+  `+ add robot`, pick plant/line, and the app copies it into the library tree
+  for the normal scan to adopt. The drop-side sibling of the LibraryImporter
+  lane below, not its absorption: this imports *backups that exist*, that
+  seeds *robots that don't have backups yet*.
 - 📋 Absorb LibraryImporter into the viewer as an import wizard (the parser
   seam in `libraryimporter/core.py` exists for this).
 - 📋 Parse a raw DCDL (site-wide device/IP list) directly: generate the robot

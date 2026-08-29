@@ -3,8 +3,17 @@
 *Subsystem doc #4. Written 2026-08-03 against `main` @ `6609992`, clean tree
 (plus this pass's own two comment corrections in `cvx_remote.py` and
 `INVENTORY.md`, §9 item 1 — both 1-for-1 swaps, so cites into those files
-hold). Line-number cites are against that revision and drift with edits; the
-anchor commit is the reference.*
+hold). Updated 2026-08-14 by the stream-flush pass (branch off `main` @
+`b1ef1c9`): §4a rendering shortcut, §7 multipart trap, §8 counts — and by the
+cvx-live-tiles pass on top of it: §1 fifth surface, §5 invariants 5+9, §6
+ladder 13, §9 item 3 resolved. Updated 2026-08-18 by the tile-still pass
+(branch `cvx-live-tiles` @ `a106644`): §1 surface 5, §6 ladder 13, §7 the
+per-origin connection trap, §8 counts — and by the matrox-dark pass beside it:
+§6 ladder 14, §7 the HMIImage trap. Updated 2026-08-26 by the cam-fair pass
+(branch `cam-fair` off `cvx-live-tiles` @ `2f81faa`): §1 surface 5, §5
+invariant 9, §6 ladder 13, §7 the per-beat budget trap (and the stale probe
+count in the trap above it), §8 counts. Line-number cites drift with edits;
+the anchor commit is the reference.*
 
 *Updated 2026-08-28 (that update's commit is the anchor for these sections):
 the remotes became **session-bar chips** — the panel sits below the topbar,
@@ -61,11 +70,9 @@ src/backupviewer/web/js/phoneview.js
 
 ## 1. What it is
 
-Four ways to put a live camera picture — or a live camera *screen* — in front
+Five ways to put a live camera picture — or a live camera *screen* — in front
 of a tech standing at the equipment, none of which exist while the app is only
-reading a backup. All four surface through the same two entry points (the
-camera-remote button on the photos and files tabs, and the 📱 button in the top
-bar), and all four vanish when there is nothing to drive:
+reading a backup. All of them vanish when there is nothing to drive:
 
 1. **The CV-X remote** (`cvx_remote.py` + `cvxremote.js`) — a full
    screen-mirror-plus-mouse remote desktop to a Keyence CV-X controller, spoken
@@ -88,8 +95,23 @@ bar), and all four vanish when there is nothing to drive:
    QR handoff, but the phone mirrors whatever one of *our* windows is showing (a
    camera remote, a popped-out backup) by grabbing that window's client area. No
    rectangle to pick; it follows the window.
+5. **The cam-lens tiles** (`home.js` multicam + the `cvx_tile_*` endpoints in
+   `api.py`) — the library's camera wall. A Matrox tile polls the HMI frame the
+   camera already serves; a CV-X tile **polls a still** from the frame bridge
+   (`/cvxshot/<sid>`), mirroring the controller's screen **view-only**: no
+   input path is wired to a tile, and `cvx_remote_mouse` refuses a tile session
+   outright. A tile deliberately does *not* hold the MJPEG stream open — that
+   is the overlay's route, and a wall cannot be built out of it (§7, the
+   per-origin connection cap) — nor out of a DOM-order prefix (§7, the per-beat
+   budget). Tile sessions are *leases* — renewed by the grid every tick the
+   tile is actually on screen, hung up by a reaper within `CVX_TILE_TTL` (8 s)
+   of the wall not being watched — and clicking a tile *adopts* its live
+   session into the full remote (§5 invariants 5 and 9). The toolbar's **CV-X
+   live** switch takes the whole vendor off the wall in one click: the tiles
+   leave the grid and every session is hung up immediately, which is the fast
+   path for handing a line's remote slots back to the people at the HMIs.
 
-The subsystem's centre of gravity is the CV-X protocol; the other three are
+The subsystem's centre of gravity is the CV-X protocol; the rest is
 comparatively ordinary once the trust posture is stated. Everything below
 spends its length accordingly.
 
@@ -249,6 +271,19 @@ the picture can never sit stale behind client-side buffering and the
 connection stays provably alive. Test-enforced
 (`test_mjpeg_closes_each_part_eagerly_and_resends_when_idle`).
 
+The stream's writer is paced by the session, not a poll: `wait_frame(last,
+timeout)` blocks on a Condition the video parser notifies per frame (and
+`stop()` notifies too, so a dead session releases its handler threads instead
+of stranding them a timeout). Two hard-won rules live in that writer. First,
+the **idle re-send**: after `IDLE_RESEND_S` (0.15 s) with no new frame, the
+settled JPEG goes out once more as a fresh part — Chromium's multipart parser
+only hands part N to the decoder when part N+1's boundary arrives, and the
+CV-X pushes frames on change only, so without the re-send the last frame of
+every burst sat un-painted until the user wiggled the mouse (§7). Second, the
+handler sets `disable_nagle_algorithm = True` and writes each part as a single
+`wfile.write` — with three writes and Nagle on, a part's tail bytes could sit
+out a delayed-ACK window in the kernel.
+
 **Mouse, and the drag finding.** Mouse events are 60-byte messages on 8502
 (type 7 / op 5 / method 0x34), body `[7, h1, h2, eventId, X, Y, h3]` where
 `h1/h2/h3` are three client-side handle constants the controller just echoes
@@ -354,8 +389,12 @@ What must stay true, what enforces it, what breaks if it doesn't.
 5. **The one remote slot is always released before it is re-taken.** A CV-X has
    exactly one remote slot. Reload hangs up, waits, then redials under the same
    session id (`api.py:2170-2189`); a pop-out *adopts* rather than re-dials
-   (`cvx_remote_info`); closing a window or the app stops the session; a failed
-   reload rebinds the registry to the new id. All test-enforced (`test_cvx_window.py`).
+   (`cvx_remote_info`); a clicked cam-lens tile *adopts* too (`cvx_tile_adopt`
+   promotes the leased session and the overlay takes it over); a tile dial is
+   idempotent per ip and answers `CVX_BUSY` rather than contending with an
+   overlay; closing a window or the app stops the session; a failed reload
+   rebinds the registry to the new id. All test-enforced (`test_cvx_window.py`,
+   `test_cvx_tiles.py`).
    Since 2026-08-28 a **parked chip still holds the slot** (esc hides, it does
    not hang up — that is the point: the picture returns instantly) — the chip in
    the session bar is the honest tell that the camera is still held, re-opening
@@ -376,6 +415,21 @@ What must stay true, what enforces it, what breaks if it doesn't.
    tokens gate every route; unknown paths 404 with no reflection; the phone
    never reaches the camera VLAN, only the laptop (`phoneview.py:10-20`).
    Test-enforced (`test_unknown_paths_are_404`, `test_api_qr_renders_only_active_share_urls`).
+9. **A tile mirrors; it never drives — and an unwatched slot frees itself.**
+   Tile sessions carry `video_only`, which `cvx_remote_mouse` refuses
+   (`api.py`), and no tile wires an input handler. Their leases are renewed
+   only by a grid pass that is actually showing them (`cvx_tile_sync`), so
+   every path off the wall — lens flip, hidden window, scrolled-away tile, an
+   open modal or overlay, a crashed frontend — converges on the same reaper,
+   which hangs up within `CVX_TILE_TTL` and gives the controller's single
+   remote slot back to whoever needs it. The **CV-X live** switch is the one
+   path that does not wait for the reaper: turning it off calls
+   `releaseCvxTiles()` directly, because a user saying "stop mirroring these"
+   should not leave a terminal locked for another eight seconds
+   (`cvxswitch.off_frees_the_slots` in `ui_camwall_probe.py`). Since the tile-still pass that is the
+   *only* pause mechanism: a paused wall has nothing to detach, so skipping the
+   pass IS the pause (`detachCvxStreams` is gone). Test-enforced
+   (`test_cvx_tiles.py`; the adopt/redial choreography in `ui_batch_probe.py`).
 
 ## 6. Failure modes
 
@@ -435,8 +489,129 @@ code does about it. "Test-enforced" = a unit test or the probe pins it;
     route parks / ✕ disconnects), and the local zoom (ctrl+wheel grows the box
     and forwards nothing; a plain wheel does reach the camera) are all
     asserted on real DOM (`ui_cvxremote_probe.py`).
-
+13. **A cam-lens tile can't get its camera** → a failed dial backs off
+    exponentially (4/8/16 s → capped 30 s) and the tile says WHICH dark it is:
+    `CVX_BUSY` reads "in use — another terminal holds it", a session that is
+    alive but has pushed no frame reads "connected — no picture yet" (the
+    `frames` count `cvx_tile_sync` already returned and the grid used to throw
+    away), anything else "no image — not answering" (`home.js` camTile, one
+    `_camSay` so the 8 s timer, the error handler and the tick cannot disagree).
+    A tile that has not had its first picture *yet* — the beat's load budget
+    has not reached it — reads "waiting for its first frame…" rather than
+    showing nothing at all: a blank box is indistinguishable from a dead
+    camera, and for one release that is precisely what a starved tile was
+    (§7, the per-beat budget). **No tile is ever silent**: every state above
+    puts words in the tile (`cvxswitch`/`wall.no_silent_blank_tile`).
+    A session python reports dead on sync is dropped and redialed on the same
+    backoff. **No tile ever leaves the retry loop**: every tile polls, so every
+    tile has a next beat — the old streaming tile parked `_camDue` at `Infinity`
+    the moment its dial succeeded, and a picture that then failed to arrive left
+    it unreachable by the tick and dark until the app restarted. A popped-out remote
+    doesn't pause the grid (the pause check sees main-DOM overlays only), so
+    that camera's tile lands in the honest-busy state rather than silence —
+    known, acceptable. Test-enforced at the api layer (`test_cvx_tiles.py`);
+    the tile ladder is probe-covered for the dial/adopt/redial legs.
+14. **A Matrox tile is dark** → the `<img>` error says nothing useful (a 404
+    and an unplugged camera are identical from the DOM), so one `mtx_tile_probe`
+    separates them: a camera that answers **at all**, even with a 404, is up, so
+    its tile reads "no HMI image published"; only a socket-level failure reads
+    "no image — not answering". Asked once a minute at most, and only for a tile
+    that has already gone dark. This matters because `SavedImages/HMIImage.jpg`
+    is not a camera feature — see §7 — so the honest answer is usually the
+    first one. Test-enforced (`test_mtx_remote.py`).
 ## 7. Traps paid for
+
+- **`SavedImages/HMIImage.jpg` is a PROJECT artifact, not a camera endpoint.**
+  The Matrox tile polls that fixed path, and it only exists because a Design
+  Assistant project step writes it. A project without that step serves nothing
+  there, forever — and there is no generic live-image URL to fall back on: both
+  the portal home and the DA operator page are the design environment, with no
+  plain image behind them. Measured on a real line: **12 of 12 cameras up and
+  answering in ~30 ms, 9 publishing the frame, 3 not** — and the 3 that did
+  not were running a different Design Assistant project from the 9 that did,
+  which is the whole of the difference. The wall called three healthy
+  cameras "not answering", which is the honesty rule backwards and sends a tech
+  to check power on a camera that is fine. Nothing app-side can conjure the
+  frame; the only real fix is a project change on the camera, which is plant
+  equipment and not ours to make. So the app says the true thing instead
+  (ladder 14).
+
+
+- **A wall cannot be built out of streams — the six-connection cap.** Every
+  CV-X tile streamed `multipart/x-mixed-replace` from the one
+  `http://127.0.0.1:PORT` origin, and a multipart response *never completes*,
+  so each streaming tile held one of the browser's **six connections per
+  host:port** open for as long as it was on screen. On a real line of eight
+  cameras the seventh onward simply never connected: no bytes, therefore no
+  `load` **and no `error`** either, just the 8 s honesty timer writing "no
+  image — not answering" onto a camera that was answering perfectly — python
+  logged a clean `handshake replayed` for every one of them, and clicking any
+  tile opened it fine (the overlay pauses the wall, which frees the pool).
+  Worse, it was a one-way door: a successful dial parked `_camDue` at
+  `Infinity`, so a tile that lost the race was never re-kicked, and every
+  scroll or overlay re-queued all eight and latched a few more dark until the
+  whole wall was.
+
+  The fix is that a tile asks for a **still** (`/cvxshot/<sid>`, `SHOT_PATH`)
+  and polls it on the grid's own 2 s beat: a finite response with a
+  `Content-Length` gives its socket straight back, so the cap stops being a
+  ceiling on wall size. The camera pushes on change only, so a poll shows
+  exactly what a stream would have. The stream route stays for the overlay,
+  which is one viewer.
+
+  The reason this survived to the plant floor: **every test used one camera.**
+  `ui_batch_probe` rendered two tiles and dialled one controller,
+  `test_cvx_stream` drove a single stream. A per-origin connection limit is
+  invisible at one and fatal at eight. `ui_camwall_probe.py` is now the plural
+  case. (It used nine cameras when it was written for *this* trap; the trap
+  below is why it now uses twenty-four of both vendors.)
+
+- **A wall cannot be built out of a prefix — the per-beat load budget.** The
+  refresh tick starts at most **six new loads a beat**, a courtesy to the plant
+  network. It used to walk the tiles in DOM order and stop at six, and the
+  arithmetic of that is brutal: a tile fetched at beat *N* is due again at
+  *N+2*, so six slots served exactly **twelve tiles, forever**, whatever the
+  wall's size. On a library of 56 cameras, 44 tiles could never paint.
+
+  The two vendors met it very differently, which is why it read as a camera
+  fault. A CV-X tile pays a slot only for its first **dial** — every frame
+  after that is a free loopback read of the leased still (`_camLoad` returns
+  `false` for it) — so CV-X tiles all come up and the bug is invisible. A
+  **Matrox** tile pays a slot for *every frame it ever fetches*, so past the
+  twelfth the wall simply stopped asking. Measured on a real line: tiles 1–9 on
+  screen live, tiles 10–15 black, with three more tiles scrolled just above the
+  fold quietly holding the other three slots.
+
+  Worse than dark: **silent**. A tile that is never *asked* never fails either
+  — no `error`, no 8 s timer — so `dark()` never ran, `.cam-off` was never set,
+  and the CSS keeps `.cam-tile-note` hidden behind a loaded `<img>`. The result
+  was a black rectangle with no text at all, which is exactly what a dead
+  camera looks like. Every one of those cameras answered `200 image/jpeg` in
+  under a second when asked directly, several with *fresher* frames than the
+  tiles that were painting.
+
+  The fix is that the budget **rotates** instead of restarting: a tile that has
+  never painted goes first (a region scrolled into view fills in on the next
+  beat), then the refresh cursor resumes where the last beat stopped, so every
+  showing tile gets its turn — a big wall costs a slower lap, never a permanent
+  black tile. The near-screen margin shrank from ±1/+2 viewports to ±0.5 for
+  the same reason: tiles nobody is looking at were competing for the budget
+  with tiles on screen. And a tile with no picture yet now *says* so
+  (`.cam-wait` → "waiting for its first frame…"), so no tile can ever again be
+  a blank box that means nothing.
+
+  The reason this survived to the plant floor — three at once, and the first
+  two are the same mistake as the trap above, one level up. `ui_camwall_probe`
+  used **nine** cameras: comfortably past the six-connection cap it was written
+  for, comfortably under this twelve-tile ceiling. It drove the wall by calling
+  `_camLoad()` on every tile **by hand**, which bypasses the budget entirely —
+  the broken code never executed under test. And it tiled **CV-X only**, the
+  one vendor this bug spares. The probe now runs 24 tiles of both vendors,
+  lets the real `pass()` drive (`document.hidden` pinned false), asserts
+  against the tiles genuinely on screen, and refuses to run at all if fewer
+  than 13 of them are — a test that sits under the ceiling cannot tell a fixed
+  scheduler from a broken one. Against the old code it reports 20 of 24
+  painted, 4 silent, 4 never re-fetched.
 
 - **Appending 8504 control traffic to the frame — the patchy artifacting.** The
   op1 acks and op6 responses on the video socket carry no image bytes; a frame
@@ -458,6 +633,18 @@ code does about it. "Test-enforced" = a unit test or the probe pins it;
   inventory row's "six 16 kb blobs." And 8504's third message is `(6,5)` —
   exactly the one `_replay` skips (`:363-365`) as the reactive frame-ack prime.
   The code's skip rule and the captured bytes agree.
+
+- **The last frame that hung until a mouse wiggle — Chromium's multipart parser
+  is boundary-driven.** A `multipart/x-mixed-replace` `<img>` paints part N only
+  when part N+1's delimiter arrives; `Content-Length` is ignored. The CV-X
+  pushes frames on change only, so when its screen settled the stream went
+  byte-silent and the final frame of the burst never painted — until mouse
+  traffic made the controller redraw its cursor and push one more. The fix is
+  the **idle re-send** in the MJPEG writer (`IDLE_RESEND_S`, §4a): after 0.15 s
+  with no new frame, the settled JPEG is sent once more, and the duplicate
+  becomes the held part. Do not "simplify" the duplicate away — it *is* the
+  paint. Guarded by `test_idle_resend_flushes_the_settled_frame`, which reads
+  the actual HTTP stream and fails at exactly one part.
 
 - **The drag that snapped at release — a wrong first theory.** Diagnosed first
   as promise-chain starvation in WebView2; that was disproved by reading
@@ -506,26 +693,38 @@ code does about it. "Test-enforced" = a unit test or the probe pins it;
 
 ## 8. Coverage
 
-Counted 2026-08-03. Full-suite anchor: `python -m pytest tests -m
-"probe or not probe"` → **701 passed, 0 skipped** (the number every subsystem
-doc re-runs; see the report at the end).
+Counted 2026-08-03; re-run 2026-08-14 by the stream-flush pass, again
+2026-08-18 by the tile-still + matrox-dark passes, and again 2026-08-26 by the
+cam-fair pass: `python -m pytest tests -m
+"probe or not probe"` → **785 passed, 2 skipped** (both skips environmental — the private
+sample tree absent — each announcing itself, neither silent).
 
-**145 unit tests across seven files** — verified by collection this pass, each
+**157 unit tests across eight files** — verified by collection this pass, each
 count checked individually:
 
 | file | tests |
 |---|---:|
 | `tests/test_qr.py` | 34 |
 | `tests/test_phone_view.py` | 25 |
-| `tests/test_cvx_remote.py` | 23 *(24 since 2026-08-28: + the MJPEG framing/idle-resend test)* |
-| `tests/test_mtx_remote.py` | 21 |
+| `tests/test_cvx_remote.py` | 24 |
+| `tests/test_mtx_remote.py` | 26 |
 | `tests/test_cvx_window.py` | 19 |
 | `tests/test_viewfinder.py` | 16 |
 | `tests/test_screengrab.py` | 7 |
+| `tests/test_cvx_stream.py` | 7 |
 
-Plus `tests/ui_cvxremote_probe.py` (200 lines), which **is** in
-`test_probes.py`'s explicit `PROBES` list (`test_probes.py:54`), so it actually
-runs under the probe suite — not one of the untracked, hand-run-only probes.
+`test_cvx_stream.py` (the stream-flush pass, extended by the tile-still pass to
+cover `/cvxshot/`) is the first coverage of the frame writer itself, and it
+exercises the real thing end to end: a genuine `CvxRemoteSession` handshakes
+against `tests/cvx_sim.py` (a loopback fake controller speaking the 850x
+framing) and a raw HTTP client reads the actual bytes a browser would.
+
+Plus `tests/ui_cvxremote_probe.py` (200 lines) and `tests/ui_camwall_probe.py`
+(193 lines), both in `test_probes.py`'s explicit `PROBES` list, so they actually
+run under the probe suite — not untracked, hand-run-only probes. The cam-wall
+probe exists because **every other CV-X test uses one camera**, and the bug that
+took the wall down was invisible at one and fatal at eight (§7): it stands up
+nine tiles and asserts every one of them paints.
 All of it is offline by construction: `CvxRemoteSession._connect` is injectable
 and the probe fakes the whole session; `test_phone_view` and `test_viewfinder`
 drive **real loopback HTTP** with the camera fetch / window grab faked;
@@ -591,9 +790,11 @@ changes). Evidence attached.
    (`photos.js:495-504`, `files.js:60-61`: `isCvx ? openCvxRemote : openMtxRemote`).
    So a CV-X camera surfaced as a home tile would open the Matrox web-UI overlay —
    which cannot connect to a CV-X (no web UI on port 80) — instead of the screen
-   mirror. Worth confirming whether a `camera-keyence` entry can reach the tile
-   path (the tile's `c` object carries `device_type`), then giving `camTile` the
-   same branch. Found this pass.
+   mirror. Found 2026-08-03.
+   > **✅ RESOLVED 2026-08-14 (the cvx-live-tiles pass).** The question was
+   > moot-by-gate then (a CV-X couldn't reach the grid); now it tiles, and the
+   > click branch adopts the tile's live session into the CV-X overlay —
+   > probe-enforced (`cam.cvx_tile_click_adopts`, `cam.adopted_not_redialled`).
 4. **`-EncodedCommand` in the UAC prompt.** The elevated firewall payload is
    base64, so a user granting admin cannot read it in the Windows prompt (§5
    invariant 4, §7). The answer may well be "acceptable, because the plain-text
@@ -649,3 +850,13 @@ recorded-and-consistent, not re-proven.
   against a real camera this pass.
 - **Nothing was run against a real CV-X or Matrox camera.** Every number in this
   doc is a static read or an offline test.
+- **The tests-per-100-lines table was NOT recomputed** by the tile-still pass.
+  It still reads 145 tests / 2,032 lines; that pass added three unit tests and a
+  probe, and grew `cvx_remote.py`, so both columns have moved a little. The
+  ranking it exists to make is not in doubt, but the figures are last pass's.
+- **The six-connections-per-origin cap is diagnosed, not measured at the browser
+  layer.** What was measured: `ui_camwall_probe` paints 4 of 9 tiles against the
+  streaming code and 9 of 9 against the still route, and the field log showed a
+  clean `handshake replayed` for every camera whose tile read "no image". The
+  exact per-origin limit WebView2 enforces was inferred from Chromium's
+  documented default, not read out of the browser.

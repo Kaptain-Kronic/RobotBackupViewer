@@ -4,10 +4,11 @@
    a selection checkbox + edit; clicking the row opens the robot's backup. Per-LINE
    controls (select-all / backup / trash) act on that line's selected robots, and
    "backup" pulls fresh FTP backups for all selected at once, showing live per-row
-   progress. A head toggle flips the same library into MULTI-CAM: live Matrox
-   tiles in the same plant/line folders, each opening the camera's remote
-   operation on click (CV-X has no live frame to tile — it stays out of this
-   lens). Starring a robot pins it — nested cameras in tow — into the ★
+   progress. A head toggle flips the same library into MULTI-CAM: live camera
+   tiles in the same plant/line folders — a matrox polls its HMI frame, a CV-X
+   mirrors its screen through the remote bridge (view-only, leased, reaped
+   when unwatched) — each opening the camera's remote operation on click.
+   Starring a robot pins it — nested cameras in tow — into the ★
    favorites strip; in multi-cam its cameras float first within their line.
    Marked shell:true so the router lets it render with no manifest. */
 (function () {
@@ -20,6 +21,7 @@
   var _lastAbsorbMsg = "";      /* absorption toast dedupe (same folders every rescan) */
   var _showHidden = false;      /* reveal hidden robots in the list */
   var _showHiddenBtn = null;    /* the header toggle (shown only when some are hidden) */
+  var _cvxLiveBtn = null;       /* the cam lens's CV-X on/off switch (cam lens only) */
   var _warnedTruncated = false; /* the scan-cap warning toast fires once per session */
   var _visibleRobots = [];      /* the currently-rendered robots — the sticky toolbar's scope */
   var _sortMode = "";           /* name | ip | date; lazily read from settings (lib_sort) */
@@ -28,19 +30,49 @@
   var _lastData = null;         /* last lib_list payload — filter re-renders without a refetch */
   var _liveTargets = null;      /* BV.jobs.activeTargets() snapshot, taken once per tree paint */
   var _camCounts = {};          /* robot id -> linked-camera count, built once per tree paint */
+  var _shownList = [];          /* the tree paint's post-hidden-filter list — repaintFavorite feeds it back to favSection */
   var _viewMode = "";           /* backup | multicam; set by a user flip, else home_view is read live */
   var _camTimer = null;         /* multi-cam live-image refresher (self-stops off-screen) */
   var _camRobotNames = {};      /* robot id -> name, for the tiles' "↳ robot" note */
 
   var SORT_LABELS = { name: "name", ip: "IP", date: "last backup",
-                      saved: "saved", cams: "cams", status: "status" };
+                      saved: "saved", cams: "cams", status: "status",
+                      vendor: "camera type" };   /* cam lens only - see effectiveSortMode */
   /* each column's natural first direction: names/IPs read A-to-Z; dates read
      newest-first (that is what a tech means by "sort by last backup"); the
      magnitude columns read most-first; status reads worst-first (triage) */
   var SORT_DEFAULT_DIR = { name: "asc", ip: "asc", date: "desc",
-                           saved: "desc", cams: "desc", status: "desc" };
+                           saved: "desc", cams: "desc", status: "desc",
+                           vendor: "asc" };
   var _sortDir = "";            /* asc | desc; lazily read from settings (lib_sort_dir) */
   var CAM_REFRESH_MS = 2000;    /* live tile refresh — a beat gentler than the HMI's 1s */
+  /* how many NEW picture fetches one beat may start. The cap is a courtesy to
+     the plant network (a wall of 250 KB frames adds up fast), never a limit on
+     which cameras are allowed to be live: the tick rotates it, so the cost of
+     a big wall is a slower lap, never a tile that stays black forever. */
+  var CAM_MAX_LOADS = 6;
+  /* how far off-screen still counts as worth fetching, in viewports. Kept
+     small on purpose: every tile inside this margin competes for the same
+     budget, so a generous look-ahead spends the beat on tiles nobody is
+     looking at. A tile scrolled into view is served on the next beat anyway —
+     never-painted outranks refresh — which is what the look-ahead was for. */
+  var CAM_NEAR_SCREEN = 0.5;
+  var _camCursor = 0;           /* whose turn it is: the budget rotates, never restarts */
+  /* what a dark tile says. Three different darks, and a tech reads them very
+     differently: a held slot is not a dead camera, and a controller that has
+     simply not pushed a picture yet is neither. */
+  var CAM_NOTE_DARK = "no image — not answering";
+  var CAM_NOTE_BUSY = "in use — another terminal holds it";
+  var CAM_NOTE_QUIET = "connected — no picture yet";
+  var CAM_NOTE_NO_HMI = "no HMI image published";
+  /* not a verdict — the honest thing to say BEFORE a tile's first picture */
+  var CAM_NOTE_WAIT = "waiting for its first frame…";
+  /* live CV-X tile sessions, keyed by ip -> {sid, shotUrl, streamUrl}.
+     Module-scoped so a re-render (filter keystroke, library refresh) reuses
+     the live session instead of redialing the controller's single remote
+     slot; after a page reload it rebuilds from nothing and python's lease
+     reaper collects the orphaned sessions on its own. */
+  var _cvxTiles = {};
 
   function sortMode() {
     if (!_sortMode) {
@@ -50,9 +82,27 @@
     return _sortMode;
   }
 
+  /* "camera type" only means something where tiles are shown. The two lenses
+     have always shared one sort button, so rather than splitting the setting
+     (and making the two disagree), a vendor sort left over from the cam lens
+     simply reads as "name" in the backup lens - button label included. */
+  function effectiveSortMode() {
+    var m = sortMode();
+    return (m === "vendor" && viewMode() !== "multicam") ? "name" : m;
+  }
+
+  /* the sort button lives in the head's action row, which is NOT inside
+     _libWrap - the old `_libWrap.querySelector(".lib-sort")` therefore always
+     found null, and the label silently kept whatever mode it was built with
+     however many times you picked a different one. Query the document. */
+  function syncSortBtn() {
+    var b = document.querySelector(".lib-sort");
+    if (b) b.textContent = "sort: " + SORT_LABELS[effectiveSortMode()];
+  }
+
   function sortDir() {
     if (!_sortDir) {
-      _sortDir = ((BV.state.settings || {}).lib_sort_dir) || SORT_DEFAULT_DIR[sortMode()];
+      _sortDir = ((BV.state.settings || {}).lib_sort_dir) || SORT_DEFAULT_DIR[effectiveSortMode()];
       if (_sortDir !== "asc" && _sortDir !== "desc") _sortDir = "asc";
     }
     return _sortDir;
@@ -73,8 +123,7 @@
     }
     BV.api.call("set_setting", "lib_sort", _sortMode).catch(function () {});
     BV.api.call("set_setting", "lib_sort_dir", _sortDir).catch(function () {});
-    var b = _libWrap && _libWrap.querySelector(".lib-sort");
-    if (b) b.textContent = "sort: " + SORT_LABELS[_sortMode];   /* head persists across refreshes */
+    syncSortBtn();                        /* the head persists across refreshes */
     /* sorting is client-side ordering: re-render the cached listing. Hitting
        lib_list here forced a full rescan whenever the tree had changed — and
        DURING a mass backup the tree changes every second, so flipping the sort
@@ -83,6 +132,42 @@
   }
 
   /* ---- backup <-> multi-cam: two lenses on the same library ---- */
+
+  /* Are CV-X cameras live on the wall?
+     Worth a switch of its own rather than a filter buried in a menu, because
+     a CV-X tile costs something a Matrox tile does not: mirroring one takes
+     that controller's SINGLE remote slot for as long as the tile is up, so a
+     wall left open on a CV-X line is a terminal nobody at the HMI can use.
+     Off means OFF, not merely hidden - the tiles leave the grid and every
+     session is hung up at once, which hands the slots straight back. */
+  function cvxLive() {
+    var v = (BV.state.settings || {}).lib_cvx_live;
+    return v === undefined || v === null ? true : !!v;   /* on unless turned off */
+  }
+
+  function setCvxLive(on) {
+    if (BV.state.settings) BV.state.settings.lib_cvx_live = !!on;
+    BV.api.call("set_setting", "lib_cvx_live", !!on).catch(function () {});
+    /* hand the controllers their slots back NOW - waiting out CVX_TILE_TTL
+       would leave a terminal locked for another eight seconds after a user
+       has explicitly said "stop mirroring these" */
+    if (!on) releaseCvxTiles();
+    syncCvxLiveBtn();
+    rerenderFromCache();   /* a display filter: repaint the cached listing */
+  }
+
+  function syncCvxLiveBtn() {
+    if (!_cvxLiveBtn) return;
+    var on = cvxLive();
+    _cvxLiveBtn.textContent = on ? "CV-X live · on" : "CV-X live · off";
+    _cvxLiveBtn.classList.toggle("is-off", !on);
+    _cvxLiveBtn.setAttribute("aria-pressed", on ? "true" : "false");
+    _cvxLiveBtn.title = on
+      ? "CV-X cameras are tiling live — each one holds that controller's " +
+        "single remote slot. Click to switch them off."
+      : "CV-X cameras are off the wall and their remote slots are free. " +
+        "Click to switch them back on.";
+  }
 
   function viewMode() {
     /* only a user flip (setViewMode) writes _viewMode; until then read the
@@ -112,6 +197,7 @@
     if (!_libWrap || !document.body.contains(_libWrap)) return;
     var cam = viewMode() === "multicam";
     _libWrap.classList.toggle("cam-mode", cam);
+    syncSortBtn();   /* "camera type" reads as "name" once the tiles are gone */
     /* (the selection count hides itself whenever the selection is empty -
        syncToolbar - which covers the cam lens for free: tiles can't select) */
     if (_filterBox) _filterBox.input.placeholder = cam ? "filter cameras…" : "filter robots…";
@@ -119,9 +205,28 @@
        stays only for the cam lens, which has no columns to click */
     var sb = _tslot && _tslot.querySelector(".lib-sort");
     if (sb) sb.classList.toggle("hidden", !cam);
+    /* the CV-X switch means something only where tiles are shown - the backup
+       lens dials nothing, so a switch for it there would be a lie */
+    if (_cvxLiveBtn) {
+      _cvxLiveBtn.classList.toggle("hidden", !cam);
+      syncCvxLiveBtn();
+    }
   }
 
   function nameCmp(a, b) { return (a.robot || "").localeCompare(b.robot || ""); }
+
+  /* what a camera IS, as a sortable key. The wall's two vendors mirror through
+     completely different paths - a Matrox serves its own HMI frame, a CV-X goes
+     through the remote bridge - and they fail in completely different ways, so
+     a tech working one of them wants them together rather than interleaved.
+     An unrecognised camera type sinks below both instead of being quietly
+     folded into one of them. */
+  function camVendorKey(r) {
+    var t = r.device_type || "";
+    if (t === "camera-keyence") return "1 cv-x";
+    if (t === "camera-mtx") return "2 matrox";
+    return "3 " + t;
+  }
 
   function ipNum(r) {
     var m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(((r.ips && r.ips[0]) || "").trim());
@@ -140,7 +245,7 @@
   }
 
   function robotComparator() {
-    var mode = sortMode();
+    var mode = effectiveSortMode();
     var dir = sortDir() === "desc" ? -1 : 1;
     var base = nameCmp;
     if (mode === "ip") {
@@ -156,6 +261,12 @@
            old single-direction behavior */
         var da = a.last_backup || "", db = b.last_backup || "";
         if (da !== db) return da < db ? -1 : 1;
+        return nameCmp(a, b);
+      };
+    } else if (mode === "vendor") {
+      base = function (a, b) {
+        var va = camVendorKey(a), vb = camVendorKey(b);
+        if (va !== vb) return va < vb ? -1 : 1;
         return nameCmp(a, b);
       };
     } else if (mode === "saved") {
@@ -464,9 +575,13 @@
       ]);
     });
     var sortBtn = BV.el("button", { class: "btn lib-sort", title: "library sort order" },
-      "sort: " + SORT_LABELS[sortMode()]);
+      "sort: " + SORT_LABELS[effectiveSortMode()]);
     sortBtn.addEventListener("click", function () {
-      BV.menu(sortBtn, ["name", "ip", "date"].map(function (mode) {
+      /* the cam lens offers one mode more than the backup lens: grouping the
+         wall by vendor, which is meaningless over robots */
+      var modes = ["name", "ip", "date"];
+      if (viewMode() === "multicam") modes.push("vendor");
+      BV.menu(sortBtn, modes.map(function (mode) {
         return { label: SORT_LABELS[mode], onClick: function () { setSortMode(mode); } };
       }));
     });
@@ -513,13 +628,22 @@
       title: "add a robot to the library" }, "+ add robot");
     addBtn.addEventListener("click", function () {
       /* existing backups join the library by being COPIED into the library
-         folder (Explorer) — the scan/watcher picks them up. Adding here is for
-         robots that don't have backup data yet. */
+         folder — with Explorer (the scan/watcher picks them up) or via the
+         import flow, which is that same copy with plant/line asked for you.
+         discover/manually are for robots that don't have backup data yet. */
       BV.menu(addBtn, [
         { label: "discover on network", onClick: discoverFlow },
+        { label: "import backup folder…", onClick: importFlow },
         { label: "manually", onClick: function () { editRobotModal(null, true); } },
       ]);
     });
+    /* the CV-X switch rides the far RIGHT of the same bar (margin-left:auto),
+       away from the library verbs on the left: it is not a library action,
+       it decides what the wall is allowed to dial. */
+    _cvxLiveBtn = BV.el("button", { class: "btn lib-cvx-live hidden",
+      id: "lib-cvx-live", role: "switch" }, "CV-X live · on");
+    _cvxLiveBtn.addEventListener("click", function () { setCvxLive(!cvxLive()); });
+    syncCvxLiveBtn();
     headActs.appendChild(fnBtn);
     headActs.appendChild(sortBtn);
     headActs.appendChild(cancelAll);
@@ -528,6 +652,7 @@
     headActs.appendChild(addBtn);
     head.appendChild(headActs);
     head.appendChild(selActs);
+    head.appendChild(_cvxLiveBtn);
     syncHeadMode();   /* a remount lands in the persisted lens, head included */
     return head;
   }
@@ -772,6 +897,38 @@
     return node;
   }
 
+  /* a star toggle repaints ONLY what it changes: this robot's star (every
+     rendered copy) and the favorites strip it joins or leaves — the same
+     surgical rule as repaintNotes. The tree itself never moves on a star:
+     robotComparator doesn't sort on favorite, and the cam lens (which does)
+     has no star buttons — yet rebuilding it anyway was a ~490ms stall at
+     plant scale. */
+  function repaintFavorite(r) {
+    if (!_libWrap || !document.body.contains(_libWrap)) return;
+    var body = _libWrap.querySelector(".home-lib-body");
+    if (!body || !_lastData) { refresh(); return; }
+    _libWrap.querySelectorAll('.lib-robot[data-robot-id="' + r.id + '"] .lib-fav')
+      .forEach(function (btn) {
+        btn.classList.toggle("on", !!r.favorite);
+        btn.textContent = r.favorite ? "★" : "☆";
+        btn.title = r.favorite ? "unpin from favorites"
+                               : "pin to favorites (top of the library)";
+      });
+    /* the strip grows/shrinks ABOVE the viewport when you're deep in the
+       tree — anchor the scroll across the swap exactly like a rebuild does */
+    saveLensScroll();
+    var old = body.querySelector(".lib-favs");
+    var next = favSection(_shownList);
+    if (old && next) old.replaceWith(next);
+    else if (old) old.remove();
+    else if (next) {
+      var cols = body.querySelector(".home-lib-cols");
+      body.insertBefore(next, cols ? cols.nextSibling : body.firstChild);
+    }
+    restoreLensScroll();
+    reattachProgress();   /* a strip copy of a mid-backup robot gets its bar back */
+  }
+
   /* the sticky column-label row — Explorer's details header. One per render,
      on the shared --librow-grid template so labels align with every panel's
      cells; name / ip / last click through to the existing sort modes. */
@@ -833,8 +990,9 @@
     var shownList = robots.filter(function (r) {
       if (r.hidden) {
         /* the toggle's count says what IT would reveal: the cam lens tiles
-           matrox cameras only, so hidden robots don't inflate its number */
-        if (!camMode || r.device_type === "camera-mtx") hiddenCount++;
+           cameras only (both vendors), so hidden robots don't inflate its
+           number */
+        if (!camMode || isCam(r)) hiddenCount++;
         return _showHidden;
       }
       return true;
@@ -852,6 +1010,7 @@
       _cl.sync();
       return;
     }
+    _shownList = shownList;
     var res = _tree.render(body,
       { robots: shownList, emptyPlants: emptyPlants, emptyLines: emptyLines },
       { q: _filter, cmp: robotComparator() });
@@ -889,9 +1048,10 @@
     ctl.appendChild(cb);
 
     /* the star lives by the checkbox (both are "act on this row" controls).
-       Toggling is INSTANT: flip the cached entry and repaint from cache — a
-       lib_list here re-walks the whole tree, seconds at plant scale — then
-       persist in the background and revert if the save fails. */
+       Toggling is INSTANT: flip the cached entry and surgically repaint the
+       star + strip (a lib_list here re-walks the whole tree, seconds at
+       plant scale; even a from-cache tree rebuild is a visible stall) —
+       then persist in the background and revert if the save fails. */
     var favBtn = BV.el("button", { class: "lib-fav" + (r.favorite ? " on" : ""),
       title: r.favorite ? "unpin from favorites" : "pin to favorites (top of the library)" },
       r.favorite ? "★" : "☆");
@@ -899,10 +1059,10 @@
       e.stopPropagation();
       var want = !r.favorite;
       r.favorite = want;
-      rerenderFromCache();
+      repaintFavorite(r);
       BV.api.call("lib_set_favorite", r.id, want).catch(function (err) {
         r.favorite = !want;
-        rerenderFromCache();
+        repaintFavorite(r);
         BV.toast(err.message);
       });
     });
@@ -1128,9 +1288,26 @@
     sb.focus();
   }
 
-  /* one menu for the ⋯ button AND right-click on the row. No delete here:
-     files are law — hide covers the everyday case, and a true delete is done
-     in Explorer ("open folder"); the library follows. */
+  function robotById(id) {
+    return _robots.find(function (x) { return x.id === id; }) || null;
+  }
+
+  /* this robot's row in the mounted listing, or null — the listing is gone
+     from the DOM whenever a backup is on screen. Used by the actions that
+     want to act ON the row (the inline note editor) rather than on the
+     record, so they can tell "no row here" from "row somewhere else". */
+  function libRowFor(r) {
+    if (!_libWrap || !document.body.contains(_libWrap)) return null;
+    return _libWrap.querySelector('.lib-robot[data-robot-id="' + r.id + '"]');
+  }
+
+  /* THE per-robot menu: the ⋯ button, right-click on the row, and right-click
+     on the robot's backup tab (BV.libActions.robotMenu → backuptabs.js) all
+     build from here, so a robot offers the same actions wherever it is on
+     screen. `main` is the row's cell when a row was clicked and null when it
+     wasn't — items that need one say so themselves. No delete here: files are
+     law — hide covers the everyday case, and a true delete is done in Explorer
+     ("open folder"); the library follows. */
   function rowMenuItems(r, main) {
     var items = [
       { label: "edit", onClick: function () { editRobotModal(r, false); } },
@@ -1143,29 +1320,87 @@
     }
     items.push(
       { label: r.notes ? "edit note" : "add note",
-        onClick: function () { editNoteInline(main, r); } },
+        onClick: function () {
+          /* opened from the row: edit right there. Opened from a backup tab:
+             the row still gets the editor when the listing is on screen (and
+             is scrolled to first — an editor focused off-screen looks like
+             nothing happened), otherwise the edit modal carries the very same
+             notes field, so the action never has to be missing. */
+          var host = main;
+          if (!host) {
+            var row = libRowFor(r);
+            if (row) {
+              row.scrollIntoView({ block: "nearest" });
+              host = row.querySelector(".lib-robot-main");
+            }
+          }
+          if (host) editNoteInline(host, r);
+          else editRobotModal(r, false, { focus: "notes" });
+        } },
       { label: r.hidden ? "unhide" : "hide", onClick: function () { setHidden(r, !r.hidden); } });
     if (r.history_root) {
       items.push({ label: "open folder", onClick: function () { openLocation(r.history_root); } });
     }
-    /* the quick bulk route into the edit workspace: every .LS this robot has.
-       Resolved server-side (a stale Latest mirror must not decide it) and
-       without opening a session - a workspace spans more robots than the
-       session cap allows. */
+    /* the quick bulk route into the edit workspace. With several rows ticked
+       it takes the WHOLE selection — the label says how many, so the menu can
+       never quietly act on rows you had forgotten were lit. */
+    var into = selectionFor(r, main);
     items.push({
-      label: "add all programs to edit workspace",
-      onClick: function () {
-        BV.api.call("ws_robot_programs", r.id).then(function (res) {
-          var added = BV.workspace.addMany((res.programs || []).map(function (p) {
-            return { root: res.root, label: res.label, file: p.file, name: p.name };
-          }));
-          if (!added) { BV.toast("already in the workspace"); return; }
-          BV.toast(added + " program" + (added === 1 ? "" : "s") + " added");
-          BV.openWorkspace();
-        }).catch(function (e) { BV.toast(e.message || "could not read that robot"); });
-      },
+      label: into.length > 1
+        ? "add all programs from " + into.length + " selected robots to edit workspace"
+        : "add all programs to edit workspace",
+      onClick: function () { addProgramsToWorkspace(into); },
     });
     return items;
+  }
+
+  /* which robots a row action means: the ticked selection when the menu was
+     opened from a row that is part of it (`main` is that row's cell — a backup
+     tab has no row and no selection behind it), else just the one you clicked. */
+  function selectionFor(r, main) {
+    if (!main || !_cl.has(r.id)) return [r];
+    var sel = selectedRobots();
+    return sel.length > 1 ? sel : [r];
+  }
+
+  /* every TP program these robots have, into the edit workspace. Resolved
+     server-side (a stale Latest mirror must not decide it) and without opening
+     a session — a workspace spans more robots than the session cap allows.
+     One robot failing never sinks the batch: whatever could be read is added
+     and the rest are NAMED, the way every other batch flow here reports. */
+  function addProgramsToWorkspace(list) {
+    Promise.all(list.map(function (r) {
+      return BV.api.call("ws_robot_programs", r.id).then(function (res) {
+        return { robot: r.robot, res: res };
+      }).catch(function (e) {
+        return { robot: r.robot, error: e.message || "could not read that robot" };
+      });
+    })).then(function (results) {
+      var added = 0, found = 0, fails = [];
+      results.forEach(function (x) {
+        if (x.error) { fails.push({ robot: x.robot, error: x.error }); return; }
+        var progs = x.res.programs || [];
+        found += progs.length;
+        added += BV.workspace.addMany(progs.map(function (p) {
+          return { root: x.res.root, label: x.res.label, file: p.file, name: p.name };
+        }));
+      });
+      var note = fails.length ? " · " + failureLines(fails).join(" · ") : "";
+      var ms = fails.length ? 6000 : undefined;
+      if (added) {
+        BV.toast(added + " program" + (added === 1 ? "" : "s") + " added" + note, ms);
+        BV.openWorkspace();
+      } else if (found) {
+        BV.toast("already in the workspace" + note, ms);
+      } else if (fails.length) {
+        BV.toast(failureLines(fails).join(" · "), 6000);
+      } else {
+        /* nothing to add and nothing failed: the backups simply hold no TP
+           programs — "already in the workspace" would have been a lie */
+        BV.toast(list.length > 1 ? "no programs in those backups"
+                                 : "no programs in that backup");
+      }
+    });
   }
 
   /* a robot's note in the listing: first line in grey, the rest behind an
@@ -1315,10 +1550,14 @@
   /* ---- multi-cam (live camera tiles) ---- */
 
   /* the Matrox web server's live HMI frame — the same image the wall-monitor
-     page shows, cache-busted per fetch so every load is fresh */
+     page shows. Cache-busting belongs to fetchFrame, which is the one place
+     either vendor's picture is actually asked for. */
   function camLiveUrl(ip) {
-    return "http://" + ip + "/SavedImages/HMIImage.jpg?t=" + Date.now();
+    return "http://" + ip + "/SavedImages/HMIImage.jpg";
   }
+
+  function isCam(r) { return (r.device_type || "").indexOf("camera") === 0; }
+  function isCvxCam(r) { return r.device_type === "camera-keyence"; }
 
   function renderCamGrid(body, robots) {
     /* names + stars come from the FULL cached list: a camera linked to a
@@ -1330,22 +1569,32 @@
       if (r.favorite) favIds[r.id] = 1;
     });
     _camRobotNames = robotNames;
-    /* matrox only: those serve a live HMI frame this grid can show. A CV-X
-       has no image to offer here, so it isn't tiled — its screen mirror
-       stays one click away on its library row / the robot's photos tab */
-    var cams = robots.filter(function (r) {
-      return r.device_type === "camera-mtx";
-    });
+    /* both vendors tile: a matrox serves its live HMI frame over plain http,
+       and a CV-X mirrors its screen through the remote-desktop bridge —
+       view-only, leased per tick, reaped the moment the wall stops being
+       watched (cvx_tile_* in api.py) */
+    var cams = robots.filter(isCam);
+    /* the CV-X switch is a display filter with teeth: the tiles leave the
+       grid, and the sessions behind them were hung up when it was flipped */
+    var cvxOff = cams.length && !cvxLive();
+    var cvxHeld = cvxOff ? cams.filter(isCvxCam).length : 0;
+    if (cvxOff) cams = cams.filter(function (r) { return !isCvxCam(r); });
     if (!cams.length) {
       /* an empty grid must not deny cameras that are merely hidden — hidden
-         things are listed behind the toggle, never silently absent */
-      var hiddenMtx = (_robots || []).filter(function (r) {
-        return r.device_type === "camera-mtx" && r.hidden;
+         things are listed behind the toggle, never silently absent. The CV-X
+         switch is the same promise: cameras it removed say so rather than
+         reading as a library with nothing in it. */
+      var hiddenCams = (_robots || []).filter(function (r) {
+        return isCam(r) && r.hidden;
       }).length;
-      body.innerHTML = hiddenMtx
-        ? '<div class="empty-lib">' + hiddenMtx + " matrox camera" +
-          (hiddenMtx === 1 ? " is" : "s are") + " hidden — use “show hidden” above.</div>"
-        : '<div class="empty-lib">no matrox cameras in the library yet — ' +
+      body.innerHTML = cvxHeld
+        ? '<div class="empty-lib">' + cvxHeld + " CV-X camera" +
+          (cvxHeld === 1 ? " is" : "s are") + " switched off — use “CV-X live” " +
+          "above to tile " + (cvxHeld === 1 ? "it" : "them") + " again.</div>"
+        : hiddenCams
+        ? '<div class="empty-lib">' + hiddenCams + " camera" +
+          (hiddenCams === 1 ? " is" : "s are") + " hidden — use “show hidden” above.</div>"
+        : '<div class="empty-lib">no cameras in the library yet — ' +
           "add them with “+ add robot → discover on network”.</div>";
       if (_filterBox) _filterBox.setCount(undefined, 0);
       return;
@@ -1366,10 +1615,13 @@
     startCamRefresh();
   }
 
-  /* one live tile: the camera's current HMI image, or an honest note for a
-     no-IP entry. Clicking goes straight to remote operation. */
+  /* one live tile: the camera's current picture — a matrox HMI frame polled
+     over http, or a CV-X screen mirrored through the remote bridge — or an
+     honest note for a no-IP entry. Clicking goes straight to remote
+     operation. */
   function camTile(c) {
     var ip = (c.ips && c.ips[0]) || "";
+    var isCvx = c.device_type === "camera-keyence";
     /* a focusable button, like every clickable thing in the app (keyboard
        map below); data-robot-id feeds the shared scroll anchor */
     var tile = BV.el("div", { class: "cam-tile" + (ip ? "" : " no-ip"),
@@ -1379,48 +1631,129 @@
     if (ip) {
       var img = BV.el("img", { class: "cam-live", alt: "" });
       img.dataset.ip = ip;
+      if (isCvx) img.dataset.cvx = "1";
+      var note = BV.el("div", { class: "cam-tile-note dim" }, CAM_NOTE_WAIT);
       /* the tile owns its own load lifecycle; the shared tick decides WHEN by
          calling img._camLoad(), never by touching src (reassigning src aborts
          an in-flight transfer and restarts it from byte 0 — a camera needing
          >2s per frame could never complete a single load). No load happens at
          creation: renders fire on every filter keystroke / library refresh,
-         and fetching every tile each time hammered the plant network. */
+         and fetching every tile each time hammered the plant network.
+
+         BOTH vendors poll a still picture: a matrox serves its HMI jpeg, a
+         CV-X its mirrored screen through the bridge (dial once for the lease,
+         then ask that lease for a frame each beat). A tile deliberately does
+         NOT hold a stream open — a wall of never-ending responses starves on
+         the browser's six-connections-per-origin cap, and every tile past the
+         sixth then sits dark forever; cvx_remote.SHOT_PATH has the long form. */
       var pending = 0;       /* Date.now() when the in-flight load started */
       var fails = 0;         /* consecutive failures, for retry backoff */
       var slowTimer = null;
       img._camDue = 0;       /* earliest next load; the tick reads this */
-      img._camLoad = function () {
-        var now = Date.now();
-        if (pending) {
-          if (now - pending < 30000) return false;  /* let it finish first */
-          fails++;                    /* hung past any TCP timeout: re-kick */
-          tile.classList.add("cam-off");
-        }
-        pending = now;
-        clearTimeout(slowTimer);
-        /* an ABORTED or hung load fires no error event, so honesty needs a
-           timer: still nothing after 8s -> say "not answering" (a frame that
-           lands later clears it) */
-        slowTimer = setTimeout(function () { tile.classList.add("cam-off"); }, 8000);
-        img.src = camLiveUrl(ip);
-        return true;
+      img._camNote = CAM_NOTE_DARK;   /* WHICH dark this tile is, if it goes dark */
+      img._camShown = 0;     /* has this tile ever painted? first picture beats a refresh */
+      /* until the first picture lands the tile SAYS so. A blank black box that
+         explains nothing is the one thing a wall must never show: it is
+         indistinguishable from a dead camera, and that is exactly how a
+         starved tile used to read. Every tile now carries a note in every
+         state — waiting, dark, or busy — so silence can never come back. */
+      tile.classList.add("cam-wait");
+
+      /* one place decides what a dark tile says, so the 8s timer, the error
+         handler and the tick cannot disagree — and a verdict can be revised,
+         because python knows whether a live session has pushed a picture. */
+      img._camSay = function (text) {
+        img._camNote = text;
+        if (tile.classList.contains("cam-off")) note.textContent = text;
       };
+      function dark() {
+        note.textContent = img._camNote;
+        tile.classList.remove("cam-wait");   /* a verdict outranks "waiting" */
+        tile.classList.add("cam-off");
+        if (!isCvx) probeMtxDark();
+      }
+      /* WHY a matrox tile is dark. The img's error event cannot tell us: a 404
+         and an unplugged camera look identical from here. One python probe
+         separates them — a camera that answers at all is up, and a Design
+         Assistant project either publishes SavedImages/HMIImage.jpg or it
+         never will — so the answer is stable and worth asking for at most
+         once a minute, and only for a tile that has already gone dark. */
+      function probeMtxDark() {
+        if (img._camProbeAt && Date.now() - img._camProbeAt < 60000) return;
+        img._camProbeAt = Date.now();
+        BV.api.call("mtx_tile_probe", { ip: ip }).then(function (r) {
+          if (r && r.state === "no_image") img._camSay(CAM_NOTE_NO_HMI);
+          else if (r && r.state === "down") img._camSay(CAM_NOTE_DARK);
+        }).catch(function () { /* the tile keeps whatever it already said */ });
+      }
+      /* ask for ONE picture, and arm the honesty timer around it: an ABORTED
+         or hung load fires no error event, so still nothing after 8s -> say
+         so (a frame that lands later clears it). Armed around the fetch and
+         never around the dial — the 8s has to measure the picture, not the
+         handshake in front of it. */
+      function fetchFrame(url) {
+        pending = Date.now();
+        clearTimeout(slowTimer);
+        slowTimer = setTimeout(dark, 8000);
+        img.src = url + "?t=" + Date.now();
+      }
+
+      img._camLoad = function () {
+        if (pending) {
+          if (Date.now() - pending < 30000) return false;  /* let it finish first */
+          fails++;                    /* hung past any TCP timeout: re-kick */
+          dark();
+        }
+        if (!isCvx) { fetchFrame(camLiveUrl(ip)); return true; }
+        var lease = _cvxTiles[ip];
+        if (lease && lease.shotUrl) {
+          fetchFrame(lease.shotUrl);
+          return false;               /* a loopback still is not a plant fetch */
+        }
+        /* no lease yet: take the controller's one view-only slot, and every
+           beat after this one just asks that session for a picture */
+        pending = Date.now();
+        BV.api.call("cvx_tile_start", { ip: ip }).then(function (r) {
+          pending = 0;
+          img._camSay(CAM_NOTE_DARK);     /* a fresh dial retires an old verdict */
+          _cvxTiles[ip] = { sid: r.session_id, shotUrl: r.shot_url,
+                            streamUrl: r.stream_url };
+          fetchFrame(r.shot_url);
+        }).catch(function (e) {
+          pending = 0; fails++;
+          /* say WHICH kind of dark this is: a held slot is not a dead cam */
+          img._camSay((e && e.code === "CVX_BUSY") ? CAM_NOTE_BUSY : CAM_NOTE_DARK);
+          dark();
+          img._camDue = Date.now() + Math.min(CAM_REFRESH_MS * Math.pow(2, fails), 30000);
+        });
+        return true;                      /* a dial counts against the beat cap */
+      };
+
       img.addEventListener("load", function () {
         pending = 0; fails = 0;
         clearTimeout(slowTimer);
         tile.classList.remove("cam-off");
+        tile.classList.remove("cam-wait");
+        img._camShown = 1;        /* it has a picture now: it joins the rotation */
+        img._camSay(CAM_NOTE_DARK);
+        img._camProbeAt = 0;      /* a camera that started publishing gets re-asked */
+        /* every tile polls, so every tile has a next beat. Nothing parks at
+           Infinity any more — that is what used to strand a tile whose picture
+           never arrived: unreachable by the tick, and dark until a restart. */
         img._camDue = Date.now() + CAM_REFRESH_MS;
       });
       img.addEventListener("error", function () {
         pending = 0; fails++;
         clearTimeout(slowTimer);
-        tile.classList.add("cam-off");
-        /* 4s, 8s, 16s, then every 30s — a dead camera decays to a slow
-           retry instead of being re-polled at full rate forever */
+        dark();
+        /* 4s, 8s, 16s, then every 30s — a dead camera decays to a slow retry
+           instead of being re-polled at full rate forever. A CV-X whose lease
+           died under us heals a beat later, when cvx_tile_sync reports the
+           session gone and drops it. */
         img._camDue = Date.now() + Math.min(CAM_REFRESH_MS * Math.pow(2, fails), 30000);
       });
       box.appendChild(img);
-      box.appendChild(BV.el("div", { class: "cam-tile-note dim" }, "no image — not answering"));
+      box.appendChild(note);
     } else {
       box.appendChild(BV.el("div", { class: "cam-tile-note dim" }, "no IP on record"));
     }
@@ -1440,7 +1773,24 @@
     tile.title = ip ? "remote operation · " + ip : "no IP on record";
     tile.addEventListener("click", function () {
       if (!ip) { BV.toast("this camera has no IP on record"); return; }
-      BV.openMtxRemote(ip, c.robot || ip);
+      if (!isCvx) { BV.openMtxRemote(ip, c.robot || ip); return; }
+      /* a CV-X tile already holds the controller's one remote slot — the
+         overlay ADOPTS that session (promoted out of view-only on the python
+         side) instead of dialling twice. A beat too late (just reaped) falls
+         back to a fresh dial after the slot settles. */
+      var lease = _cvxTiles[ip];
+      if (lease && lease.sid) {
+        var sid = lease.sid;
+        delete _cvxTiles[ip];              /* the overlay owns it from here */
+        img._camDue = 0;                   /* redial when the overlay hands it back */
+        BV.api.call("cvx_tile_adopt", sid).then(function () {
+          BV.openCvxRemote(ip, c.robot || ip, { adopt: sid });
+        }).catch(function () {
+          setTimeout(function () { BV.openCvxRemote(ip, c.robot || ip); }, 400);
+        });
+      } else {
+        BV.openCvxRemote(ip, c.robot || ip);
+      }
     });
     /* Enter/Space = the click (no-IP toast included); Esc drops the focus */
     tile.addEventListener("keydown", function (e) {
@@ -1458,27 +1808,115 @@
      bursts every camera at once. Self-stops when the library leaves the
      screen or the lens flips back to backup; tiles render unloaded, so first
      fetches land here too. */
+  /* pause = stop asking. Every tile polls a still now, so a paused wall has
+     nothing to let go of: skipping the pass is the whole pause. The leases
+     simply stop being renewed, and python's reaper hands the controllers'
+     single remote slots back within CVX_TILE_TTL — one mechanism covering
+     every way a wall stops being watched, which is what invariant 9 asks for. */
+
+  /* the lens flipped away (or the library left the screen): hang up every
+     tile session NOW instead of making the cameras wait out the TTL */
+  function releaseCvxTiles() {
+    Object.keys(_cvxTiles).forEach(function (tip) {
+      var l = _cvxTiles[tip];
+      if (l && l.sid) BV.api.call("cvx_tile_stop", l.sid).catch(function () {});
+    });
+    _cvxTiles = {};
+  }
+
   function startCamRefresh() {
     if (_camTimer) return;
     function pass() {
       if (!_libWrap || !document.body.contains(_libWrap) || viewMode() !== "multicam") {
-        clearInterval(_camTimer); _camTimer = null; return;
+        clearInterval(_camTimer); _camTimer = null;
+        releaseCvxTiles();
+        return;
       }
       if (document.hidden) return;
       /* the CV-X and MTX remote overlays share the cvx-remote class */
       if (document.querySelector(".cvx-remote") || BV.modalOpen()) return;
       var imgs = _libWrap.querySelectorAll("img.cam-live");
-      var now = Date.now(), kicked = 0;
-      for (var i = 0; i < imgs.length && kicked < 6; i++) {   /* ≤6 new loads a beat */
+      var now = Date.now(), kicked = 0, sids = [], showing = [];
+      for (var i = 0; i < imgs.length; i++) {
         var img = imgs[i];
-        if (now < img._camDue) continue;
         /* folded/filtered: the house idiom — a raw offsetParent read inside a
            content-visibility subtree forces layout (checklist.js has the
            42-second receipt), and this loop runs forever on a timer */
-        if (!(img.checkVisibility ? img.checkVisibility() : img.offsetParent !== null)) continue;
-        var r = img.getBoundingClientRect();   /* on/near screen: within a viewport */
-        if (r.bottom < -window.innerHeight || r.top > window.innerHeight * 2) continue;
-        if (img._camLoad()) kicked++;
+        var vis = (img.checkVisibility ? img.checkVisibility() : img.offsetParent !== null);
+        if (vis) {
+          var r = img.getBoundingClientRect();
+          vis = !(r.bottom < -window.innerHeight * CAM_NEAR_SCREEN ||
+                  r.top > window.innerHeight * (1 + CAM_NEAR_SCREEN));
+        }
+        if (!vis) continue;        /* scrolled/folded away: stop asking, keep the lease */
+        showing.push(img);
+        if (img.dataset.cvx) {
+          /* renew the lease of every tile actually on screen. NOT gated on
+             img.src any more: a tile whose first picture has not landed yet
+             still holds a live session, and letting that get reaped is how a
+             slow camera used to lose the slot it had just been given. */
+          var lease = _cvxTiles[img.dataset.ip];
+          if (lease && lease.sid) sids.push(lease.sid);
+        }
+      }
+      /* Spend the beat's budget as a ROTATION, not on a prefix.
+         This loop used to walk the tiles in DOM order and stop at six. A
+         CV-X tile survived that, because only its first dial costs a slot and
+         every frame after it is a free loopback read - but a MATROX tile pays
+         a slot for every frame it ever fetches, so the same handful at the top
+         of the list won the budget every single beat and the rest were never
+         asked for a picture at all. Twelve fed, whatever the wall's size:
+         with 56 cameras in the library, 44 of them could never paint.
+         And a tile that is never ASKED never fails either - no error, no 8s
+         timeout, so dark() never runs, .cam-off is never set, and the CSS
+         keeps the note hidden. The result was a silent black rectangle that
+         looked exactly like a broken camera while the camera was fine. That
+         is the honesty rule inverted, and it sent techs to the wrong line.
+         So: a tile that has NEVER painted goes first, wherever it sits (a
+         region just scrolled into view fills in on the next beat instead of
+         waiting out a lap), and the refresh rotation then resumes where the
+         last beat stopped, so every tile on the wall gets its turn. */
+      for (var f = 0; f < showing.length && kicked < CAM_MAX_LOADS; f++) {
+        var ft = showing[f];
+        if (ft._camShown || now < ft._camDue) continue;
+        if (ft._camLoad()) kicked++;
+      }
+      for (var k = 0; k < showing.length && kicked < CAM_MAX_LOADS; k++) {
+        var idx = (_camCursor + k) % showing.length;
+        var rt = showing[idx];
+        if (!rt._camShown || now < rt._camDue) continue;
+        if (rt._camLoad()) { kicked++; _camCursor = (idx + 1) % showing.length; }
+      }
+      /* one lease-renewal per pass for every tile actually on screen. Python
+         answers with liveness AND the session's frame count, which is what
+         lets a tile tell a quiet controller from a dark one. */
+      if (sids.length) {
+        BV.api.call("cvx_tile_sync", sids).then(function (alive) {
+          Object.keys(_cvxTiles).forEach(function (tip) {
+            var l = _cvxTiles[tip];
+            if (!l || !l.sid || !alive[l.sid]) return;
+            var im = _libWrap && _libWrap.querySelector(
+              'img.cam-live[data-ip="' + tip + '"]');
+            if (alive[l.sid].alive === false) {
+              /* the session died under us: drop the lease so the tile redials
+                 on its own backoff instead of re-asking a sid that is gone */
+              delete _cvxTiles[tip];
+              if (im) {
+                im.removeAttribute("src");
+                im._camDue = Date.now() + CAM_REFRESH_MS;
+                if (im._camSay) im._camSay(CAM_NOTE_DARK);
+                var t = im.closest(".cam-tile");
+                if (t) t.classList.add("cam-off");
+              }
+              return;
+            }
+            /* alive: a session that has never pushed a picture is a quiet
+               camera, not an absent one — say the true thing if it goes dark */
+            if (im && im._camSay) {
+              im._camSay(alive[l.sid].frames ? CAM_NOTE_DARK : CAM_NOTE_QUIET);
+            }
+          });
+        }).catch(function () {});
       }
     }
     _camTimer = setInterval(pass, CAM_REFRESH_MS);
@@ -1491,13 +1929,19 @@
     return lineRobots.filter(function (r) { return _cl.has(r.id); });
   }
 
+  /* the ticked robots, in listed order — the toolbar counter, the
+     manage-backups flows and the row menu all mean the same set by it */
+  function selectedRobots() {
+    return _visibleRobots.filter(function (r) { return _cl.has(r.id); });
+  }
+
   /* the sticky toolbar follows the selection: just the counter now — the
      selection ACTIONS moved into the functions… menu, which reads the live
      selection each time it opens (checkbox + line tri-state repaints are the
      shared checklist's job — this runs as its onChange) */
   function syncToolbar() {
     if (!_libWrap) return;
-    var selN = _visibleRobots.filter(function (r) { return _cl.has(r.id); }).length;
+    var selN = selectedRobots().length;
     var count = _tslot && _tslot.querySelector(".lib-sel-count");
     if (count) {
       count.textContent = selN ? selN + " selected" : "";
@@ -1509,8 +1953,29 @@
   /* the manage-backups modal (manage_ui.js) drives the selected-robot flows
      without owning selection state or the flows themselves */
   BV.libActions = {
-    selected: function () {
-      return _visibleRobots.filter(function (r) { return _cl.has(r.id); });
+    selected: selectedRobots,
+    /* the per-robot action menu for a surface that knows a robot ID but has
+       no library row behind it — the backup tabs. Same items the row's own
+       ⋯ builds, so a robot can be edited, noted, hidden, opened in Explorer
+       or sent to the edit workspace from wherever it is on screen instead of
+       only from the listing.
+
+       A PROMISE because the listing may never have been drawn: a window
+       started on a backup (--backup) boots straight past home, and a menu
+       missing half its actions is worse than one that arrives a beat later.
+       Settled already in every other case — the listing is cached. An
+       unknown robot (an ad-hoc backup with no library entry, or a lookup
+       that comes back empty) yields no items rather than dead ones. */
+    robotMenu: function (robotId) {
+      if (!robotId) return Promise.resolve([]);
+      var r = robotById(robotId);
+      if (r) return Promise.resolve(rowMenuItems(r, null));
+      return BV.api.call("lib_list").then(function (data) {
+        _robots = (data && data.robots) || [];
+        _lastData = data;              /* the pair is always set together */
+        var found = robotById(robotId);
+        return found ? rowMenuItems(found, null) : [];
+      }).catch(function () { return []; });
     },
     fixNames: function () { fixNamesInLine(_visibleRobots); },
     merge: function () { mergeSelectedInLine(_visibleRobots); },
@@ -1548,11 +2013,17 @@
     }).catch(function (e) { BV.toast(e.message); });
   }
 
+  /* the cached record carries the flag straight away (the star's pattern):
+     off the library screen refresh() is a no-op, and the menu is built from
+     the cache — without this a second right-click on the tab of a robot you
+     just hid would still offer "hide". Reverted if the write fails. */
   function setHidden(r, hidden) {
+    var prev = r.hidden;
+    r.hidden = hidden;
     BV.api.call("lib_set_hidden", r.id, hidden).then(function () {
       BV.toast(hidden ? "hidden" : "unhidden");
       refresh();
-    }).catch(function (e) { BV.toast(e.message); });
+    }).catch(function (e) { r.hidden = prev; BV.toast(e.message); });
   }
 
   /* ---- rename / merge / tidy ---- */
@@ -2087,7 +2558,11 @@
     return row;
   }
 
-  function editRobotModal(entry, isNew) {
+  /* opts.focus === "notes" lands the cursor in the notes box instead of
+     the name — the menu's "add note" falls back here when the robot has
+     no row on screen to edit in place. */
+  function editRobotModal(entry, isNew, opts) {
+    opts = opts || {};
     entry = entry || {};
     var form = BV.el("div", { class: "lib-form" });
 
@@ -2208,7 +2683,12 @@
     }
     openEditModal();
     cancel.addEventListener("click", function () { m.close(); });
-    fRobot.focus();
+    if (opts.focus === "notes") {
+      fNotes.focus();
+      fNotes.selectionStart = fNotes.selectionEnd = fNotes.value.length;   /* ready to append */
+    } else {
+      fRobot.focus();
+    }
 
     /* the linked-robot picker replaces the edit modal (modals don't stack) and
        brings it back on ANY close — the form element survives detached, so
@@ -2403,6 +2883,41 @@
       });
     }, 500);
     return function stop() { clearInterval(iv); };
+  }
+
+  /* the shared "which plant &amp; line?" second step of the add flows
+     (discover, import): a blurb, the two comboFields, back/confirm. onGo
+     gets (plant, line, step) with step.close()/step.fail(msg) so each flow
+     keeps its own submit; the line-required rule lives here once. */
+  function plantLineStep(opts) {
+    var body2 = BV.el("div", { class: "lib-form" });
+    body2.appendChild(BV.el("div", { class: "scan-info dim" }, opts.blurb));
+    var fPlant = inp(""), fLine = inp("");
+    body2.appendChild(comboField("plant", fPlant, knownPlants));
+    body2.appendChild(comboField("line", fLine, function () { return knownLines(fPlant.value); }));
+    var acts2 = BV.el("div", { class: "lf-actions" });
+    var back = BV.el("button", { class: "btn" }, "← back");
+    var go = BV.el("button", { class: "btn primary" }, BV.esc(opts.goLabel));
+    acts2.appendChild(back);
+    acts2.appendChild(go);
+    body2.appendChild(acts2);
+    var m2 = BV.modal(opts.title, body2, {
+      beforeClose: BV.dirtyGuard(function () {
+        return !!(fPlant.value.trim() || fLine.value.trim());
+      }, "plant/line"),
+    });
+    back.addEventListener("click", function () { m2.close(true); opts.onBack(); });
+    go.addEventListener("click", function () {
+      var line = fLine.value.trim();
+      /* same rule as the move flow: a robot never lands without a line */
+      if (!line) { BV.toast("a line name is required"); fLine.focus(); return; }
+      go.disabled = true;
+      opts.onGo(fPlant.value.trim(), line, {
+        close: function () { m2.close(true); },
+        fail: function (msg) { BV.toast(msg); go.disabled = false; },
+      });
+    });
+    fPlant.focus();
   }
 
   /* ---- discover robots on the network ---- */
@@ -2660,39 +3175,21 @@
     /* step 2: NOW ask where they go — the plant/line question sits right next
        to its confirm button instead of above a 38vh results list */
     function addStepTwo(drafts) {
-      var body2 = BV.el("div", { class: "lib-form" });
-      body2.appendChild(BV.el("div", { class: "scan-info dim" },
-        "add " + drafts.length + " robot" + (drafts.length === 1 ? "" : "s") +
-        " — which plant &amp; line?"));
-      var fPlant = inp(""), fLine = inp("");
-      body2.appendChild(comboField("plant", fPlant, knownPlants));
-      body2.appendChild(comboField("line", fLine, function () { return knownLines(fPlant.value); }));
-      var acts2 = BV.el("div", { class: "lf-actions" });
-      var back = BV.el("button", { class: "btn" }, "← back");
-      var go = BV.el("button", { class: "btn primary" },
-        "add " + drafts.length);
-      acts2.appendChild(back);
-      acts2.appendChild(go);
-      body2.appendChild(acts2);
-      var m2 = BV.modal("add to library", body2, {
-        beforeClose: BV.dirtyGuard(function () {
-          return !!(fPlant.value.trim() || fLine.value.trim());
-        }, "plant/line"),
+      plantLineStep({
+        title: "add to library",
+        blurb: "add " + drafts.length + " robot" + (drafts.length === 1 ? "" : "s") +
+          " — which plant &amp; line?",
+        goLabel: "add " + drafts.length,
+        onBack: openMain,
+        onGo: function (plant, line, step) {
+          BV.api.call("lib_bulk_add", drafts, plant, line).then(function (r) {
+            step.close();
+            var added = (r.added || []).length, skipped = (r.skipped || []).length;
+            BV.toast("added " + added + (skipped ? " · skipped " + skipped + " already in library" : ""));
+            refresh();
+          }).catch(function (e) { step.fail(e.message); });
+        },
       });
-      back.addEventListener("click", function () { m2.close(true); openMain(); });
-      go.addEventListener("click", function () {
-        var line = fLine.value.trim();
-        /* same rule as the move flow: a robot never lands without a line */
-        if (!line) { BV.toast("a line name is required"); fLine.focus(); return; }
-        go.disabled = true;
-        BV.api.call("lib_bulk_add", drafts, fPlant.value.trim(), line).then(function (r) {
-          m2.close(true);
-          var added = (r.added || []).length, skipped = (r.skipped || []).length;
-          BV.toast("added " + added + (skipped ? " · skipped " + skipped + " already in library" : ""));
-          refresh();
-        }).catch(function (e) { BV.toast(e.message); go.disabled = false; });
-      });
-      fPlant.focus();
     }
 
     addBtn.addEventListener("click", function () {
@@ -2705,6 +3202,255 @@
       m.close(true);              /* explicit handoff — the picks carry forward */
       addStepTwo(drafts);
     });
+  }
+
+  /* ---- import an existing backup folder (drag-and-drop / browse) ---- */
+  /* The pywebview drop subscription (app._wire_drop) pushes REAL OS paths to
+     BV.importDrop — the JS drop event's File objects carry no path, so the
+     page only paints highlight. While the import modal is open the hook scans
+     the drop; anywhere else it points at the flow (never a silent ignore,
+     never a surprise import). The document-level preventDefault keeps WebView2
+     from navigating to a dropped folder. */
+  document.addEventListener("dragover", function (e) { e.preventDefault(); });
+  document.addEventListener("drop", function (e) { e.preventDefault(); });
+  BV.importDrop = function () {
+    BV.toast("to import a backup: + add robot → import backup folder");
+  };
+  var _importDropHint = BV.importDrop;
+
+  function importFlow() {
+    var body = BV.el("div", { class: "lib-form imp-body" });
+    var dz = BV.el("div", { class: "imp-drop" },
+      '<div class="imp-drop-big">drop a backup folder here</div>' +
+      '<div class="dim">one robot’s backup, or a folder holding several</div>');
+    var bar = BV.el("div", { class: "scan-bar" });
+    var selRow = BV.el("div", { class: "scan-selall hidden" });
+    var selAll = BV.el("input", { type: "checkbox", class: "lf-check" });
+    selRow.appendChild(selAll);
+    selRow.appendChild(BV.el("span", null, "select all"));
+    var list = BV.el("div", { class: "scan-results" });
+    var extras = BV.el("div", { class: "imp-extras" });
+    var actions = BV.el("div", { class: "lf-actions" });
+    var browseBtn = BV.el("button", { class: "btn" }, "browse…");
+    var goBtn = BV.el("button", { class: "btn primary hidden" }, "import");
+    goBtn.disabled = true;
+    actions.appendChild(browseBtn);
+    actions.appendChild(goBtn);
+    body.appendChild(dz);
+    body.appendChild(bar);
+    body.appendChild(selRow);
+    body.appendChild(list);
+    body.appendChild(extras);
+    body.appendChild(actions);
+
+    var drafts = [], scanning = false;
+    var picks = BV.checklist({ onChange: updateGoBtn });   /* keyed by draft src */
+    var m;
+    var modalOpts = {
+      beforeClose: BV.dirtyGuard(function () {
+        return drafts.some(function (d) { return picks.has(d.src); });
+      }, "import picks"),
+      onClose: function () { BV.importDrop = _importDropHint; },
+    };
+    /* re-shown after "back" from the plant/line step: BV.modal only detaches
+       `body`, so the results list and its listeners survive */
+    function openMain() {
+      m = BV.modal("import backup folder", body, modalOpts);
+      BV.importDrop = function (paths) { runScan(paths); };
+    }
+    openMain();
+
+    ["dragenter", "dragover"].forEach(function (t) {
+      dz.addEventListener(t, function () { dz.classList.add("drag"); });
+    });
+    ["dragleave", "drop"].forEach(function (t) {
+      dz.addEventListener(t, function () { dz.classList.remove("drag"); });
+    });
+
+    /* the engine refuses these at import too — the row just says so up front */
+    function blocked(d) {
+      return d.warnings.some(function (w) { return w.indexOf("reserved name") === 0; });
+    }
+    function selectable() {
+      return drafts.filter(function (d) { return !blocked(d); });
+    }
+
+    function updateGoBtn() {
+      var n = selectable().filter(function (d) { return picks.has(d.src); }).length;
+      goBtn.classList.toggle("hidden", n === 0);
+      goBtn.disabled = n === 0;
+      goBtn.textContent = n ? "import " + n : "import";
+    }
+
+    function warnPills(d) {
+      /* compress the engine's sentence-length warnings into pills; the full
+         text rides in the title so hovering explains */
+      return d.warnings.map(function (w) {
+        var short = w.indexOf("reserved name") === 0 ? "reserved name"
+          : w.indexOf("date from folder") === 0 ? "date from folder time"
+          : w.indexOf("sidecar id") === 0 ? "id already in library" : w;
+        return '<span title="' + BV.esc(w) + '">' + BV.pill(short, "warn") + "</span>";
+      }).join(" ");
+    }
+
+    function renderResults(out) {
+      selRow.classList.toggle("hidden", drafts.length === 0);
+      list.innerHTML = "";
+      drafts.forEach(function (d) {
+        var row = BV.el("div", { class: "scan-row" });
+        var cb = BV.el("input", { type: "checkbox", class: "lf-check" });
+        if (blocked(d)) { cb.disabled = true; } else { picks.bind(cb, d.src); }
+        row.appendChild(cb);
+        var label = '<span class="lib-robot-name">' + BV.esc(d.robot) + "</span>";
+        var meta = [];
+        if (d.device_type === "camera-mtx") meta.push(BV.pill("MTX CAM", "acc"));
+        if (d.device_type === "camera-keyence") meta.push(BV.pill("CV-X CAM", "acc"));
+        meta.push(d.snapshots.length + " snapshot" + (d.snapshots.length === 1 ? "" : "s"));
+        meta.push(BV.fmt.bytes(d.bytes));
+        if (d.exists_at) meta.push(BV.pill("merges into " + d.exists_at, "acc"));
+        var w = warnPills(d);
+        if (w) meta.push(w);
+        label += ' <span class="lib-robot-meta">' + meta.join(" · ") + "</span>";
+        row.appendChild(BV.el("div", { class: "lib-robot-main" }, label));
+        list.appendChild(row);
+      });
+      picks.sync();
+      /* leftovers are evidence about the drop — listed, never silently gone */
+      extras.innerHTML = "";
+      (out.in_library || []).forEach(function (p) {
+        extras.appendChild(BV.el("div", { class: "dim" },
+          BV.esc(p) + " — already in the library"));
+      });
+      (out.ignored || []).forEach(function (i) {
+        extras.appendChild(BV.el("div", { class: "dim" },
+          BV.esc(i.path) + " — " + BV.esc(i.reason)));
+      });
+      (out.notes || []).forEach(function (n) {
+        extras.appendChild(BV.el("div", { class: "dim" }, BV.esc(n)));
+      });
+      if (out.truncated) {
+        extras.appendChild(BV.el("div", null,
+          BV.pill("scan hit its cap — not everything is listed", "warn")));
+      }
+      updateGoBtn();
+    }
+
+    function runScan(paths) {
+      if (scanning || !paths || !paths.length) return;
+      scanning = true;
+      drafts = []; picks.clear(); list.innerHTML = ""; extras.innerHTML = "";
+      bar.innerHTML = '<div class="membar"><div class="mb-label"><span>scanning…</span>' +
+        "<span></span></div>" +
+        '<div class="mb-track"><div class="mb-fill" style="width:8%"></div></div></div>';
+      BV.api.call("import_scan", paths).then(function (out) {
+        scanning = false;
+        bar.innerHTML = "";
+        drafts = out.drafts || [];
+        renderResults(out);
+        if (!drafts.length) BV.toast("no backups found in the drop");
+        /* everything importable starts ticked — the common case is "yes, all
+           of it"; unticking is the exception */
+        selectable().forEach(function (d) { picks.set(d.src, true); });
+        picks.sync(); updateGoBtn();
+      }).catch(function (e) {
+        scanning = false; bar.innerHTML = "";
+        BV.toast(e.message);
+      });
+    }
+
+    picks.group(selAll, function () {
+      return selectable().map(function (d) { return d.src; });
+    });
+
+    browseBtn.addEventListener("click", function () {
+      BV.api.call("pick_backup_folder").then(function (p) {
+        if (p) runScan([p]);
+      }).catch(function (e) { BV.toast(e.message); });
+    });
+
+    goBtn.addEventListener("click", function () {
+      var chosen = selectable().filter(function (d) { return picks.has(d.src); });
+      if (!chosen.length) return;
+      m.close(true);              /* explicit handoff — the picks carry forward */
+      var snaps = chosen.reduce(function (n, d) { return n + d.snapshots.length; }, 0);
+      plantLineStep({
+        title: "import to library",
+        blurb: "import " + chosen.length + " robot" + (chosen.length === 1 ? "" : "s") +
+          " (" + snaps + " snapshot" + (snaps === 1 ? "" : "s") +
+          ") — which plant &amp; line?",
+        goLabel: "import " + chosen.length,
+        onBack: openMain,
+        onGo: function (plant, line, step) {
+          BV.api.call("import_start", chosen, plant, line).then(function () {
+            step.close();
+            importProgress();
+          }).catch(function (e) { step.fail(e.message); });
+        },
+      });
+    });
+  }
+
+  function importProgress() {
+    var body3 = BV.el("div", { class: "lib-form" });
+    var bar3 = BV.el("div", { class: "scan-bar" });
+    var acts3 = BV.el("div", { class: "lf-actions" });
+    var cancelBtn = BV.el("button", { class: "btn" }, "cancel");
+    acts3.appendChild(cancelBtn);
+    body3.appendChild(bar3);
+    body3.appendChild(acts3);
+    var closed = false, done = false;
+    var m3 = BV.modal("importing…", body3, {
+      /* closing doesn't stop the copy (it's already safe: landed snapshots
+         are verified, the one in flight is staged) — the poll keeps running
+         detached so the summary toast still arrives */
+      beforeClose: BV.dirtyGuard(function () { return !done; }, "the progress view"),
+      onClose: function () { closed = true; },
+    });
+    cancelBtn.addEventListener("click", function () {
+      cancelBtn.disabled = true;
+      cancelBtn.textContent = "cancelling…";
+      BV.api.call("import_cancel").catch(function () {});
+    });
+    var iv = setInterval(function () {
+      BV.api.call("import_progress").then(function (p) {
+        if (!closed) {
+          var pct = p.bytes_total ? Math.round(100 * p.bytes_done / p.bytes_total) : 8;
+          bar3.innerHTML = '<div class="membar"><div class="mb-label"><span>' +
+            (p.robot ? "copying " + BV.esc(p.robot) + " · " + p.robot_no + " of " + p.robot_total
+                     : "starting…") +
+            "</span><span>" + BV.fmt.bytes(p.bytes_done) + " / " + BV.fmt.bytes(p.bytes_total) +
+            "</span></div>" +
+            '<div class="mb-track"><div class="mb-fill" style="width:' + pct + '%"></div></div></div>';
+        }
+        if (!p.active) {
+          clearInterval(iv);
+          done = true;
+          if (!closed) m3.close(true);
+          importSummary(p.results || [], p.cancelled);
+          refresh();
+        }
+      }).catch(function () {
+        clearInterval(iv);
+        done = true;
+        if (!closed) m3.close(true);
+      });
+    }, 500);
+  }
+
+  function importSummary(results, cancelled) {
+    var robots = 0, snaps = 0, dups = 0, conf = 0, bad = 0;
+    results.forEach(function (r) {
+      if (r.status === "imported" || r.status === "merged") robots += 1;
+      snaps += r.copied || 0; dups += r.duplicates || 0; conf += r.conflicts || 0;
+      if (r.status === "error" || r.status === "refused") bad += 1;
+    });
+    var msg = "imported " + robots + " robot" + (robots === 1 ? "" : "s") +
+      " · " + snaps + " snapshot" + (snaps === 1 ? "" : "s");
+    if (dups) msg += " · " + dups + " duplicate" + (dups === 1 ? "" : "s") + " skipped";
+    if (conf) msg += " · " + conf + " conflict" + (conf === 1 ? "" : "s") + " kept out";
+    if (bad) msg += " · " + bad + " failed";
+    if (cancelled) msg = "import cancelled — " + msg;
+    BV.toast(msg, 6000);
   }
 
   /* the lens is API now rather than a control living inside the screen: the

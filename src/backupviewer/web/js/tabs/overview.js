@@ -283,7 +283,12 @@
       backups.some(function (b, i) { return !b.partial && (latestIdx = i, true); });
       BV.menu(btn, backups.map(function (b, i) {
         return {
+          /* a camera snapshot a later pull added photos to rather than
+             stacking a near-twin beside it: `taken` is still when the tree
+             was pulled, so the top-up has to say so or the run that made it
+             looks like it did nothing at all */
           label: fmtBackupDate(b.taken) + (b.partial ? "  · partial ⚠" : "") +
+            (b.updated ? "  · photos " + fmtBackupDate(b.updated) : "") +
             (i === latestIdx ? "  · latest" : "") + (b.path === current ? "  ✓" : ""),
           onClick: function () { if (b.path !== current) switchBackup(b.path); },
           /* every row except the open one gets a "vs" pill */
@@ -372,6 +377,8 @@
         if (b.path === man.current_path) curB = b;
       });
       if (curB && curB.taken) chips.push(["date", fmtBackupDate(curB.taken)]);
+      /* the snapshot gained photos after it was taken (see the date picker) */
+      if (curB && curB.updated) chips.push(["photos added", fmtBackupDate(curB.updated)]);
       var hero = BV.hero({
         name: man.camera_name || man.robot_name || man.name,
         model: man.backup_type,

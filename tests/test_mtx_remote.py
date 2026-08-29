@@ -194,3 +194,51 @@ def test_window_rejects_bad_ip(monkeypatch):
     r = Api().mtx_remote_window({"ip": "999.1.1.1"})
     assert r["ok"] is False
     assert made == []
+
+
+# -- why is a tile dark: a 404 is not a dead camera --------------------------------
+
+def _probe_returning(monkeypatch, *, status=None, ctype="", boom=False):
+    """Stand in for _probe_http: an HTTP status, or a socket-level failure."""
+    seen = []
+
+    def fake(url, timeout=4.0, read=262144):
+        seen.append((url, read))
+        if boom:
+            raise OSError("no route to host")
+        return status, {"content-type": ctype}, url, ""
+    monkeypatch.setattr(api_mod, "_probe_http", fake)
+    return seen
+
+
+def test_tile_probe_reads_only_the_status(monkeypatch):
+    """The body is a 300 kB jpeg on a healthy camera - the probe wants the
+    status, so it must not pull (and utf-8 decode) the picture."""
+    seen = _probe_returning(monkeypatch, status=200, ctype="image/jpeg")
+    r = Api().mtx_tile_probe({"ip": "10.1.2.3"})
+    assert r["data"]["state"] == "ok"
+    assert seen == [("http://10.1.2.3/SavedImages/HMIImage.jpg", 0)]
+
+
+def test_tile_probe_calls_a_404_a_missing_frame_not_a_dead_camera(monkeypatch):
+    """The camera answered, so it is UP. Its Design Assistant project simply
+    never writes SavedImages/HMIImage.jpg - measured on a real line, 3 of 12."""
+    _probe_returning(monkeypatch, status=404)
+    r = Api().mtx_tile_probe({"ip": "10.1.2.3"})
+    assert r["data"] == {"state": "no_image", "status": 404}
+
+
+def test_tile_probe_calls_a_dead_socket_down(monkeypatch):
+    _probe_returning(monkeypatch, boom=True)
+    assert Api().mtx_tile_probe({"ip": "10.1.2.3"})["data"] == {"state": "down"}
+
+
+def test_tile_probe_wants_an_image_not_an_error_page(monkeypatch):
+    """A 200 that is HTML is a portal error page, not a frame - the <img> would
+    fail to decode it, so the tile must not be told the picture is fine."""
+    _probe_returning(monkeypatch, status=200, ctype="text/html; charset=utf-8")
+    assert Api().mtx_tile_probe({"ip": "10.1.2.3"})["data"]["state"] == "no_image"
+
+
+def test_tile_probe_rejects_bad_ip():
+    assert Api().mtx_tile_probe({"ip": "999.1.1.1"})["ok"] is False

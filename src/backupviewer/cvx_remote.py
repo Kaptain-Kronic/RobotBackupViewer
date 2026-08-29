@@ -192,6 +192,7 @@ class CvxRemoteSession:
         self._img_lock = threading.Lock()
         self._latest: bytes | None = None
         self.frames = 0
+        self._frame_cond = threading.Condition()  # signals every self.frames bump (and stop())
         self._ctrl_seq = itertools.count(0x51)   # mouse seq
         self._ack_seq = itertools.count(0x101)   # frame-ack seq
         self._mouse_next = 0                     # next client seq to put on the wire
@@ -246,10 +247,22 @@ class CvxRemoteSession:
     def latest_frame(self) -> bytes | None:
         return self._latest
 
+    def wait_frame(self, last: int, timeout: float) -> bool:
+        """Block until self.frames != last or timeout; True if a new frame arrived.
+        Comparing the counter (not an event flag) makes lost wakeups harmless and
+        lets any number of stream consumers wait on the same session."""
+        with self._frame_cond:
+            if self.frames != last:
+                return True
+            self._frame_cond.wait(timeout)
+        return self.frames != last
+
     def stop(self):
         self._stop.set()
         self._alive = False
         self._teardown()
+        with self._frame_cond:            # wake blocked stream consumers so they see dead
+            self._frame_cond.notify_all()
 
     def _teardown(self):
         for s in self._socks.values():
@@ -326,10 +339,15 @@ class CvxRemoteSession:
                     with self._img_lock:
                         self._imgbuf += buf[32 + _VIDEO_SUBHDR:total]
             del buf[:total]
+        got_frame = False
         with self._img_lock:
             for jpg in extract_jpegs(self._imgbuf):
                 self._latest = jpg
                 self.frames += 1
+                got_frame = True
+        if got_frame:
+            with self._frame_cond:
+                self._frame_cond.notify_all()
         if need_ack:
             self._send_frame_ack()
 
@@ -467,13 +485,69 @@ class CvxRemoteSession:
 # multipart/x-mixed-replace, so a plain <img src="http://127.0.0.1:PORT/cvx/<id>">
 # in the (file://, no-CSP) frontend renders the live screen with zero JS decoding.
 
+# Chromium's multipart/x-mixed-replace parser is boundary-driven: it hands part N
+# to the image decoder only when part N+1's delimiter arrives (Content-Length is
+# ignored). The CV-X pushes frames on change only, so a stream that goes
+# byte-silent after a burst never paints its final frame - the picture hangs
+# until something (historically, a mouse wiggle) makes the controller push
+# another one. After this idle window with no new frame, the settled JPEG is
+# re-sent once as a fresh part: the duplicate becomes the held part, and what's
+# on screen is always current. One dup per burst, loopback-only bandwidth.
+IDLE_RESEND_S = 0.15
+
+# The two routes the frame server answers, and the reason there are two.
+#
+# A stream is right for ONE viewer (the remote overlay) and wrong for a wall.
+# A multipart/x-mixed-replace response never completes, so each streaming
+# <img> holds one of the browser's SIX-connections-per-origin open for as long
+# as it is on screen - and every session streams from this one host:port. Put
+# eight cameras on the cam lens and the seventh onward simply never connects:
+# no bytes, so no load event and not even an error event, just a tile that sits
+# dark forever. That cap is invisible with one camera and fatal with eight.
+#
+# So a tile asks for a STILL instead: a plain finite JPEG that releases its
+# socket the moment it lands, polled on the grid's own 2 s beat. The camera
+# pushes on change only, so a poll loses nothing a stream would have shown.
+STREAM_PATH = "/cvx/"        # the overlay: one live viewer, many frames
+SHOT_PATH = "/cvxshot/"      # a cam-lens tile: one frame, one finite response
+
+
 class _MjpegHandler(BaseHTTPRequestHandler):
+    disable_nagle_algorithm = True   # tail bytes of a part must not wait out delayed-ACK
+
     def do_GET(self):
-        sid = self.path.rsplit("/", 1)[-1].split("?")[0]
+        path = self.path.split("?")[0]
+        sid = path.rsplit("/", 1)[-1]
         sess = self.server.registry.get(sid)  # type: ignore[attr-defined]
         if sess is None:
             self.send_error(404, "no such session")
             return
+        if path.startswith(SHOT_PATH):
+            self._shot(sess)
+        else:
+            self._stream(sess)
+
+    def _shot(self, sess):
+        """One frame, one finite response - a cam-lens tile's picture."""
+        jpg = sess.latest_frame()
+        if not jpg:
+            # Alive but nothing pushed yet. 404 rather than an empty 200: the
+            # tile turns this into "connected - no picture yet", which is a
+            # different and honester thing to say than "not answering".
+            self.send_error(404, "no frame yet")
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Content-Length", str(len(jpg)))
+        self.send_header("Cache-Control", "no-cache, no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        try:
+            self.wfile.write(jpg)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+
+    def _stream(self, sess):
         self.send_response(200)
         self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
         self.send_header("Cache-Control", "no-cache, no-store")
@@ -492,26 +566,37 @@ class _MjpegHandler(BaseHTTPRequestHandler):
         try:
             self.wfile.write(b"--frame\r\n")
             while sess.alive:
-                jpg = None
                 if sess.frames != last:
                     last = sess.frames
                     jpg = sess.latest_frame()
-                elif time.time() - sent_at > 1.0:
-                    # quiet spell: repeat the newest frame ~1/s. Belt to the
-                    # eager boundary's braces - the picture can never sit
-                    # stale behind any client-side part buffering, and the
-                    # connection stays provably alive while the controller
-                    # has nothing new to say.
+                    if jpg:
+                        self._part(jpg)
+                        sent_at = time.time()
+                    continue
+                # Nothing new. Wait on the session rather than polling, so a
+                # frame still paints the instant it lands; when the window
+                # closes with the stream still quiet, repeat the newest frame
+                # about once a second. Belt to the eager boundary's braces -
+                # the picture can never sit stale behind any client-side part
+                # buffering, and the connection stays provably alive while the
+                # controller has nothing new to say.
+                if (not sess.wait_frame(last, IDLE_RESEND_S)
+                        and time.time() - sent_at > 1.0):
                     jpg = sess.latest_frame()
-                if jpg:
-                    self.wfile.write(b"Content-Type: image/jpeg\r\n"
-                                     b"Content-Length: " + str(len(jpg)).encode() + b"\r\n\r\n")
-                    self.wfile.write(jpg)
-                    self.wfile.write(b"\r\n--frame\r\n")
-                    sent_at = time.time()
-                time.sleep(0.04)
+                    if jpg:
+                        self._part(jpg)
+                        sent_at = time.time()
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
+
+    def _part(self, jpg: bytes):
+        # one write per part: with Nagle off, three writes would be three
+        # packets. The boundary that ENDS this part goes out WITH it, never
+        # lazily as the start of the next one - see the framing note in
+        # _stream for what lazy framing cost.
+        self.wfile.write(b"Content-Type: image/jpeg\r\nContent-Length: "
+                         + str(len(jpg)).encode() + b"\r\n\r\n" + jpg
+                         + b"\r\n--frame\r\n")
 
     def log_message(self, *a):  # silence per-request logging
         pass

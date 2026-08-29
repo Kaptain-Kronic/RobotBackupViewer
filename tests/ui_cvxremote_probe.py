@@ -57,6 +57,11 @@ class FakeSession:
     def latest_frame(self):
         return None
 
+    def wait_frame(self, last, timeout):
+        # the real MJPEG server streams this fake during the probe; idle politely
+        time.sleep(min(timeout, 0.05))
+        return False
+
     def stop(self):
         self.alive = False
 

@@ -6,10 +6,20 @@ item 1 — a 1-for-1 line swap, so cites into that file hold).
 Line-number cites are against that revision and drift with edits; the anchor
 commit is the reference.*
 
+*Amended 2026-08-26 (Matrox only, doc otherwise unre-verified): the pull's
+photo scope became a window of N photos rather than one date folder, a
+photos-only re-run now folds into the snapshot it matches instead of stacking
+a near-twin, and `mirror_latest` gained the long-path prefix it had been
+missing. §5 invariant 7, §7 and the Matrox facts table below carry the new
+claims; everything else still stands on the 2026-08-01 pass.*
+
 Covers: src/backupviewer/ftpbackup.py, src/backupviewer/keyencebackup.py,
 src/backupviewer/mtxbackup.py, src/backupviewer/discover.py,
-src/backupviewer/backuplog.py
-(5 files)
+src/backupviewer/netlink.py, src/backupviewer/backuplog.py
+(6 files)
+
+*§10 (the plant-link watch) was added 2026-08-14 against `main` @ `b1ef1c9` and
+brought `netlink.py` under this doc; the rest of the pass is unchanged.*
 
 *It also describes the job plumbing those five share — `api.py`'s device
 registry and backup/scan endpoints, `web/js/jobs.js`, the launch and retry flows
@@ -105,6 +115,11 @@ Structure worth knowing before touching it:
   (PowerShell via absolute path — `discover.py:106-198`) and the read-only
   `diagnose_*` probes whose JSON lands in app.log for shop-PC debugging
   (`discover.py:601-669`, `keyencebackup.py:301-359`, `mtxbackup.py:376-409`).
+- **The plant-link watch** (`discover.LinkWatch`, added 2026-08-14) is the one
+  thing here that touches no equipment at all: it reads *this laptop's* adapter,
+  gateway and neighbour tables through `netlink.py` (ctypes → `iphlpapi`) to
+  answer "am I on the switch?". The switch itself is never contacted — no SSH,
+  no SNMP, no credentials. See §10.
 
 ## 3. The flow
 
@@ -125,6 +140,8 @@ job.run()                                      one connection, sequential
    │  backup.json written FIRST, complete:false        (the started-marker)
    │  per file: RETR/copy -> <name>.part -> os.replace; throttle between
    │  _write_sidecars LAST: notes.txt + complete:true + skipped list
+   │  _settle (camera jobs): a photos-only Matrox re-run folds into the
+   │           snapshot it matches and this folder goes away  (§5 inv. 7)
    │  Latest mirror: copy to sibling .__tmp, atomic swap  (never the only copy)
    │  on_complete (guarded): library.register_backup + camera self-name/link
    ▼
@@ -191,7 +208,12 @@ How each was verified, or an honest **assumed**. Tags per the template note.
 |---|---|
 | A Matrox DA camera is embedded Linux running **Samba**; port 21 is closed and SSH refuses the DA login — the transport is exactly what a tech does in Explorer: `\\<ip>\mtxuser` | **live-run 2026-07-14 (recorded)** — `mtxbackup.py:4-8`; CHANGELOG v0.99f ("First live Matrox backup ever: 550 files / 84 MB") |
 | Credentials are the vendor defaults burned into every DA camera, and **both are case-sensitive**: user `mtxuser` all-lowercase, password `Matrox` Title-case. `MATROX`/`matrox` are refused server-side (STATUS_LOGON_FAILURE) | **live-run 2026-07-20 (recorded), two cameras** — `mtxbackup.py:49-58`. This comment is why first backups stopped failing (§7); the leave-them-in-source ruling is INVENTORY §E's |
-| Backup scope: the whole `da/` tree + **only the newest** `SavedImages/<YYYY-MM-DD>/` date folder — small, fast snapshots that still carry the latest photo | scope confirmed with the owner, `mtxbackup.py:17-18`; enforced `mtxbackup.py:251-264`, pinned (`test_mtxbackup.py:105-109`) |
+| Backup scope: the whole `da/` tree + the newest **N photos** (`mtx_photos`, default 25), walking `SavedImages/<YYYY-MM-DD>/` newest-first until the count is met — a window of INSPECTIONS, not of days | scope confirmed with the owner 2026-08-26; `mtxbackup._photo_files`, pinned (`test_mtxbackup.py` scope + limit tests) |
+| Only the newest day's photos come whole; older ones come as image + sidecar with the **png left behind** — it is the same 1920×1200 frame as the jpg beside it (measured on a real pull: 2.29 MB png vs 213 KB jpg, both 1920×1200, png 8-bit RGB), and the photos tab renders either | **measured on a real snapshot 2026-08-26**; `mtxbackup._photo_files`; the tab's fallback is `mtx_saved_image.photo_record` (`full = png or jpg`) |
+| A photo with no jpg falls back to its png rather than being skipped — a photo the snapshot lists but cannot show would be the dishonest kind of small | `mtxbackup._shot_name`, pinned (`test_mtxbackup.py::test_photo_limit_counts_photos_not_days`) |
+| The camera writes hours before 10:00 with **no leading zero** (`…-2026_07_07-9.14.30.020`), so a plain text sort calls a 9am shot newer than a 1pm one. `photo_sort_key` pads the parts to fixed widths — which is also what makes the newest sidecar the one a camera is named from | **real filenames, one live camera's whole day of them 2026-08-26**; `parsers/mtx_saved_image.photo_sort_key`, pinned (`test_mtx_saved_image.py`) + used by `resolve_camera_name`/`name_from_backup` |
+| A re-run whose `da/` tree matches the camera's newest complete snapshot **file-for-file** does not stack a second folder: its new photos are folded into that snapshot, which keeps its original `taken` and gains `updated` + `topups`, and the run's own folder is removed. This is the ONE place the app writes inside a backup folder (see §5 invariant 7) | ruled with the owner 2026-08-26; `mtxbackup._settle`, pinned (fold / da-changed / partial-previous tests in `test_mtxbackup.py`); **checked against two real pulls of one camera two minutes apart — 425 non-photo files identical, 0 photos to add** |
+| A partial snapshot is never topped up, and a top-up recounts `files`/`bytes` off the folder rather than adding them up | `mtxbackup._complete_snapshot`, `_retop_meta`; pinned (`test_mtxbackup.py::test_topup_never_tops_up_a_partial_snapshot`) |
 | A live camera **rotates SavedImages mid-backup** — a vanished file is skipped + logged, never a sunk pull | **live-run (recorded)**, CHANGELOG v0.99h; `mtxbackup.py:338-343` |
 | Windows allows **one credential set per server** (error 1219), and a WORKGROUP PC sends its *own name* as the domain for a bare username (refused as 86/1326) — hence the connect ladder (§7) and the ride-an-existing-Explorer-session-first rule | `mtxbackup.py:71-77,162-246`; **live-run (recorded)** — the ladder's steps each correspond to a field failure, CHANGELOG v0.99k/v0.99m |
 | The camera's own name lives in the newest SavedImages `.txt` sidecar (`Camera Name:` / `Camera Type:`) — readable live (`resolve_camera_name`) or from any pulled snapshot (`name_from_backup`), which is how a camera discovered as a bare IP self-names after its first backup | `mtxbackup.py:412-470`; end-to-end incl. folder rename + auto-link pinned (`test_mtxbackup.py:292-336`) |
@@ -278,6 +300,23 @@ five are CLAUDE.md's "Gentle with live equipment" made mechanical.
    risk (`ftpbackup.py:136-155`). Same idea per file: `.part` then
    `os.replace`, so no half-file ever wears a real name
    (`ftpbackup.py:102-133`, `mtxbackup.py:267-291`).
+
+   *Amended 2026-08-26 — one ruled exception, and it stays one.* A Matrox
+   re-run whose `da/` tree is unchanged folds its new photos into the
+   snapshot they match rather than leaving a 400-file near-twin beside it
+   (`mtxbackup._settle`, reached through the new `_JobBase._settle` hook,
+   default a no-op). The narrowness IS the invariant: it only ADDS files
+   the camera itself produced, never rewrites or deletes one; the snapshot
+   keeps its original `taken` and records the visit as `updated` +
+   `topups`; the target must be marked `complete`; and it runs only after
+   this pull has already landed as a complete snapshot of its own, so a
+   death mid-fold leaves two honest folders and never a hole. Everything
+   downstream reads the same story: `library._when` makes "last backup"
+   the top-up, `register_backup` replaces the row for a path instead of
+   stacking a second one, and the camera overview stamps **photos added**
+   beside the take time (hero chip + every dated-backup row,
+   `tabs/overview.js`) — a fold that left no visible trace would read as a
+   backup that did nothing.
 8. **Passwords are prompted per run, live in memory, and die with the
    run.** The chain, verified end to end 2026-08-01: one shared prompt per
    batch click, value held in a JS local (`home.js:1572-1594`) → sent in
@@ -466,6 +505,15 @@ off the code this pass, no test; anything weaker is tagged.
   (`ftpbackup.py:88-99,110-112`, `mtxbackup.py:267-291`; pinned
   `test_mtxbackup.py:112-127`). The reader-side sequel (photos vanishing
   from the index) is parsing.md §6's trap; same root cause, two layers.
+  **The third layer, found 2026-08-26:** `mirror_latest` was the one writer
+  still copying with plain paths — `shutil.copytree` opens every SOURCE file
+  by its full path, and the source here is the deepest tree this app makes.
+  Past 260 chars the mirror failed, was caught, logged, and returned None —
+  so the symptom was a `Latest/` that quietly stopped tracking while every
+  dated snapshot looked perfect. Now both sides go through `long_path`. It
+  surfaced only when a test fixture started using realistic (long) camera
+  filenames; the short synthetic ones had hidden it since the mirror was
+  written.
 - **`skipped` comes off the job, not the call site.** An earlier shape let
   the caller pass the skip list to the sidecar writer; forgetting turned a
   lossy pull into a clean-looking one. Now `_write_sidecars` reads
@@ -492,14 +540,16 @@ off the code this pass, no test; anything weaker is tagged.
 Counted 2026-08-01 from the tracked tests (all synthetic, all green on a
 clean clone; the full-suite number is parsing.md §7's 701/0).
 
-**Tracked, direct — 58 tests across 5 files.** `test_discover` (20:
+**Tracked, direct — 63 tests across 5 files.** `test_discover` (20:
 backup-root detection, CIDR normalization, the FANUC/name-resolution fakes
 incl. the R-30iB listing shape, Matrox via EIP with SMB open/closed/absent,
 the spy-mount gentleness test, ListIdentity parsing, adapter parsing);
-`test_mtxbackup` (16: probe/diagnose/name, scope, MAX_PATH both sides,
-end-to-end incl. library registration, empty-share marker, multi-camera
-layout, cancel, self-name + auto-link + rescan survival, the FANUC-refuses-
-camera guard); `test_keyencebackup` (10: probe/diagnose, enumerate scope
+`test_mtxbackup` (21: probe/diagnose/name, scope + the photo window over
+days and over one busy day, MAX_PATH both sides, the three top-up rulings
+(folds / da-changed / partial-previous), end-to-end incl. library
+registration, empty-share marker, multi-camera layout, cancel, self-name +
+auto-link + rescan survival, the FANUC-refuses-camera guard);
+`test_keyencebackup` (10: probe/diagnose, enumerate scope
 ±box, end-to-end incl. workspace manifest on snapshot AND mirror,
 no-manifest-on-empty, multi-camera per-host workspaces, cancel, CWD-per-dir
 enforced by the fake); `test_ftpbackup` (7: probe both ways, end-to-end,
@@ -620,6 +670,73 @@ code changes). Evidence attached.
    unlikely for robots (shallow names), possible for a deep library root.
    Traced only; no field failure known. Worth folding into any future
    `long_path` consolidation (item 7's module).
+
+---
+
+## 10. The plant-link watch (added 2026-08-14)
+
+The only thing in this subsystem that touches no equipment. It answers the
+question a tech asks before any of the above: *am I even on the plant switch?*
+
+**Where it reads.** `netlink.py` binds three `iphlpapi` calls through ctypes —
+`GetAdaptersAddresses` (link state, IPv4 + prefix, gateway, MAC, ifType),
+`GetIpNetTable2` (the neighbour/ARP table with real NUD states), and `SendARP`.
+No subprocess, no new dependency, same native-call approach `mtxbackup.py`
+already uses for `mpr.dll`. Policy — which adapter is the plant link, and what
+the evidence adds up to — stays in `discover.py` (`LinkWatch`, `choose_adapter`,
+`classify_state`); `netlink.py` only reports what Windows says.
+
+**Why not the PowerShell path `list_adapters` uses.** Measured on a plant
+laptop: `Get-NetAdapter` 1609 ms, `Get-NetIPAddress` 1556 ms,
+`Get-NetIPConfiguration` 3784 ms, plus ~360 ms of process spawn. The two ctypes
+reads together cost **12 ms**. That is the whole reason a pill can poll at all,
+and it is why `list_adapters` was correctly built as a one-shot dialog call.
+
+**Measured facts the design rests on** (dev machine, 2026-08-14, live plant
+segment — recorded, not re-provable from a clean clone):
+
+- Of 15 real neighbours, **13 sat in state `stale` and 2 in `reachable`** on a
+  healthy network. `stale` means "not confirmed recently", not "unreachable".
+  Rendering it as a fault would light the panel with false alarms, so `stale`
+  publishes **connected**. This is the single most important honesty rule here.
+- Cross-referenced against `library.json`, 13 of those 15 were known cameras and
+  2 were network infrastructure.
+- The library held 2532 devices across **63 distinct /24s**; **83** were on the
+  laptop's subnet and **0** on either wi-fi or the tunnel. Hence adapter choice
+  by "whose subnet holds the most library devices" is decisive.
+
+**Invariants worth keeping:**
+
+1. **Wi-fi is never promoted to "the plant link" on a hunch.** Only a user pin,
+   or the library's own devices being on that subnet, may name it. With no
+   evidence the pill reads `no plant adapter` and asks. A laptop on a phone
+   hotspot with the dongle out still has fine internet; calling that "connected"
+   would answer a question nobody asked.
+2. **A downgrade needs two consecutive agreeing samples; an upgrade publishes
+   at once.** One dropped read cannot flash a false alarm, and good news cannot
+   raise one.
+3. **A failed read is not evidence.** It holds the previous verdict, sets
+   `probe_ok: False` and dims the chip. A tool that turns red when *it* breaks
+   teaches people to ignore it.
+4. **`absent` is not `down`.** A library device with no neighbour entry renders
+   as a hollow ring. A camera nobody has talked to since the cable went in has
+   no ARP entry while running perfectly.
+5. **The adapter that went away reads as `no link`, not `no plant adapter`.**
+   USB dongles usually vanish from the table when unplugged rather than
+   reporting down, so `LinkWatch` remembers its last choice — otherwise the
+   commonest real event shows the most confusing words.
+6. **`check now` introduces no second source of truth.** It sends one ARP per
+   listed address, which *populates the very table the panel already reads*, so
+   the next poll shows the answer. It refuses off-segment addresses, because
+   those would resolve the gateway's MAC and read as a confident answer about a
+   device never reached. Its cap is reported, never silent.
+
+**Gentleness.** Default posture is zero added packets — adapter and neighbour
+tables are pure OS reads. The one probe is an ARP request: layer 2, touching no
+service on the device, strictly lighter than the `_tcp_open` pre-check this
+subsystem uses elsewhere against a camera's FTP/SMB port. Fan-out is 8, against
+`SCAN_WORKERS = 48` for the user-launched sweep, and it is throttled to once
+per 10 s.
 
 ---
 

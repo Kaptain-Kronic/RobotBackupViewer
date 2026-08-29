@@ -80,7 +80,14 @@ model).
 ## Honesty rules — the trust contract
 
 - **Backups are read-only evidence.** Nothing in the app writes into a
-  backup folder, ever.
+  backup folder — with exactly one ruled exception, and it stays one: a
+  Matrox re-run whose `da/` tree is unchanged folds its new photos into the
+  snapshot they match instead of stacking a 400-file near-twin beside it
+  (`mtxbackup._settle`). It only ever ADDS files the camera itself produced,
+  never rewrites or removes one, keeps the snapshot's original `taken` and
+  records the visit as `updated` + `topups`, and runs only after this pull
+  has already landed as a complete snapshot of its own. Nothing else may
+  write into a backup folder; a second exception needs the same ruling.
 - **Files are law.** The folder tree is the source of truth; sidecar JSON
   (`robot.json`, `backup.json`) carries identity + config only, never
   claims that contradict what's on disk. Presence = existence. A backup is
@@ -153,12 +160,12 @@ human-in-the-loop tier, and it lands last.
 
 ```powershell
 python -m pytest tests                            # unit only, ~45s — the default
-python -m pytest tests -m probe                   # the ten probes, ~3 min
+python -m pytest tests -m probe                   # the probes, ~3 min
 python -m pytest tests -m "probe or not probe"    # EVERYTHING, ~4 min
 ```
 
-The last one is **the** verify command: it boots the real app ten times in a
-hidden WebView2 and asserts on real DOM. Spelled that way rather than `-m ""`
+The last one is **the** verify command: it boots the real app once per probe
+in a hidden WebView2 and asserts on real DOM. Spelled that way rather than `-m ""`
 because PowerShell drops an empty argument before pytest ever sees it. The
 default stays fast on purpose — a suite slow enough to stop being run is worse
 than one that skips its slowest part.

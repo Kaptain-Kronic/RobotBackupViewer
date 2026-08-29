@@ -35,6 +35,10 @@ def build_tree(lib: Path) -> None:
         snap = line / rb / "2026_01_01" / "12_00_00"
         snap.mkdir(parents=True)
         (snap / "SUMMARY.DG").write_text(f"Robot: {rb}\n", encoding="utf-8")
+        # a TP program is a .LS whose first bytes are /PROG - the same name
+        # on every robot, which is what a real line looks like
+        (snap / "MAIN.LS").write_text(
+            "/PROG  MAIN\n/MN\n   1:  ! probe ;\n/END\n", encoding="cp1252")
         (snap / "backup.json").write_text(
             json.dumps({"robot": rb, "line": "LINE01", "plant": "FakePlant",
                         "taken": "2026-01-01T12:00:00", "complete": True}),
@@ -136,6 +140,151 @@ def probe(window):
               js(window, "document.querySelectorAll('#sessionbar .stab').length") == 2)
         check("dedupe.focused_existing",
               js(window, "BV.state.manifest.sid") == sid1)
+
+        # ---- a tab right-click carries the ROBOT's actions, not just its own ----
+        # The rule is "a tab offers what that robot's row offers, plus pop out
+        # and close" - so the check reads the row's own menu and compares,
+        # rather than freezing a list that goes stale the day the row menu
+        # grows an item. Back on home first: the strip shows there too, which
+        # is where a right-click on a tab is most likely to happen.
+        js(window, "BV.goHome()")
+        time.sleep(0.4)
+        poll(window, "document.querySelectorAll('.lib-robot').length")
+
+        def menu_labels():
+            return poll(window, """(function(){
+                var m=document.querySelector('.ctx-menu');
+                if (!m) return '';
+                return JSON.stringify([].map.call(m.querySelectorAll('.ctx-item'),
+                    function(b){ return b.textContent; }));
+            })()""") or ""
+
+        def close_menu():
+            js(window, """window.dispatchEvent(new KeyboardEvent('keydown',
+                {key:'Escape',bubbles:true}))""")
+            time.sleep(0.2)
+
+        opened = js(window, """(function(){
+            var row=[].slice.call(document.querySelectorAll('.lib-robot')).find(function(r){
+                return r.textContent.indexOf('%s')>=0;});
+            if (!row) return '';
+            var more=row.querySelector('.lib-robot-more');
+            if (!more) return '';
+            more.click();
+            return 'y';
+        })()""" % ROBOTS[0])
+        row_labels = json.loads(menu_labels() or "[]") if opened == "y" else []
+        check("rowmenu.opened", bool(row_labels), f"(got {row_labels})")
+        close_menu()
+
+        js(window, """(function(){
+            var t=[].slice.call(document.querySelectorAll('#sessionbar .stab')).find(function(x){
+                return x.dataset.sid===%s;});
+            t.dispatchEvent(new MouseEvent('contextmenu',
+                {bubbles:true, cancelable:true, clientX:60, clientY:60}));
+        })()""" % json.dumps(sid1))
+        tab_labels = json.loads(menu_labels() or "[]")
+        check("tabmenu.carries_the_row_menu",
+              tab_labels == row_labels + ["pop out", "close"],
+              f"(row={row_labels} tab={tab_labels})")
+        check("tabmenu.groups_divided",
+              js(window, "document.querySelectorAll('.ctx-menu .ctx-sep').length") == 1)
+        close_menu()
+
+        # the same menu with the listing NOT on screen (a backup is open, and a
+        # window started on one never draws home at all): the robot's actions
+        # are resolved from the cached library, so nothing thins out
+        js(window, """(function(){
+            var t=[].slice.call(document.querySelectorAll('#sessionbar .stab')).find(function(x){
+                return x.dataset.sid===%s;});
+            t.click();
+        })()""" % json.dumps(sid1))
+        poll(window, "location.hash !== '#home' ? 'y' : ''")
+        check("tabmenu.listing_unmounted",
+              not js(window, "!!document.querySelector('.lib-robot')"))
+        js(window, """(function(){
+            var t=[].slice.call(document.querySelectorAll('#sessionbar .stab')).find(function(x){
+                return x.dataset.sid===%s;});
+            t.dispatchEvent(new MouseEvent('contextmenu',
+                {bubbles:true, cancelable:true, clientX:60, clientY:60}));
+        })()""" % json.dumps(sid1))
+        off_labels = json.loads(menu_labels() or "[]")
+        check("tabmenu.same_off_the_listing", off_labels == tab_labels,
+              f"(on={tab_labels} off={off_labels})")
+        close_menu()
+        check("tabmenu.dismissed", not js(window, "!!document.querySelector('.ctx-menu')"))
+
+        # a tab with no library robot behind it keeps the plain two-item menu:
+        # only lib_open stamps robot_id, so a backup opened by --backup or by
+        # "open backup..." has none, and actions that need a library record
+        # must be absent rather than dead.
+        js(window, """(function(){
+            var t=BV.session.list.find(function(x){ return x.sid===%s; });
+            window._probeRobotId=t.robotId; t.robotId=null;
+        })()""" % json.dumps(sid1))
+        js(window, """(function(){
+            var t=[].slice.call(document.querySelectorAll('#sessionbar .stab')).find(function(x){
+                return x.dataset.sid===%s;});
+            t.dispatchEvent(new MouseEvent('contextmenu',
+                {bubbles:true, cancelable:true, clientX:60, clientY:60}));
+        })()""" % json.dumps(sid1))
+        bare = json.loads(menu_labels() or "[]")
+        check("tabmenu.no_library_entry_no_actions", bare == ["pop out", "close"],
+              f"(got {bare})")
+        close_menu()
+        js(window, """(function(){
+            var t=BV.session.list.find(function(x){ return x.sid===%s; });
+            t.robotId=window._probeRobotId;
+        })()""" % json.dumps(sid1))
+
+        # ---- the workspace route acts on the SELECTION, not just the row ----
+        # Several robots ticked and "add all programs" clicked on one of them
+        # means all of them, and the label has to SAY how many - a menu must
+        # never quietly act on rows you had forgotten were lit. Both halves are
+        # read off the live selection rather than a frozen 2.
+        js(window, "BV.goHome()")
+        time.sleep(0.4)
+        poll(window, "document.querySelectorAll('.lib-robot').length")
+        js(window, """(function(){
+            var want=%s;
+            [].slice.call(document.querySelectorAll('.lib-robot')).forEach(function(row){
+                var hit=want.some(function(n){ return row.textContent.indexOf(n)>=0; });
+                var cb=row.querySelector('.lib-check');
+                if (hit && cb && !cb.checked) cb.click();
+            });
+        })()""" % json.dumps(ROBOTS[:2]))
+        nsel = js(window, "BV.libActions.selected().length")
+        check("wsmenu.two_selected", nsel == 2, f"(got {nsel})")
+
+        js(window, """(function(){
+            var row=[].slice.call(document.querySelectorAll('.lib-robot')).find(function(r){
+                return r.textContent.indexOf('%s')>=0;});
+            row.querySelector('.lib-robot-more').click();
+        })()""" % ROBOTS[0])
+        ws_label = poll(window, """(function(){
+            var m=document.querySelector('.ctx-menu');
+            if (!m) return '';
+            var b=[].slice.call(m.querySelectorAll('.ctx-item')).find(function(x){
+                return x.textContent.indexOf('add all programs')===0;});
+            return b ? b.textContent : '';
+        })()""") or ""
+        check("wsmenu.label_names_the_selection",
+              ws_label == "add all programs from %d selected robots to edit workspace" % nsel,
+              f"(got {ws_label!r})")
+        js(window, """(function(){
+            var m=document.querySelector('.ctx-menu');
+            [].slice.call(m.querySelectorAll('.ctx-item')).find(function(x){
+                return x.textContent.indexOf('add all programs')===0;}).click();
+        })()""")
+        roots = poll(window, "BV.workspace.byRobot().length")
+        check("wsmenu.every_selected_robot_landed", roots == nsel,
+              f"(robots in workspace={roots}, selected={nsel})")
+        check("wsmenu.opened_the_workspace", js(window, "location.hash") == "#edit",
+              js(window, "location.hash"))
+        # leave the library as it was found: empty workspace, back on home
+        js(window, "BV.workspace.clear(); BV.goHome()")
+        time.sleep(0.4)
+        poll(window, "document.querySelectorAll('.lib-robot').length")
 
         # ---- library folds persist to settings.json ----
         js(window, "BV.goHome()")
