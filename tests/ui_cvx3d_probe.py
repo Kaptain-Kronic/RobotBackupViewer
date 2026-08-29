@@ -1,6 +1,8 @@
 """Hidden-window probe for the CV-X camera screens: the camera overview
 (crossfade hero slot + summary cards) and the camera 3d view (model rail,
-canvas mesh viewer, info cards, extract modal, enlarge overlay).
+canvas mesh viewer, orientation cube + snap views, perspective toggle,
+the borders-off instrument exemption, the closed-mesh backface proof,
+info cards, extract modal, enlarge overlay).
 
 Asserts on the real DOM in a real WebView2, because the parts most likely to
 break are the parts pytest cannot see: the overview/view3d tabs actually
@@ -35,6 +37,7 @@ def probe(window):
 
         check("boot.cvx3d_loaded", js(window, "typeof BV.cvx3d === 'object' && typeof BV.cvx3d.render === 'function'"))
         check("boot.meshview_loaded", js(window, "typeof BV.meshView === 'function'"))
+        check("boot.viewcube_loaded", js(window, "typeof BV.viewCube === 'function'"))
         check("boot.photofigure_loaded", js(window, "typeof BV.photoFigure === 'function'"))
 
         # ---- open the synthetic camera backup through the real funnel ----
@@ -124,6 +127,105 @@ def probe(window):
         head = js(window, "(document.querySelector('.cvx3d-head')||{}).textContent || ''")
         check("view3d.head_counts_triangles", "triangle" in head, f"({head!r})")
 
+        # ---- orientation cube: present, projected, snaps the camera ----
+        faces = js(window, "document.querySelectorAll('.cvx3d-main .viewcube .v3-cube-face').length")
+        check("cube.faces_drawn", isinstance(faces, int) and 1 <= faces <= 3,
+              f"(got {faces} - a cube shows 1-3 faces from any angle)")
+
+        # the borders-off setting must never blank the viewport instruments:
+        # sample the cube face + a grid line in BOTH modes (the invariant is
+        # "visible either way", not any particular color)
+        def opaque(v):
+            v = (v or "").replace(" ", "")
+            return v not in ("", "none") and not v.endswith(("/0)", ",0)"))
+        strokes = js(window, """(function(){
+            var face = document.querySelector('.viewcube .v3-cube-face');
+            var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('class', 'v3-grid');
+            document.querySelector('.viewcube').appendChild(line);
+            var out = {};
+            ['off', 'on'].forEach(function (mode) {
+                document.documentElement.classList.toggle('no-edges', mode === 'on');
+                out['face_' + mode] = face ? getComputedStyle(face).stroke : '';
+                out['grid_' + mode] = getComputedStyle(line).stroke;
+            });
+            document.documentElement.classList.remove('no-edges');
+            line.remove();
+            return JSON.stringify(out);
+        })()""") or "{}"
+        strokes = json.loads(strokes)
+        for k in ("face_off", "face_on", "grid_off", "grid_on"):
+            check(f"borders.{k}_visible", opaque(strokes.get(k)), f"({strokes.get(k)!r})")
+
+        snapped = js(window, """(function(){
+            var f = [...document.querySelectorAll('.cvx3d-main .viewcube [data-az]')]
+                .find(function(x){ return x.getAttribute('data-el') === '90'; });
+            if (!f) return '';
+            f.dispatchEvent(new MouseEvent('click', {bubbles: true}));
+            var st = BV.tabState('view3d');
+            return st.az + '/' + st.el;
+        })()""")
+        check("cube.snap_top", snapped == "180/90", f"({snapped!r})")
+
+        # ---- perspective: off by default, toggles, canvas still paints ----
+        pstate = js(window, """(function(){
+            var b = [...document.querySelectorAll('.cvx3d-head button')]
+                .find(function(x){ return x.textContent === 'perspective'; });
+            if (!b) return '';
+            var before = b.classList.contains('primary') ? 'on' : 'off';
+            b.click();
+            var after = b.classList.contains('primary') ? 'on' : 'off';
+            return before + '>' + after;
+        })()""")
+        check("persp.toggles_on", pstate == "off>on", f"({pstate!r})")
+        painted2 = poll(window, """(function(){
+            var c = document.querySelector('.cvx3d-main canvas');
+            if (!c || !c.width) return null;
+            var g = c.getContext('2d');
+            var d = g.getImageData(0, 0, c.width, c.height).data;
+            for (var i = 3; i < d.length; i += 4) if (d[i] > 0) return 'y';
+            return null;
+        })()""")
+        check("persp.canvas_painted", painted2 == "y")
+        js(window, """(function(){
+            var b = [...document.querySelectorAll('.cvx3d-head button')]
+                .find(function(x){ return x.textContent === 'perspective'; });
+            if (b && b.classList.contains('primary')) b.click();
+        })()""")
+
+        # ---- the closed-mesh proof, on a scratch view with hand-made meshes:
+        # a tetrahedron is closed + outward -> some faces cull, the picture
+        # keeps the rest; an open sheet must NEVER cull (holes) ----
+        culls = js(window, """(function(){
+            var d = document.createElement('div');
+            d.style.cssText = 'position:absolute;left:-9999px;width:120px;height:120px';
+            document.body.appendChild(d);
+            var v = BV.meshView(d, {interactive: false});
+            var out = {};
+            v.setMesh({vertices: [1,1,1, 1,-1,-1, -1,1,-1, -1,-1,1],
+                       triangles: [0,1,2, 0,3,1, 0,2,3, 1,3,2],
+                       bounds: {min: [-1,-1,-1], max: [1,1,1]}});
+            out.tetra = {closed: v._stats.closed, drawn: v._stats.drawn,
+                         culled: v._stats.culled};
+            v.setMesh({vertices: [0,0,0, 1,0,0, 0,1,0, 1,1,0],
+                       triangles: [0,1,2, 1,3,2],
+                       bounds: {min: [0,0,0], max: [1,1,0]}});
+            out.sheet = {closed: v._stats.closed, drawn: v._stats.drawn,
+                         culled: v._stats.culled};
+            v.destroy();
+            d.remove();
+            return JSON.stringify(out);
+        })()""") or "{}"
+        culls = json.loads(culls)
+        tetra, sheet = culls.get("tetra", {}), culls.get("sheet", {})
+        check("cull.tetra_proven_closed", tetra.get("closed") is True, f"({tetra})")
+        check("cull.tetra_culls_backfaces",
+              tetra.get("culled", 0) >= 1 and
+              tetra.get("drawn", 0) + tetra.get("culled", 0) == 4, f"({tetra})")
+        check("cull.open_sheet_never_culls",
+              sheet.get("closed") is False and sheet.get("culled") == 0
+              and sheet.get("drawn") == 2, f"({sheet})")
+
         # ---- info card for a non-viewable entry (the robot) ----
         picked = js(window, """(function(){
             var r = [...document.querySelectorAll('.cvx3d-row')].find(function(x){
@@ -184,6 +286,8 @@ def probe(window):
                 return o && o.querySelector('canvas') ? 'y' : null;
             })()""")
             check("enlarge.overlay_with_canvas", shown == "y")
+            check("enlarge.carries_the_cube",
+                  js(window, "!!document.querySelector('.meshview-fsov .viewcube')"))
             js(window, """(function(){
                 var b = document.querySelector('.meshview-fsov button');
                 var all = [...document.querySelectorAll('.meshview-fsov button')];

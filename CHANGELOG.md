@@ -1,6 +1,6 @@
 # Changelog
 
-## unreleased — the camera gets its 3d view, backups drag in, the statusbar finds the switch, a program plays in 3d, a matrox pull brings home its photo history, and the scan window tightens up
+## unreleased — backups drag in, the statusbar finds the switch, a program plays in 3d, the camera wall lights up all the way down, and a matrox pull brings home its photo history
 - **The star check samples five pairs, and `star_off` finally gets a budget.**
   Two sessions fixed `perf_probe`'s favourite-star flake at the same time and
   their fixes disagreed, so this is what survived the merge. One session went
@@ -396,6 +396,109 @@
   shot the newest of the day: that decided the photos grid's order and which
   sidecar a camera was named from, and now the timestamp parts are padded
   before they are compared.
+
+## v1.6 — the camera's 3d view, background scans, and remotes on the tab strip
+- **The Keyence remote stops "freezing" between clicks.** The live screen
+  streams as MJPEG, and Chromium renders a multipart frame only once the
+  boundary that *ends* it arrives — the server framed parts lazily, so the
+  newest screen (exactly the one your click was waiting on) sat invisible
+  until the *next* frame, which on an on-change stream meant your next mouse
+  input. In the field that read as "frozen — orbit the cursor until it
+  updates." The stream now closes every frame eagerly and repeats the newest
+  frame about once a second during a lull, so the picture is always current
+  and the connection provably alive (`test_mjpeg_closes_each_part_eagerly…`
+  pins the framing invariant: boundaries = parts + 1).
+- **Remote views ride the session bar like open backups.** A live camera
+  remote (CV-X mirror, Matrox web UI) used to take over the entire window —
+  no tabs, no way to glance at the backup behind it. Now it parks on a chip
+  with the monitor icon: the panel sits below the top bar, esc or navigating
+  anywhere hides it with the session held (the stream and pages stay warm, so
+  the chip brings it back instantly, exactly as you left it), re-opening the
+  same camera focuses its chip instead of redialling its one remote slot, and
+  the chip's ✕ is what disconnects. Different cameras can stay open on
+  side-by-side chips. Solo pop-outs and owned remote windows keep the old
+  takeover — they have no strip to park on. The old fullscreen tab-key guard
+  is retired: number keys now deliberately switch screens, because a route
+  parks the remote.
+- **Ctrl+scroll zooms a remote view — locally.** Browser zoom is disabled
+  app-wide (the page-zoom era is over), so the remotes grew their own:
+  ctrl+wheel, ctrl+= / ctrl+-, ctrl+0, and a % button with presets. On the
+  CV-X the fitted screen box scales and the stage pans, mouse mapping intact,
+  and a ctrl+wheel is never forwarded to the camera (a plain wheel still
+  drives the controller's own zoom — probe-pinned both ways). On the Matrox
+  the iframes scale like browser zoom, including below 100% to fit an
+  oversized operator page. Zoom lives with the view: parked and restored it
+  keeps, a fresh open starts back at 100%.
+- **The screens dropdown survives compare, search, and program diff.** Those
+  are hidden always-on screens — not in the screens list — so landing on one
+  erased the active tab's "· screen ▾" breadcrumb, and with it the only mouse
+  path back out of a compare. The breadcrumb now keeps naming the screen you
+  stand on and its menu still opens (probe-pinned on both #compare and
+  #search).
+- **Background effect settings: the rack follows the picker, and the dials
+  finally survive a restart.** Switching effects rebuilt the per-effect
+  slider rack on menu-*open* instead of on the actual pick, so it trailed one
+  effect behind until the dialog was reopened — the rack (and the density
+  ceiling) now repaint on the pick itself. Worse, the six global dials wrote
+  their *first* drag's values to disk forever: the debounced writer captured
+  that first snapshot and every later drag re-fired it, so everything looked
+  right all session and snapped back on restart. The writer now reads the
+  live values at fire time (per-effect dials already persisted correctly —
+  keyed `bgfx_p_<effect>_<dial>`, seeded back at boot). One `defaults` button
+  returns the whole background block — the six dials and the active effect's
+  own — to stock.
+- **The 3d viewports: instruments that survive every setting, one cube for
+  both viewers, and drag frames 4–7× faster.** The floor grid and the
+  orientation cube are instruments, not chrome — they used to vanish with
+  the "borders off" display setting because they borrowed its `--edge`
+  tokens; now they keep their exact look in either mode. The snap cube (26
+  targets: faces, edges, corners) moves out of view3d into a shared
+  `BV.viewCube` primitive, and the camera mesh viewer gains it plus the
+  same perspective toggle the robot view has — and in both viewers the mm
+  ruler now hides while perspective is on, because mm-per-px varies with
+  depth there and a ruler that lies is worse than none. The mesh painter
+  learns the classic software-renderer moves, each exact or honest: face
+  normals precomputed once per mesh; backface culling only on meshes
+  *proven* closed and consistently wound (every directed edge pairs with
+  its reverse — open scan surfaces keep the two-sided draw, and decimated
+  soups fail the proof by construction); painter order by O(n) counting
+  sort on quantized depth; same-shade, same-winding depth runs batched
+  into one fill; and big meshes drag at 0.6× backing resolution without
+  the antialiasing hairline, settling to a full-quality frame on release —
+  the resting image is always exact. Measured on the real 29,424-triangle
+  part that raised the complaint: drag frames that cost 258–452 ms before
+  (varying with machine load) cost 45–93 ms now, 14–27 ms internal per
+  coarse frame, with 51% of the part's faces skipped only because its mesh
+  proves closed. The enlarge lightbox carries the cube too, and
+  `ui_cvx3d_probe` pins all of it — cube render and snap, the perspective
+  toggle, the borders exemption, and the closed-culls/open-never-culls
+  proof. And the field-reported **seamless mirror**: the top plan and the
+  bottom plan are exact XZ mirror images that both draw X up-screen, and
+  spam-clicking the cube's rim targets teleports across the equator with
+  only the cube's small label as a tell — reading a keep-out zone off a
+  mirrored layout is exactly the wrong-data case this app exists to
+  prevent. Any below-floor camera (snapped or dragged there) now stamps
+  "⚠ viewing from BELOW the floor — the layout reads mirrored" first in
+  the viewport notes; bottom views stay reachable, because under-cell
+  inspection is legitimate evidence — the ambiguity was the bug, not the
+  viewpoint. *Known issue (field-reported 2026-08-28, parked): occasional
+  missing triangles and wrong front/behind stacking after this engine —
+  ranked suspects and the one-line cull kill-switch live in ROADMAP's 3D
+  follow-ups.*
+- **Scans become background jobs — closing a window no longer cancels minutes
+  of work.** The fleet health scan and the network discover used to live and
+  die with their dialog: an Esc mid-scan (or, for discover, one stray click
+  outside the window) silently killed the job and every minute it had already
+  run. Now closing only *detaches*: the scan keeps running, and the same
+  global progress strip the backups use grows one compact row per live scan —
+  its label and live n/total, an **open** that re-attaches the window right
+  where it was, and a ✕ that is now the only close-shaped gesture that
+  cancels anything. A fleet scan that finishes while detached still saves its
+  report (reopening the scan window goes straight to it), a finished network
+  sweep re-lists its results when discover reopens, and the whole app stays
+  usable — backups included — while scans grind. Closing the app itself now
+  asks about a running scan the same way it always asked about running
+  backups.
 - **Cleanup: the library learns to let go — without learning to delete.** The
   manage-backups modal (was "last backup") splits into two tabs. **report** is
   the taking side: the last run with retry-failed, the stale list, and the

@@ -478,17 +478,30 @@
       });
     }
 
-    /* scale ruler: largest nice mm length that stays ~1/4 viewport wide */
-    var RULER = [10, 25, 50].concat(NICE);
-    var mm = RULER[0];
-    for (i = 0; i < RULER.length; i++) if (RULER[i] * sc <= rect.width * 0.28) mm = RULER[i];
-    var bpx = mm * sc, bx = 16, by = rect.height - 16;
-    ov.push('<g class="v3-scale"><line x1="' + bx + '" y1="' + by + '" x2="' + (bx + bpx) + '" y2="' + by + '"/>' +
-      '<line x1="' + bx + '" y1="' + (by - 5) + '" x2="' + bx + '" y2="' + (by + 5) + '"/>' +
-      '<line x1="' + (bx + bpx) + '" y1="' + (by - 5) + '" x2="' + (bx + bpx) + '" y2="' + (by + 5) + '"/>' +
-      '<text x="' + (bx + bpx / 2) + '" y="' + (by - 6) + '" font-size="11">' + mm + " mm</text></g>");
+    /* scale ruler: largest nice mm length that stays ~1/4 viewport wide.
+       Orthographic only - under perspective mm-per-px varies with depth
+       (near side up to 1.4x), so showing the ruler there would be a lie. */
+    if (!persp) {
+      var RULER = [10, 25, 50].concat(NICE);
+      var mm = RULER[0];
+      for (i = 0; i < RULER.length; i++) if (RULER[i] * sc <= rect.width * 0.28) mm = RULER[i];
+      var bpx = mm * sc, bx = 16, by = rect.height - 16;
+      ov.push('<g class="v3-scale"><line x1="' + bx + '" y1="' + by + '" x2="' + (bx + bpx) + '" y2="' + by + '"/>' +
+        '<line x1="' + bx + '" y1="' + (by - 5) + '" x2="' + bx + '" y2="' + (by + 5) + '"/>' +
+        '<line x1="' + (bx + bpx) + '" y1="' + (by - 5) + '" x2="' + (bx + bpx) + '" y2="' + (by + 5) + '"/>' +
+        '<text x="' + (bx + bpx / 2) + '" y="' + (by - 6) + '" font-size="11">' + mm + " mm</text></g>");
+    }
 
     var notes = [];
+    /* below the floor the layout READS mirrored - the bottom plan is the
+       exact XZ mirror of the top plan and both draw X-up, so nothing but
+       the cube's small label tells them apart. Cube snaps teleport across
+       the equator in one click (dragging can dip under too), so say it
+       loudly: a tech reading a keep-out zone off a mirrored plan is the
+       exact wrong-data case this app exists to prevent. */
+    if (s.el < 0) {
+      notes.push("⚠ viewing from BELOW the floor — the layout reads mirrored");
+    }
     if (zones.some(function (z) { return z.approx || z.frame_missing; })) {
       notes.push("⚠ frame rotation unknown — geometry approximate");
     }
@@ -539,43 +552,15 @@
     ov.push('<text class="v3-hint" x="' + (rect.width - 10) + '" y="' + (rect.height - 8) +
       '" text-anchor="end" font-size="10.5">drag rotate · mid-drag pan · wheel zoom · dblclick fit</text>');
 
-    /* ---- viewport cube (top-right): rotates with the view, doubles as a
-       compass (you can SEE when you're under the floor). Click a face,
-       edge or corner to snap the camera to that direction - 26 targets,
-       named per the FANUC world frame. Purely rotational: projected with
-       the current basis, never with perspective or world offsets. ---- */
-    var bs = proj.basis;
-    function cpj(p) {
-      return [dot3(bs.right, p), -dot3(bs.up, p), dot3(bs.toViewer, p)];
-    }
-    var CS = 21, ccx = rect.width - 54, ccy = 54;
-    function cpx(p) {
-      var q = cpj(p);
-      return [ccx + q[0] * CS, ccy + q[1] * CS];
-    }
-    var cube = [];
-    CUBE_FACES.forEach(function (f) {
-      if (cpj(f.n)[2] < 0.03) return; /* backface */
-      var pts = f.corners.map(cpx).map(function (p) { return p[0] + "," + p[1]; });
-      cube.push('<polygon class="v3-cube-face" points="' + pts.join(" ") +
-        '" data-az="' + f.az + '" data-el="' + f.el + '"><title>' + f.label + ' view</title></polygon>');
-      var lc = cpx(f.n);
-      cube.push('<text class="v3-cube-lab" x="' + lc[0] + '" y="' + (lc[1] + 3) + '">' + f.label + "</text>");
-    });
-    CUBE_HITS.forEach(function (h) {
-      if (cpj(h.d)[2] < 0.1) return;
-      var p = cpx(h.at);
-      cube.push('<circle class="v3-cube-hit" cx="' + p[0] + '" cy="' + p[1] + '" r="' + h.r +
-        '" data-az="' + h.az + '" data-el="' + h.el + '"/>');
-    });
-    ov.push('<g class="v3-cube">' + cube.join("") + "</g>");
-
     /* everything that moves while playing lives in one trailing group, so a
        frame rewrites that and leaves the labels, ruler, notes and cube - all
        camera-dependent only - exactly where they are */
     ov.push('<g class="v3-ovl-live"></g>');
     ovl.innerHTML = ov.join("");
     svg._live = ovl.querySelector(".v3-ovl-live");
+    /* the orientation cube (top-right) is its own overlay now - BV.viewCube,
+       created in render() - re-project it against the new camera */
+    if (svg._cube) svg._cube.update();
   }
 
   /* ---- the per-frame redraw ----
@@ -601,62 +586,10 @@
       var q2 = svg._toPx(proj.project(tcp));
       ov.push('<circle class="v3-tcp-live" cx="' + q2[0] + '" cy="' + q2[1] + '" r="5"/>');
     }
-    svg._live.innerHTML = ov.join("");
-  }
+    svg._live.innerHTML = ov.join("");  }
 
-  /* cube geometry: 6 labeled faces + 12 edge and 8 corner snap targets.
-     Directions live in the FANUC world frame (+X front, +Y left, +Z top);
-     each target's az/el is the turntable angle that LOOKS from there.
-     Top/bottom faces keep the canonical plan azimuths. */
-  var dot3 = function (a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; };
-  var CUBE_FACES = (function () {
-    var defs = [
-      { n: [1, 0, 0], label: "front", az: 0, el: 0 },
-      { n: [-1, 0, 0], label: "back", az: 180, el: 0 },
-      { n: [0, 1, 0], label: "left", az: 90, el: 0 },
-      { n: [0, -1, 0], label: "right", az: -90, el: 0 },
-      { n: [0, 0, 1], label: "top", az: 180, el: 90 },
-      { n: [0, 0, -1], label: "btm", az: 0, el: -90 },
-    ];
-    defs.forEach(function (f) {
-      var k = f.n[0] ? 0 : f.n[1] ? 1 : 2;
-      var a = (k + 1) % 3, b = (k + 2) % 3;
-      f.corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(function (uv) {
-        var p = [0, 0, 0];
-        p[k] = f.n[k];
-        p[a] = uv[0];
-        p[b] = uv[1];
-        return p;
-      });
-    });
-    return defs;
-  })();
-  var CUBE_HITS = (function () {
-    var out = [], i, j;
-    var R2D = 180 / Math.PI;
-    function target(v, r) {
-      var l = Math.sqrt(dot3(v, v));
-      var d = [v[0] / l, v[1] / l, v[2] / l];
-      out.push({
-        at: v, d: d, r: r,
-        az: Math.round(Math.atan2(d[1], d[0]) * R2D * 10) / 10,
-        el: Math.round(Math.asin(d[2]) * R2D * 10) / 10,
-      });
-    }
-    for (i = 0; i < 6; i++) {
-      for (j = i + 1; j < 6; j++) {
-        var n1 = CUBE_FACES[i].n, n2 = CUBE_FACES[j].n;
-        if (dot3(n1, n2) !== 0) continue; /* opposite faces share no edge */
-        target([n1[0] + n2[0], n1[1] + n2[1], n1[2] + n2[2]], 4.5);
-      }
-    }
-    [-1, 1].forEach(function (x) {
-      [-1, 1].forEach(function (y) {
-        [-1, 1].forEach(function (z) { target([x, y, z], 4); });
-      });
-    });
-    return out;
-  })();
+  /* the viewport cube (6 faces + 12 edge + 8 corner snap targets) lives in
+     components/viewcube.js now - shared with the camera mesh screen */
 
   /* ---- playback ----
      One uniform rule: lerp in joint space between consecutive knots. A JOINT
@@ -1536,16 +1469,16 @@
           });
       }
 
-      /* snap views live on the viewport cube (top-right) - click a face,
-         edge or corner. The cube markup is rebuilt every draw, so the
-         click handler is delegated from the overlay root. */
-      ovl.addEventListener("click", function (e) {
-        var t = e.target && e.target.closest ? e.target.closest("[data-az]") : null;
-        if (!t) return;
-        s.az = parseFloat(t.getAttribute("data-az"));
-        s.el = parseFloat(t.getAttribute("data-el"));
-        s.box = null; /* snapping also refits */
-        redraw();
+      /* the orientation cube (top-right): the shared primitive, riding its
+         own overlay svg above the label layer. It owns its clicks. */
+      svg._cube = BV.viewCube(vp, {
+        basisOf: function () { return BV.proj3d.orbitProjector(s.az, s.el).basis; },
+        onSnap: function (az, el) {
+          s.az = az;
+          s.el = el;
+          s.box = null; /* snapping also refits */
+          redraw();
+        },
       });
 
       /* toolbar: path · points · fit · perspective · show-disabled · group

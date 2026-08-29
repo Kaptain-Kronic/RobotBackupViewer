@@ -68,6 +68,63 @@
     return BV.api.call("save_last_scan", _lastScan).catch(function () {});
   }
 
+  /* the scan in flight, held MODULE-wide so it survives the modal: {jobId,
+     checks, queries, attached}. Closing the window detaches (attached=false,
+     the job keeps running under the strip); reopening re-attaches. checks and
+     queries live here because a detached finish still has to title its report
+     sections - they are start-time state no snapshot carries. Null when no
+     scan is running. (A page reload loses this; the attach path then falls
+     back to the live registry and no find titles - the results themselves
+     are never lost, they live server-side.) */
+  var _live = null;
+
+  function flagCount(results) {
+    var flags = 0;
+    (results || []).forEach(function (r) {
+      (r.checks || []).forEach(function (c) { if (c.status === "flag") flags++; });
+    });
+    return flags;
+  }
+
+  /* one home for the report object's shape - the in-modal finish and the
+     detached finish must produce byte-identical reports */
+  function makeReport(results, checks, queries) {
+    return { results: results,
+             checks: (checks || []).map(function (c) {
+               return { id: c.id, label: c.label };
+             }),
+             queries: queries || [], when: Date.now(),
+             flt: { rows: {}, items: {}, progs: {}, progRows: {} } };
+  }
+
+  /* a scan that ends while DETACHED must land exactly where an attached one
+     does: in _lastScan and on disk, announced by a toast. The strip's poll
+     raises "scan-jobs" on every terminal transition; the attached case is
+     handled by the modal's own poller (which cleared _live already or holds
+     attached=true). */
+  BV.state.on("scan-jobs", function (ev) {
+    if (!_live || _live.attached) return;
+    if (!ev || (ev.newlyDone || []).indexOf(_live.jobId) === -1) return;
+    var p = (ev.jobs || {})[_live.jobId];
+    var live = _live;
+    _live = null;
+    if (!p) return;
+    if (p.status === "done") {
+      BV.api.call("scan_progress", live.jobId).then(function (full) {
+        _lastScan = makeReport(full.results || [], live.checks, live.queries);
+        flushSave();
+        var flags = flagCount(full.results);
+        BV.toast("fleet scan finished" +
+          (flags ? " · " + flags + " flag" + (flags === 1 ? "" : "s") : "") +
+          " — report saved under scan → last scan", 5000);
+      }).catch(function () {});
+    } else if (p.status === "cancelled") {
+      BV.toast("fleet scan cancelled");
+    } else if (p.status === "error") {
+      BV.toast("fleet scan failed: " + (p.error || "?"));
+    }
+  });
+
   var PILL = { flag: ["flag", "err"], info: ["info", "acc"], ok: ["ok", "ok-soft"], na: ["n/a", "ghost"] };
   var ORDER = { flag: 0, info: 1, ok: 2, na: 3 };
   /* where a result row lands when clicked - the tab that shows that check's data */
@@ -158,7 +215,13 @@
           sticky: true,         /* a stray outside click must not eat a report */
           onClose: function () {
             if (stop) stop();
-            if (jobId) BV.api.call("cancel_scan", jobId).catch(function () {});
+            /* a scan mid-run DETACHES - it keeps running under the job strip
+               (open there re-attaches). cancel is a button, never a side
+               effect of closing: an Esc used to eat minutes of fleet scan. */
+            if (_live && _live.jobId === jobId) {
+              _live.attached = false;
+              BV.toast("scan continues in the background — the strip has it");
+            }
             flushSave();        /* never race the debounce on the way out */
           },
         });
@@ -328,14 +391,18 @@
           go.disabled = true;    /* no double-submit */
           BV.api.call("health_scan_start", robots.map(function (r) { return r.id; }),
             picked, queries, params)
-            .then(function (res) { runView(res.job_id, res.total, checks, queries.slice()); })
+            .then(function (res) {
+              BV.jobs.trackScan(res.job_id, "health");   /* the strip watches from tick one */
+              runView(res.job_id, res.total, checks, queries.slice());
+            })
             .catch(function (e) { go.disabled = false; BV.toast(e.message); });
         });
       }
 
-      /* ---- view 2: progress ---- */
+      /* ---- view 2: progress (fresh scan or re-attach to a detached one) ---- */
       function runView(id, total, checks, queries) {
         jobId = id;
+        _live = { jobId: id, checks: checks, queries: queries, attached: true };
         host.innerHTML = "";
         var bar = BV.el("div");
         var current = BV.el("div", { class: "bf-current dim" });
@@ -351,10 +418,7 @@
 
         function paint(p) {
           var pct = p.total ? Math.round((p.scanned / p.total) * 100) : 0;
-          var flags = 0;
-          (p.results || []).forEach(function (r) {
-            (r.checks || []).forEach(function (c) { if (c.status === "flag") flags++; });
-          });
+          var flags = flagCount(p.results);
           bar.innerHTML = '<div class="membar"><div class="mb-label"><span>scanning</span><span>' +
             p.scanned + " / " + (p.total || total) +
             (flags ? " · " + flags + " flag" + (flags === 1 ? "" : "s") : "") + "</span></div>" +
@@ -370,11 +434,20 @@
           BV.api.call("scan_progress", id).then(function (p) {
             if (!live) return;
             paint(p);
-            if (p.status === "done") { stop(); jobId = null; reportView(p.results, checks, queries); }
-            else if (p.status === "cancelled") { stop(); jobId = null; BV.toast("scan cancelled"); pickView(checks); }
-            else if (p.status === "error") { stop(); jobId = null; BV.toast("scan failed: " + (p.error || "?")); pickView(checks); }
+            if (p.status === "done") { stop(); jobId = null; _live = null; reportView(p.results, checks, queries); }
+            else if (p.status === "cancelled") { stop(); jobId = null; _live = null; BV.toast("scan cancelled"); pickView(checks); }
+            else if (p.status === "error") { stop(); jobId = null; _live = null; BV.toast("scan failed: " + (p.error || "?")); pickView(checks); }
             else setTimeout(tick, 400);
-          }).catch(function (e) { stop(); jobId = null; BV.toast(e.message); pickView(checks); });
+          }).catch(function (e) {
+            /* a lost POLL is not a lost SCAN: the job may well still be
+               running server-side, so detach and let the strip's watcher
+               catch the finish instead of orphaning it */
+            stop();
+            if (_live && _live.jobId === id) _live.attached = false;
+            jobId = null;
+            BV.toast(e.message);
+            pickView(checks);
+          });
         }
         paint({ scanned: 0, total: total });
         tick();
@@ -388,12 +461,7 @@
            is stored as an id+label SNAPSHOT only - enough to title the
            sections this report actually ran, and too little to ever pass
            for the registry (the picker re-pulls the live one). */
-        var rep = keep || { results: results,
-                            checks: (checks || []).map(function (c) {
-                              return { id: c.id, label: c.label };
-                            }),
-                            queries: queries, when: Date.now(),
-                            flt: { rows: {}, items: {}, progs: {}, progRows: {} } };
+        var rep = keep || makeReport(results, checks, queries);
         _lastScan = rep;
         results = rep.results;
         checks = rep.checks;
@@ -896,13 +964,29 @@
         repaint();
       }
 
-      /* boot: registry + the kept report together. With nothing selected the
-         window is a REPORT VIEWER - going straight to the last scan is the
-         whole reason it opens without a selection. */
+      /* boot: registry + the kept report together. A scan already in flight
+         outranks everything - the window is a VIEW of the job, never its
+         owner, so reopening RE-ATTACHES to it (closing only detached it).
+         Otherwise, with nothing selected the window is a REPORT VIEWER -
+         going straight to the last scan is the whole reason it opens
+         without a selection. */
       host.innerHTML = '<div class="dim" style="padding:.5rem 0">loading checks…</div>';
       Promise.all([BV.api.call("health_checks"), loadLast()])
         .then(function (both) {
           registry = both[0];
+          var liveJob = BV.jobs.activeScan ? BV.jobs.activeScan("health") : null;
+          if (!liveJob && _live) liveJob = { id: _live.jobId, total: 0 };
+          if (liveJob) {
+            /* start-time checks/queries when this process started the scan;
+               after a page reload the registry titles the sections and the
+               find queries go untitled - the results themselves are never
+               lost, they live server-side */
+            var mine = _live && _live.jobId === liveJob.id;
+            runView(liveJob.id, liveJob.total || 0,
+                    (mine && _live.checks) || registry,
+                    (mine && _live.queries) || []);
+            return;
+          }
           if (!robots.length && _lastScan) reportView(null, null, null, _lastScan);
           else pickView(registry);
         })

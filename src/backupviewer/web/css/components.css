@@ -1482,6 +1482,9 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .set-row { display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; padding: 0.45rem 0.7rem; }
 .set-row .name { color: var(--text); font-size: 0.88rem; }
 .set-row .seg { flex: none; }
+/* action row (the background "defaults" button): sits where a set-row's
+   control column would, but carries no setting name */
+.set-reset { display: flex; justify-content: flex-end; padding: 0.45rem 0.7rem; }
 .set-path { display: flex; align-items: center; gap: 0.5rem; min-width: 0; flex: 1; justify-content: flex-end; }
 .set-path-val {
   font-size: 0.78rem; max-width: 22ch; overflow: hidden; text-overflow: ellipsis;
@@ -2265,11 +2268,14 @@ button.btn.danger:disabled { opacity: 0.5; cursor: default; }
 .cvx-status { color: var(--sub); font-size: 0.78rem; }
 .cvx-status.err { color: var(--error); }
 .cvx-stage {
-  flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center;
-  padding: 0.5rem; overflow: hidden;
+  flex: 1 1 auto; min-height: 0; display: flex;
+  padding: 0.5rem; overflow: auto;
 }
+/* margin:auto, not align/justify center: same centering while the screen fits,
+   but a ZOOMED screen scrolls to every corner (flex centering pins the
+   overflow's top-left past the scrollport, unreachable) */
 .cvx-screen {
-  position: relative; background: var(--bg2); cursor: crosshair;
+  position: relative; margin: auto; flex: none; background: var(--bg2); cursor: crosshair;
   box-shadow: 0 0 0 1px var(--edge), 0 8px 40px rgba(0,0,0,0.6);
 }
 .cvx-screen img {
@@ -2358,6 +2364,18 @@ text.v3-ax-z { fill: var(--accent); }
 .v3-cube-lab { font-size: 8.5px; fill: var(--sub); text-anchor: middle; pointer-events: none; }
 .v3-cube-hit { fill: transparent; stroke: none; cursor: pointer; pointer-events: auto; }
 .v3-cube-hit:hover { fill: color-mix(in srgb, var(--accent) 45%, transparent); }
+/* "borders off" (.no-edges, base.css) blanks the --edge tokens to flatten the
+   chrome - but the floor grid and the view cube are viewport instruments, not
+   chrome, and must read the same in either mode. These restate the base.css
+   --edge-soft/--edge formulas (aliasing var(--edge) would inherit the blanking);
+   keep in step with base.css if the edge formulas ever change. */
+.no-edges .v3-grid { stroke: color-mix(in srgb, var(--accent) 26%, transparent); }
+.no-edges .v3-cube-face { stroke: color-mix(in srgb, var(--accent) 45%, transparent); }
+/* the orientation cube overlay (components/viewcube.js): fixed pixel-space
+   furniture top-right of any 3D viewport; the none root lets drags pass
+   through, .v3-cube-face/.v3-cube-hit re-enable their own pointer-events */
+.viewcube { position: absolute; top: 0; right: 0; width: 108px; height: 108px; pointer-events: none; }
+.viewcube text { font-family: var(--font-mono); fill: var(--sub); }
 /* rem bounds so the panel scales with text size; the 40% guard keeps it from
    eating the 3D canvas in a narrow window */
 .v3-side { flex: 0 0 25%; min-width: min(17rem, 40%); max-width: 26rem; overflow-y: auto; min-height: 0; }

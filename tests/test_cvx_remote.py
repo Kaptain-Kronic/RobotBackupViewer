@@ -163,7 +163,7 @@ def test_frame_ack_shape():
 # -- ctx echo + video routing (the regression) -------------------------------
 
 def _session():
-    return cx.CvxRemoteSession("10.0.0.9", connect=lambda ip, port: FakeSock())
+    return cx.CvxRemoteSession("192.0.2.9", connect=lambda ip, port: FakeSock())
 
 
 def test_prepare_echoes_learned_ctx_for_service_type():
@@ -411,7 +411,83 @@ def test_send_mouse_noop_when_not_alive():
 def test_start_reports_connect_failure():
     def boom(ip, port):
         raise OSError("refused")
-    s = cx.CvxRemoteSession("10.0.0.9", connect=boom)
+    s = cx.CvxRemoteSession("192.0.2.9", connect=boom)
     assert s.start() is False
     assert "connect failed" in s.error
     assert s.alive is False
+
+
+# -- MJPEG frame server ------------------------------------------------------
+
+class _FakeStreamSession:
+    """Duck-types what _MjpegHandler reads: alive / frames / latest_frame() /
+    wait_frame(). The handler waits on the session rather than polling, so the
+    fake has to answer that too - a stub without it makes the handler raise
+    inside its own thread and the test sees only a stalled socket."""
+    def __init__(self, jpg):
+        self.alive = True
+        self.frames = 0
+        self._jpg = jpg
+
+    def latest_frame(self):
+        return self._jpg
+
+    def wait_frame(self, last, timeout):
+        """No producer here, so this is the real thing's timeout path: sleep
+        the window out and report whether the counter moved (a test that bumps
+        `frames` still gets noticed on the next pass)."""
+        import time as _t
+        if self.frames != last:
+            return True
+        _t.sleep(timeout)
+        return self.frames != last
+
+
+def _read_stream(conn, pred, secs):
+    import time as _t
+    conn.settimeout(0.2)
+    end = _t.time() + secs
+    data = b""
+    while _t.time() < end and not pred(data):
+        try:
+            chunk = conn.recv(65536)
+        except OSError:   # timeout - keep polling until the deadline
+            continue
+        if not chunk:
+            break
+        data += chunk
+    return data
+
+
+def test_mjpeg_closes_each_part_eagerly_and_resends_when_idle():
+    """The frozen-until-you-bump-the-mouse regression. Chromium renders a
+    multipart part only when the boundary that ENDS it arrives, so a stream
+    framed [boundary, headers, jpeg] shows every frame one part late - fatal
+    on an on-change stream, where "one part later" is the user's next input.
+    The two invariants: every jpeg written is already closed by a boundary
+    (boundaries == parts + 1), and a quiet stream re-sends the newest frame
+    (~1/s) rather than going silent."""
+    import socket
+
+    jpg = b"\xff\xd8MJPEG-PART-PAYLOAD\xff\xd9"
+    sess = _FakeStreamSession(jpg)
+    sess.frames = 1                      # one frame available, then quiet
+    srv = cx.start_frame_server({"s1": sess})
+    conn = None
+    try:
+        conn = socket.create_connection(("127.0.0.1", srv.server_address[1]), timeout=3)
+        conn.sendall(b"GET /cvx/s1 HTTP/1.1\r\nHost: x\r\n\r\n")
+        buf = _read_stream(conn, lambda d: d.count(b"--frame") >= 2, 3)
+        parts = buf.count(jpg)
+        assert parts >= 1
+        assert buf.count(b"--frame") == parts + 1, \
+            "a written part must be CLOSED by its boundary immediately"
+        # frames never advanced - the idle path must repeat the newest frame
+        more = _read_stream(conn, lambda d: jpg in d, 2.5)
+        assert jpg in more, "an idle stream went silent instead of re-sending"
+    finally:
+        sess.alive = False               # ends the handler's write loop
+        if conn is not None:
+            conn.close()
+        srv.shutdown()
+        srv.server_close()

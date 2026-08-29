@@ -45,6 +45,15 @@ Each of these is deliberately scoped to land on its own. Good places to start.
 - ~~📋 **Workspace splash screen**~~ — superseded by the library overhaul:
   boot now serves the last-known library instantly and verifies behind it,
   so there is no library wait left for a splash to hide.
+- ✅ **Scans as background jobs** — shipped 2026-08-20: the fleet health scan
+  and network discover detach on window close instead of cancelling; the
+  backup progress strip carries one row per live scan (open re-attaches, ✕
+  cancels), detached finishes still save their report, and app close asks
+  about running scans. The strip's bulk poll is a light snapshot
+  (`list_scan_jobs`, results stripped). `ws_find_programs` (the workspace's
+  cross-library program finder) is still a synchronous call — promoting it to
+  the same job shape is the natural next slice if plant-scale searches start
+  to hurt.
 - 📋 **More scan checks** — simulated-IO-left-on, general override < 100%,
   alarm-frequency summary, controller clock drift, uninitialized PRs
   referenced by programs.
@@ -158,6 +167,38 @@ Each of these is deliberately scoped to land on its own. Good places to start.
   separately), and 36 more fail only because a side-slung or undersling mount
   rotates the base. So OPW would need a numerical fallback either way, which
   is why the numerical solver goes in first.
+- 🐛 **Mesh-renderer regressions (field-reported 2026-08-28; PARKED, circle
+  back)** — after the 2026-08-20 perf engine (`28b960f`): occasional missing
+  triangles, and wrong in-front/behind stacking, in the camera mesh viewer.
+  Ranked suspects, most likely first, each with its fix direction:
+  1. **One global cull orientation vs multi-component meshes.** An internal
+     void or second shell is *legitimately* wound opposite the outer skin, so
+     the directed-edge pairing proof still passes while the single `cullSign`
+     (leaned off the max-x vertex) culls that component's FRONT faces —
+     missing geometry wherever a void or nested shell shows. Fix: label
+     connected components (edge adjacency), orient each independently — or
+     refuse to cull any multi-component mesh.
+  2. **Perspective-mode approximations at the silhouette.** The per-face
+     centroid ray can cull a large triangle that is still partly visible,
+     and run batching keys winding on the ortho view-dot, which can disagree
+     with true projected winding under perspective — opposite windings in
+     one nonzero-rule path cancel to holes. Fix: cull only when all three
+     corners face away; key batches on the actual projected 2D winding sign
+     (exact in both projections).
+  3. **Quantized-depth ties.** The O(n) counting sort holds order to 1/4096
+     of the depth range; near-coplanar overlaps that the old exact comparator
+     kept stable can now flip frame-to-frame across bucket boundaries
+     (stacking shimmer). Fix: more buckets, or an exact polish pass.
+  4. **Coarse drag frames** (0.6× store, hairline skipped) reading as
+     dropout/sparkle on fine meshes — a tuning knob (`COARSE_SCALE`,
+     `COARSE_TRIS`), not a defect; the settle frame is always full quality.
+  Kill-switch while parked, if it bites in the field: force `cullOn = false`
+  in meshview.js `redraw()` (one line) — forfeits the cull's half, keeps the
+  batching/sort/coarse speedups, and suspects 1 and the cull half of 2
+  vanish with it.
+- 📋 **Program points in 3D** — plot a program's Cartesian positions among
+  the zones (compose their UFRAME); joint-rep points can now use the same
+  forward kinematics the posed arm runs on.
 - 📋 **Rail + mount variants** — the pose validator exposed them: rail
   robots miss by exactly their carriage travel (pure translation, perfect
   orientation) and some mounts by a constant rotation. Both refuse to pose

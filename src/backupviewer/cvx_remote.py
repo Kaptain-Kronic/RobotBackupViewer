@@ -553,28 +553,50 @@ class _MjpegHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache, no-store")
         self.send_header("Connection", "close")
         self.end_headers()
+        # Framing: the stream opens with one boundary, then every part is
+        # [headers, jpeg, closing boundary] - the boundary that ENDS a part is
+        # written EAGERLY, with the part, not lazily as the start of the next
+        # one. Chromium only renders a part once the boundary that ends it
+        # arrives, so lazy framing showed every frame one part LATE - on an
+        # on-change stream that meant the newest screen (exactly the one a
+        # click was waiting on) sat invisible until the next change, which in
+        # practice was the user bumping the mouse ("frozen until I wiggle").
         last = -1
-        jpg = None
-        pending = False        # a written part the client may still be holding
+        sent_at = 0.0
         try:
+            self.wfile.write(b"--frame\r\n")
             while sess.alive:
                 if sess.frames != last:
                     last = sess.frames
                     jpg = sess.latest_frame()
                     if jpg:
                         self._part(jpg)
-                        pending = True
+                        sent_at = time.time()
                     continue
-                if not sess.wait_frame(last, IDLE_RESEND_S) and pending and jpg:
-                    self._part(jpg)          # flush the settled frame (see above)
-                    pending = False
+                # Nothing new. Wait on the session rather than polling, so a
+                # frame still paints the instant it lands; when the window
+                # closes with the stream still quiet, repeat the newest frame
+                # about once a second. Belt to the eager boundary's braces -
+                # the picture can never sit stale behind any client-side part
+                # buffering, and the connection stays provably alive while the
+                # controller has nothing new to say.
+                if (not sess.wait_frame(last, IDLE_RESEND_S)
+                        and time.time() - sent_at > 1.0):
+                    jpg = sess.latest_frame()
+                    if jpg:
+                        self._part(jpg)
+                        sent_at = time.time()
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
 
     def _part(self, jpg: bytes):
-        # one write per part: with Nagle off, three writes would be three packets
-        self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
-                         + str(len(jpg)).encode() + b"\r\n\r\n" + jpg + b"\r\n")
+        # one write per part: with Nagle off, three writes would be three
+        # packets. The boundary that ENDS this part goes out WITH it, never
+        # lazily as the start of the next one - see the framing note in
+        # _stream for what lazy framing cost.
+        self.wfile.write(b"Content-Type: image/jpeg\r\nContent-Length: "
+                         + str(len(jpg)).encode() + b"\r\n\r\n" + jpg
+                         + b"\r\n--frame\r\n")
 
     def log_message(self, *a):  # silence per-request logging
         pass

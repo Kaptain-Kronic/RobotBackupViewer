@@ -59,3 +59,37 @@ def test_close_never_traps_on_dialog_failure():
     api._window = _Boom()
     api._jobs["a"] = _Job("downloading")
     assert api._confirm_close() is True            # fail OPEN - never trap the user
+
+
+def test_close_asks_for_running_scan():
+    """Scans run detached from any window now, so app-close is the one moment
+    left where one dies silently - it gets the same explicit yes."""
+    api = Api()
+    api._window = _Win(True)
+    api._scans["s"] = _Job("scanning")
+    assert api._confirm_close() is True
+    title, msg = api._window.asked[0]
+    assert title == "scan in progress"
+    assert "1 scan still running" in msg
+    assert "nothing on disk is affected" in msg    # honest: scans only read
+
+
+def test_close_finished_scan_no_dialog():
+    api = Api()
+    api._window = _Win(False)
+    api._scans["s"] = _Job("done")
+    api._scans["t"] = _Job("cancelled")
+    assert api._confirm_close() is True
+    assert api._window.asked == []
+
+
+def test_close_backups_and_scan_share_one_dialog():
+    api = Api()
+    api._window = _Win(True)
+    api._jobs["a"] = _Job("downloading")
+    api._scans["s"] = _Job("scanning")
+    assert api._confirm_close() is True
+    assert len(api._window.asked) == 1
+    msg = api._window.asked[0][1]
+    assert "1 backup still running" in msg
+    assert "A scan is still running too" in msg

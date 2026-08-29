@@ -201,6 +201,42 @@ def test_network_scan_finds_only_fanuc():
     assert got["10.0.0.5"]["has_md"] is True
 
 
+def test_scan_job_label_and_terminal_stamp():
+    """The strip-facing snapshot shape: a label naming the sweep, `started` at
+    birth, `finished` stamped by the FIRST terminal transition only."""
+    job = discover.NetworkScanJob("10.0.0.0/29", host_provider=lambda cidr: [],
+                                  eip_probe=lambda b: [])
+    s = job.snapshot()
+    assert s["label"] == "network sweep 10.0.0.0/29"
+    assert s["kind"] == "network"
+    assert s["started"] and not s["finished"]
+    job.run()
+    s = job.snapshot()
+    assert s["status"] == "done"
+    assert s["finished"]
+    first = s["finished"]
+    job._set(status="error")            # a later terminal write must not re-stamp
+    assert job.snapshot()["finished"] == first
+
+
+def test_list_scan_jobs_strips_results():
+    """The strip's bulk poll is LIGHT: counts and status only - a fleet
+    report must never ride along twice a second. The owning window polls
+    scan_progress for the payload."""
+    from backupviewer.api import Api
+
+    api = Api()
+    job = discover.NetworkScanJob("10.0.0.0/29", host_provider=lambda cidr: [],
+                                  eip_probe=lambda b: [])
+    job._set_results([{"host": "10.0.0.1"}])
+    api._scans[job.id] = job
+    jobs = api.list_scan_jobs()["data"]["jobs"]
+    assert len(jobs) == 1
+    assert "results" not in jobs[0]     # stripped...
+    assert jobs[0]["found"] == 1        # ...but the count survives
+    assert jobs[0]["label"] == "network sweep 10.0.0.0/29"
+
+
 def test_network_scan_name_falls_back_to_ip():
     class NoName(FakeFTP):
         def nlst(self, *args):

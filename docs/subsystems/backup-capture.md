@@ -145,7 +145,8 @@ job.run()                                      one connection, sequential
    │  Latest mirror: copy to sibling .__tmp, atomic swap  (never the only copy)
    │  on_complete (guarded): library.register_backup + camera self-name/link
    ▼
-jobs.js 500ms poller (list_backup_jobs) ──> jobstrip + per-row bars
+jobs.js 500ms poller (list_backup_jobs; + list_scan_jobs while a scan lives)
+   │  ──> jobstrip + per-row bars, plus one strip row per live scan (open / ✕)
    │  run-scoped: finished robots stay in the denominator (jobs.js:40-54)
    ▼
 backuplog (%APPDATA%/backup_log.json) ──> manage_ui "last run" + retry-failed
@@ -163,6 +164,15 @@ What's stateful: each job/scan is one object holding a lock-guarded progress
 dict (`snapshot()`/`cancel()`), registered in `api._jobs`/`api._scans` and
 polled by id. Nothing capture-side is cached between runs; the durable state
 is the disk tree plus `backup_log.json`.
+
+Since 2026-08-20 scans are strip-first-class: `_ScanJob` snapshots carry
+`label`/`started`/`finished` (the first terminal transition stamps `finished`,
+inside `_set`), `api.list_scan_jobs` serves the strip a bulk LIGHT snapshot
+per tick (`results` stripped — the owning window still polls `scan_progress`
+for the payload), and closing a scan's window only DETACHES it: the job runs
+on under its strip row, whose ✕ is the one cancel and whose "open" re-attaches
+the window (`tests/ui_jobs_probe.py` pins the whole contract). App close asks
+about a running scan the way it has always asked about running backups.
 
 ## 4. Domain truths
 

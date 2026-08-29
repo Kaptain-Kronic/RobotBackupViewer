@@ -3,9 +3,12 @@
 The MJPEG flush behavior: a settled frame must paint without input.
 
 Chromium's multipart/x-mixed-replace parser is boundary-driven - it hands part N
-to the image decoder only when part N+1's delimiter arrives - so a stream that
-goes byte-silent after a burst never paints its final frame (the mouse-wiggle
-bug). The bridge therefore re-sends the settled JPEG once after IDLE_RESEND_S.
+to the image decoder only when part N's delimiter arrives - so a stream that
+writes that delimiter lazily, as the start of part N+1, never paints its final
+frame when it goes byte-silent (the mouse-wiggle bug). The bridge therefore
+ships the closing boundary WITH its part, and repeats the newest frame about
+once a second while idle, so the picture cannot sit stale behind client-side
+buffering and the connection stays provably alive.
 These tests drive a real CvxRemoteSession against the loopback sim and read the
 actual HTTP stream a browser would."""
 import socket
@@ -44,10 +47,11 @@ def _stream_jpegs(conn, acc, found, deadline):
         found.extend(cx.extract_jpegs(acc))
 
 
-def test_idle_resend_flushes_the_settled_frame():
-    """ONE frame pushed -> TWO identical parts on the wire (the frame, then the
-    idle flush that lets the browser paint it) - and no third: the re-send is
-    once per burst, not a loop. Pre-fix, the second part never arrives."""
+def test_settled_frame_paints_and_then_heartbeats():
+    """ONE frame pushed -> a COMPLETE part on the wire straight away (closing
+    boundary and all, so a browser paints it with no further input), and then
+    the same frame again on the idle heartbeat. Pre-fix the delimiter waited
+    for the next frame and the picture hung until the user wiggled the mouse."""
     with CvxSim() as sim:
         sess = cx.CvxRemoteSession("192.0.2.44", connect=sim.connect)
         assert sess.start(), sess.error
@@ -61,19 +65,22 @@ def test_idle_resend_flushes_the_settled_frame():
                 time.sleep(0.1)          # let the handler enter its stream loop
                 sim.push_frame()         # the ONLY frame this test ever pushes
 
+                # well under the ~1s heartbeat: whatever arrives in this window
+                # is the eager part, not a repeat
                 acc, jpgs = bytearray(), []
-                _stream_jpegs(c, acc, jpgs, time.monotonic() + 3.0)
+                _stream_jpegs(c, acc, jpgs, time.monotonic() + 0.4)
+                assert len(jpgs) >= 1, (
+                    "the pushed frame never arrived as a complete part - a "
+                    "browser would hold it un-painted until the next frame "
+                    "(the mouse-wiggle bug)")
 
-                assert len(jpgs) >= 2, (
-                    f"got {len(jpgs)} part(s) - the settled frame was never "
-                    "flushed; a browser would hold it un-painted until the "
-                    "next frame (the mouse-wiggle bug)")
-                assert jpgs[0] == jpgs[1], "the flush part must be the same frame"
-
-                # and it is a single flush, not a re-send loop
+                # and the stream keeps itself alive: the same frame repeats
                 before = len(jpgs)
-                _stream_jpegs(c, acc, jpgs, time.monotonic() + 0.6)
-                assert len(jpgs) == before, "idle stream kept re-sending"
+                _stream_jpegs(c, acc, jpgs, time.monotonic() + 2.5)
+                assert len(jpgs) > before, (
+                    "idle stream never repeated the frame - no heartbeat, so a "
+                    "dead connection looks exactly like a quiet controller")
+                assert jpgs[0] == jpgs[-1], "the heartbeat must be the same frame"
                 c.close()
             finally:
                 srv.shutdown()

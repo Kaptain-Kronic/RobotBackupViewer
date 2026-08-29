@@ -450,6 +450,10 @@ class Api:
         return sum(1 for j in self._jobs.values()
                    if not ftpbackup.is_terminal(j.snapshot().get("status")))
 
+    def _active_scan_count(self) -> int:
+        return sum(1 for j in self._scans.values()
+                   if not ftpbackup.is_terminal(j.snapshot().get("status")))
+
     def _active_run_id(self) -> str:
         """The run_id of the backup run still in flight, or "". A backup fired
         while others are running JOINS their run: a mid-run retry of a few
@@ -473,15 +477,28 @@ class Api:
         Closing kills the daemon backup threads mid-download (the .part protocol
         means no half-file ever looks complete, but the snapshot is left partial
         with no sidecars), so closing during a backup deserves an explicit yes.
-        Any failure fails OPEN - never trap the user inside the app."""
+        A running scan deserves one too - it runs detached from any window now,
+        so the user may have forgotten it; abandoning it only costs the minutes
+        it already ran, and the dialog says so. Any failure fails OPEN - never
+        trap the user inside the app."""
         try:
             n = self._active_backup_count()
-            if not n:
+            ns = self._active_scan_count()
+            if not n and not ns:
                 return True
-            msg = ("%d backup%s still running. Closing now cuts %s off mid-transfer "
-                   "and leaves incomplete snapshot folders. Close anyway?"
-                   % (n, "s" if n != 1 else "", "them" if n != 1 else "it"))
-            return bool(self._window.create_confirmation_dialog("backups in progress", msg))
+            if n:
+                title = "backups in progress"
+                msg = ("%d backup%s still running. Closing now cuts %s off mid-transfer "
+                       "and leaves incomplete snapshot folders."
+                       % (n, "s" if n != 1 else "", "them" if n != 1 else "it"))
+                if ns:
+                    msg += " A scan is still running too."
+            else:
+                title = "scan in progress"
+                msg = ("%d scan%s still running. Closing abandons %s - scans only "
+                       "read, so nothing on disk is affected."
+                       % (ns, "s" if ns != 1 else "", "them" if ns != 1 else "it"))
+            return bool(self._window.create_confirmation_dialog(title, msg + " Close anyway?"))
         except Exception:  # noqa: BLE001
             log.exception("close-confirmation check failed")
             return True
@@ -4764,6 +4781,20 @@ class Api:
             raise ApiError("NO_JOB", "unknown scan job")
         job.cancel()
         return True
+
+    @_endpoint
+    def list_scan_jobs(self):
+        """Light snapshots of every scan job this session (network sweeps +
+        fleet scans, active AND finished) for the global job strip - one call
+        per tick, `results` stripped: the strip needs status and counts, and a
+        fleet report would otherwise ride along on every poll. The window that
+        owns a scan keeps polling scan_progress for the full payload."""
+        out = []
+        for j in self._scans.values():
+            s = j.snapshot()
+            s.pop("results", None)
+            out.append(s)
+        return {"jobs": out}
 
     # -- fleet health scan ------------------------------------------------------
 

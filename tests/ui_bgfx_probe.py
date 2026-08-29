@@ -8,17 +8,20 @@ checks the layer lifecycle (canvas/css created and torn down per effect),
 the ONE dialog's two tabs and their row sets, the theme picker panel
 (flat list, Custom first, hover-off ends the preview, Esc closes the panel
 and not the dialog), that the two scale sliders commit on RELEASE, and that
-tuning and effect choices land in settings.json.
+tuning and effect choices land in settings.json - including a SECOND tuned
+knob (the lazily-built debounced writer once closed over the FIRST drag's
+values, so the disk never left them and every restart snapped back), the
+per-effect rack (renders from the live spec, SWAPS when an effect is picked
+from the menu - it used to rebuild on menu-OPEN and trail one effect behind -
+and never stacks), and the background "defaults" button (globals AND the
+active effect's dials back to stock, live and on disk).
 
 NOT covered yet (noted, not built - see docs/proposals/ if this gets picked up):
   * the six `simulations` effects get the generic build/no-throw/layer checks
     for free (the fx.* loop reads EFFECTS live), but nothing asserts their
     emergent behaviour - a boids flock that never flocks still passes.
-  * the per-effect param racks: nothing switches to an effect that HAS a
-    `params` rack and asserts the .fx-own section appears, that its rows match
-    that effect's spec, that a slider writes bgfx_params.<id>.<k> to settings,
-    that `live:false` params re-seed while `live:true` ones apply in flight,
-    or that switching effects swaps the rack instead of stacking it.
+  * rack params beyond the swap/reset: that `live:false` params re-seed while
+    `live:true` ones apply in flight.
   * real `dt`: the frame-count->wall-clock fix is what stopped 144Hz running
     everything 2.4x fast, and it is untestable here - this window has no
     requestAnimationFrame at all, so no frames ever advance. Covering it needs
@@ -178,6 +181,23 @@ def probe(window):
             time.sleep(0.25)
         check("theme.intensity_persists", saved_i == 0.4, f"(got {saved_i})")
 
+        # a SECOND tuned knob reaches the disk with its own value. This is the
+        # stale-closure regression: the debounced writer was built on the first
+        # drag and closed over that drag's values, so every later drag re-wrote
+        # the first ones - intensity above passed by luck, speed here caught it.
+        slider("speed", 150)
+        deadline = time.time() + 4
+        saved_s = None
+        while time.time() < deadline:
+            saved_s = bv_settings.load().get("bgfx_speed")
+            if saved_s == 1.5:
+                break
+            time.sleep(0.25)
+        check("theme.second_knob_persists", saved_s == 1.5, f"(got {saved_s})")
+        check("theme.first_knob_still_saved",
+              bv_settings.load().get("bgfx_intensity") == 0.4,
+              f"(got {bv_settings.load().get('bgfx_intensity')})")
+
         # the opacity slider drives the --panel fill and persists
         slider("panel opacity", 40)
         check("theme.opacity_live",
@@ -229,6 +249,96 @@ def probe(window):
         time.sleep(0.3)
         check("theme.fx_menu_esc_keeps_dialog",
               not js(window, "!!document.querySelector('.ctx-menu')") and js(window, "BV.modalOpen()"))
+
+        # ---- the per-effect rack: renders, SWAPS on a menu pick, resets ----
+        # driven off the live table (any two effects that declare params), so
+        # adding or retiring an effect never silently retargets these checks
+        racked = json.loads(js(window, """JSON.stringify(
+            BV.bgfx.EFFECTS.filter(function(e){return e.params && e.params.length;})
+              .slice(0, 2).map(function(e){return {id: e.id, name: e.name,
+                rows: e.params.map(function(p){return p.name;}),
+                k0: e.params[0].k, lo0: e.params[0].lo, hi0: e.params[0].hi,
+                def0: e.params[0].def};}))""") or "[]")
+        check("rack.two_param_effects", len(racked) == 2, f"(got {len(racked)})")
+
+        def pick_fx(name):
+            js(window, "document.querySelector('.modal .btn.fx-pick').click()")
+            poll(window, "document.querySelectorAll('.ctx-menu .ctx-item').length")
+            js(window, f"""(function(){{
+                var it = [...document.querySelectorAll('.ctx-menu .ctx-item')].find(function(x){{
+                    return x.textContent.replace(/\\s*✓\\s*$/, '') === '{name}'; }});
+                if (it) it.click();
+            }})()""")
+
+        def rack_state():
+            return json.loads(js(window, """(function(){
+                var own = document.querySelectorAll('.modal .fx-own');
+                var one = own[own.length - 1];
+                return JSON.stringify({
+                    hosts: own.length,
+                    head: one && one.querySelector('.set-head')
+                        ? one.querySelector('.set-head').textContent : '',
+                    rows: one ? [...one.querySelectorAll('.set-row .name')]
+                        .map(function(n){return n.textContent;}) : [],
+                    button: document.querySelector('.modal .btn.fx-pick').textContent,
+                });
+            })()""") or "{}")
+
+        a, b = racked[0], racked[1]
+        pick_fx(a["name"])
+        st = rack_state()
+        check("rack.renders_spec", st.get("rows") == a["rows"], f"({st.get('rows')})")
+        check("rack.heading_names_effect", st.get("head") == a["name"] + " settings",
+              f"(got {st.get('head')!r})")
+        # the SWAP is the regression: picking from the menu must repaint the
+        # rack right there (it used to rebuild on menu-open, one effect behind,
+        # and stick until the dialog was closed and reopened)
+        pick_fx(b["name"])
+        st = rack_state()
+        check("rack.swaps_on_pick", st.get("rows") == b["rows"], f"({st.get('rows')})")
+        check("rack.never_stacks", st.get("hosts") == 1, f"(got {st.get('hosts')})")
+        check("rack.button_follows", (st.get("button") or "").startswith(b["name"]),
+              f"(got {st.get('button')!r})")
+        # a paramless effect empties the rack (live from the table, same rule)
+        plain = js(window, """(function(){
+            var e = BV.bgfx.EFFECTS.find(function(x){
+                return x.id !== 'none' && (!x.params || !x.params.length); });
+            return e ? e.name : '';
+        })()""")
+        pick_fx(plain)
+        st = rack_state()
+        check("rack.paramless_empties", st.get("rows") == [] and st.get("head") == "",
+              f"({st})")
+
+        # ---- "defaults": globals AND the active effect's dials back to stock ----
+        pick_fx(a["name"])
+        slider("intensity", 55)
+        off_def = a["lo0"] if a["def0"] != a["lo0"] else a["hi0"]
+        slider(a["rows"][0], off_def)
+        got_p = js(window, f"BV.bgfx.params()['{a['k0']}']")
+        check("rack.slider_drives_param", got_p == off_def, f"(got {got_p}, wanted {off_def})")
+        js(window, "document.querySelector('.modal .set-reset .btn').click()")
+        time.sleep(0.3)
+        check("defaults.globals_stock",
+              js(window, "BV.bgfx.intensity") == 1 and js(window, "BV.bgfx.speed") == 1
+              and js(window, "BV.bgfx.hue") == 0)
+        got_p = js(window, f"BV.bgfx.params()['{a['k0']}']")
+        check("defaults.rack_stock", got_p == a["def0"], f"(got {got_p}, wanted {a['def0']})")
+        # the block repainted: the intensity slider READS 100 again
+        check("defaults.ui_repaints",
+              js(window, """(function(){
+                  var r = [...document.querySelectorAll('#modal-root .set-row')].find(function(x){
+                      return x.querySelector('.name').textContent === 'intensity'; });
+                  return r.querySelector('input[type=range]').value;
+              })()""") == "100")
+        deadline = time.time() + 4
+        saved_d = None
+        while time.time() < deadline:
+            saved_d = bv_settings.load().get("bgfx_speed")
+            if saved_d == 1:
+                break
+            time.sleep(0.25)
+        check("defaults.persists", saved_d == 1, f"(got {saved_d})")
 
         # ---- the two SCALE sliders commit on RELEASE ----
         # They are the only controls whose own geometry is a function of the value

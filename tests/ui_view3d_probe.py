@@ -243,8 +243,10 @@ def probe(window):
         # the cube snaps the camera and refits
         az0 = js(window, "BV.tabState('view3d').az")
         # an SVG element has no HTMLElement.click(), and the cube handler is
-        # delegated from the overlay root - so dispatch a bubbling event
-        js(window, "(function(){var t=document.querySelector('.v3-cube [data-az]');"
+        # delegated from the component's own svg root - so dispatch a bubbling
+        # event. The cube is BV.viewCube now, on `svg.viewcube`, not the old
+        # inline `.v3-cube` group this used to reach into.
+        js(window, "(function(){var t=document.querySelector('.viewcube [data-az]');"
                    "if(t) t.dispatchEvent(new MouseEvent('click',{bubbles:true}));})()")
         time.sleep(0.4)
         az1 = js(window, "BV.tabState('view3d').az")

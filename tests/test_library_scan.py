@@ -248,14 +248,14 @@ def test_sidecar_only_folder_discovered_as_robot(monkeypatch, tmp_path):
     d.mkdir(parents=True)
     (d / "robot.json").write_text(json.dumps({
         "schema": 1, "id": "rid-fresh", "plant": "P", "line": "L", "robot": "FRESH",
-        "model": "", "f_number": "", "ips": ["10.9.9.9"],
+        "model": "", "f_number": "", "ips": ["192.0.2.9"],
         "ftp": {"user": "", "passive": True}, "notes": ""}), encoding="utf-8")
 
     data = library.scan_library_root(root)
     assert len(data["robots"]) == 1
     e = data["robots"][0]
     assert e["robot"] == "FRESH" and e["id"] == "rid-fresh"
-    assert e["ips"] == ["10.9.9.9"]            # the IP lives on disk, not just this machine
+    assert e["ips"] == ["192.0.2.9"]           # the IP lives on disk, not just this machine
     assert e["backups"] == [] and e["latest_path"] == ""
     assert e["stale"] is False                 # 'no backup yet', not 'missing'
 

@@ -616,18 +616,23 @@ def matrox_hosts(broadcast_ip: str, probe=eip_list_identity) -> dict:
 class _ScanJob:
     kind = "scan"
 
-    def __init__(self):
+    def __init__(self, label: str = ""):
         self.id = uuid.uuid4().hex
         self._cancel = threading.Event()
         self._lock = threading.Lock()
         self._p = {
-            "id": self.id, "kind": self.kind, "status": "pending",
+            "id": self.id, "kind": self.kind, "label": label, "status": "pending",
             "total": 0, "scanned": 0, "found": 0, "current": "",
             "results": [], "error": "",
+            "started": time.strftime("%Y-%m-%dT%H:%M:%S"), "finished": "",
         }
 
     def _set(self, **kw):
         with self._lock:
+            # every terminal path stamps `finished` here, so the subclasses'
+            # run() loops don't each carry the bookkeeping
+            if ftpbackup.is_terminal(kw.get("status")) and not self._p["finished"]:
+                kw.setdefault("finished", time.strftime("%Y-%m-%dT%H:%M:%S"))
             self._p.update(kw)
 
     def _bump(self, current: str = ""):
@@ -678,7 +683,7 @@ class NetworkScanJob(_ScanJob):
     def __init__(self, cidr, *, port=PORT, smb_port=SMB_PORT, port_timeout=PORT_TIMEOUT,
                  ftp_factory=ftplib.FTP, host_provider=enumerate_hosts,
                  port_check=_tcp_open, workers=SCAN_WORKERS, mtx_mount=None, eip_probe=None):
-        super().__init__()
+        super().__init__(label="network sweep " + str(cidr))
         self.cidr = cidr
         self.port = int(port or PORT)
         self.smb_port = int(smb_port or SMB_PORT)

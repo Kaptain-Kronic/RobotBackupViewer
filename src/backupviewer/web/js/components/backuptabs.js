@@ -104,6 +104,63 @@
     },
   };
 
+  /* ---- remote-view chips (BV.remotes) ----
+     Live camera remotes (the CV-X mirror, the MTX web UI) ride the same
+     strip as the backup tabs: a chip with the monitor icon, click to bring
+     the view up, ✕ / middle-click to disconnect. Esc and any navigation
+     HIDE the view instead (the session stays connected, the chip stays) -
+     router.route() calls hideVisible, so going anywhere parks the remote.
+     One remote is visible at a time. The remote modules own their overlays
+     and register {show, hide, destroy} here; this file only owns the chips.
+     (Solo pop-outs have no strip - remotes stay takeover-style there.) */
+  BV.remotes = {
+    list: [],           /* {key, kind "cvx"|"mtx", label, ctl:{show,hide,destroy}} */
+    visibleKey: null,
+
+    find: function (key) {
+      return BV.remotes.list.find(function (r) { return r.key === key; }) || null;
+    },
+    add: function (r) {
+      if (BV.remotes.visibleKey && BV.remotes.visibleKey !== r.key) {
+        var v = BV.remotes.find(BV.remotes.visibleKey);
+        if (v) v.ctl.hide();
+      }
+      BV.remotes.list.push(r);
+      BV.remotes.visibleKey = r.key;    /* a remote opens showing */
+      render();
+    },
+    /* the module's teardown calls this - never call ctl.destroy from here */
+    drop: function (key) {
+      var i = BV.remotes.list.findIndex(function (r) { return r.key === key; });
+      if (i < 0) return;
+      BV.remotes.list.splice(i, 1);
+      if (BV.remotes.visibleKey === key) BV.remotes.visibleKey = null;
+      render();
+    },
+    /* bring a known remote up (hiding whichever other one was). False for an
+       unknown key, so openers fall through to dialling fresh. */
+    focus: function (key) {
+      var r = BV.remotes.find(key);
+      if (!r) return false;
+      if (BV.remotes.visibleKey && BV.remotes.visibleKey !== key) {
+        var v = BV.remotes.find(BV.remotes.visibleKey);
+        if (v) v.ctl.hide();
+      }
+      r.ctl.show();
+      BV.remotes.visibleKey = key;
+      render();
+      return true;
+    },
+    /* leaving for the app (esc, any route): connected, parked on its chip */
+    hideVisible: function () {
+      var v = BV.remotes.find(BV.remotes.visibleKey);
+      if (!v) return;
+      v.ctl.hide();
+      BV.remotes.visibleKey = null;
+      render();
+    },
+  };
+
   /* remove a tab from the strip; killBucket also forgets its UI memory
      (close = end of the backup's lifetime here; pop-out keeps nothing local
      either - the new window builds its own state) */
@@ -201,8 +258,11 @@
   function render() {
     if (!bar) return;
     bar.innerHTML = "";
+    var remoteUp = !!BV.remotes.visibleKey;
     BV.session.list.forEach(function (t) {
-      var active = !onShell && t.sid === BV.session.currentSid;
+      /* a visible remote holds the strip's highlight - the backup underneath
+         is not what the window is showing */
+      var active = !onShell && !remoteUp && t.sid === BV.session.currentSid;
       var el = BV.el("div", { class: "stab" + (active ? " active" : ""), title: t.sid });
       el.dataset.sid = t.sid;
       el.appendChild(BV.el("span", { class: "stab-label" }, BV.esc(t.label)));
@@ -218,6 +278,14 @@
       el.appendChild(x);
       el.addEventListener("click", function () {
         if (_dr.isRecentDrag()) return;
+        /* with a remote up, clicking ANY backup tab returns to the app -
+           the current one included (that click must not open the screens
+           menu under the remote it just left) */
+        if (BV.remotes.visibleKey) {
+          BV.remotes.hideVisible();
+          if (onShell || t.sid !== BV.session.currentSid) BV.session.switchTo(t.sid);
+          return;
+        }
         if (onShell || t.sid !== BV.session.currentSid) BV.session.switchTo(t.sid);
         /* clicking the tab you are already ON asks "where within?" */
         else if (screenLabel && BV.screensMenu) BV.screensMenu(el);
@@ -252,6 +320,32 @@
       _dr.wire(el);
       bar.appendChild(el);
     });
-    bar.classList.toggle("hidden", !BV.session.list.length);
+    BV.remotes.list.forEach(function (r) {
+      var active = BV.remotes.visibleKey === r.key;
+      var el = BV.el("div", { class: "stab remote" + (active ? " active" : ""),
+        title: (r.kind === "cvx" ? "CV-X remote · " : "MTX remote · ") + r.label });
+      el.appendChild(BV.el("span", { class: "stab-ico" }, BV.icon("remote")));
+      el.appendChild(BV.el("span", { class: "stab-label" }, BV.esc(r.label)));
+      var x = BV.el("button", { class: "stab-x", title: "disconnect" }, "✕");
+      x.addEventListener("click", function (e) {
+        e.stopPropagation();
+        r.ctl.destroy();
+      });
+      el.appendChild(x);
+      el.addEventListener("click", function () {
+        if (!active) BV.remotes.focus(r.key);
+      });
+      el.addEventListener("auxclick", function (e) {
+        if (e.button === 1) r.ctl.destroy();
+      });
+      el.addEventListener("contextmenu", function (e) {
+        e.preventDefault();
+        BV.menu({ x: e.clientX, y: e.clientY }, [
+          { label: "disconnect", onClick: function () { r.ctl.destroy(); } },
+        ]);
+      });
+      bar.appendChild(el);
+    });
+    bar.classList.toggle("hidden", !BV.session.list.length && !BV.remotes.list.length);
   }
 })();

@@ -138,8 +138,10 @@
       var head = BV.el("div", { class: "cvx3d-head", style:
         "flex:none;display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;min-height:1.9rem" });
       var stage = BV.el("div", { style: "flex:1 1 auto;min-height:0;position:relative" });
+      /* the frame is chrome like the robot viewport's (.v3-svg): var(--edge),
+         so the borders-off setting flattens both the same way */
       var canvasHost = BV.el("div", { style:
-        "position:absolute;inset:0;background:var(--bg2);border:1px solid var(--sub-alt);" +
+        "position:absolute;inset:0;background:var(--bg2);border:1px solid var(--edge);" +
         "border-radius:8px;overflow:hidden" });
       var infoHost = BV.el("div", { style: "position:absolute;inset:0;overflow:auto;display:none" });
       stage.appendChild(canvasHost);
@@ -149,7 +151,23 @@
       view.appendChild(rail);
       view.appendChild(main);
 
-      var mv = BV.meshView(canvasHost, { state: s });
+      /* the orientation cube rides the stage top-right - the same primitive
+         the robot 3d view carries (components/viewcube.js). Created after
+         the mesh view so the shared state carries its seeded az/el; the
+         onDraw guard covers the construction gap. It hides with the canvas
+         when an info card takes the stage. */
+      var cube = null;
+      var mv = BV.meshView(canvasHost, { state: s,
+        onDraw: function () { if (cube) cube.update(); } });
+      cube = BV.viewCube(stage, {
+        basisOf: function () { return BV.proj3d.orbitProjector(s.az, s.el).basis; },
+        onSnap: function (az, el) {
+          s.az = az;
+          s.el = el;
+          s.zoom = null;
+          mv.redraw();
+        },
+      });
       var meshCache = new Map();   /* keyOf -> decoded mesh payload, capped LRU */
       var cur = null;              /* the loaded mesh for the current selection */
 
@@ -189,6 +207,7 @@
          file IS, never a guessed shape */
       function showInfo(e) {
         canvasHost.style.display = "none";
+        cube.el.style.display = "none";   /* no 3D view -> no orientation instrument */
         infoHost.style.display = "";
         infoHost.innerHTML = "";
         buildHead(e).textContent = e.kind;
@@ -218,20 +237,31 @@
       function showMesh(e) {
         infoHost.style.display = "none";
         canvasHost.style.display = "";
+        cube.el.style.display = "";
         var sub = buildHead(e);
         sub.textContent = "loading…";
         var btns = BV.el("span", { style: "margin-left:auto;display:flex;gap:.4rem" });
         var fitBtn = BV.el("button", { class: "btn",
           title: "reset pan/zoom (double-click the canvas does too)" }, "fit");
+        var perspBtn = BV.el("button", {
+          class: "btn" + (s.persp ? " primary" : ""),
+          title: "perspective projection — off = orthographic (parallel, true to scale; the mm ruler is orthographic-only)",
+        }, "perspective");
         var bigBtn = BV.el("button", { class: "btn",
           title: "enlarge (shares the same orientation)", disabled: "" }, "enlarge");
         var extBtn = BV.el("button", { class: "btn",
           title: "write this model as an .stl file" }, "extract stl");
         btns.appendChild(fitBtn);
+        btns.appendChild(perspBtn);
         btns.appendChild(bigBtn);
         btns.appendChild(extBtn);
         head.appendChild(btns);
         fitBtn.addEventListener("click", function () { s.zoom = null; mv.redraw(); });
+        perspBtn.addEventListener("click", function () {
+          s.persp = !s.persp;
+          perspBtn.classList.toggle("primary", s.persp);
+          mv.redraw();
+        });
         bigBtn.addEventListener("click", function () {
           if (!cur) return;
           BV.meshView.enlarge(cur, { state: s, onClose: function () { mv.redraw(); } });
