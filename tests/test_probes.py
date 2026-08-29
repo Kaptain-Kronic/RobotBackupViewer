@@ -25,12 +25,12 @@ Each probe stays runnable on its own, which is how they are debugged:
     python tests/ui_edit_probe.py
 
 They are marked `probe` and excluded from the default run by addopts in
-pyproject.toml, because ~2.5 minutes is long enough that a fast suite stops
-being run at all:
+pyproject.toml, because several minutes is long enough that a fast suite
+stops being run at all (measured 2026-08-29, 21 probes on a dev box):
 
-    python -m pytest tests                          # unit only, ~40s
-    python -m pytest tests -m probe                 # the probes, ~3 min
-    python -m pytest tests -m "probe or not probe"  # EVERYTHING, ~4 min
+    python -m pytest tests                          # unit only, ~1.5 min
+    python -m pytest tests -m probe                 # the probes, ~6.5 min
+    python -m pytest tests -m "probe or not probe"  # EVERYTHING, ~8 min
 
 (the everything form is spelled out rather than -m "" because PowerShell drops
 an empty argument before pytest ever sees it.)

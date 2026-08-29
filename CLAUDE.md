@@ -159,9 +159,9 @@ human-in-the-loop tier, and it lands last.
 ### Verifying the app — the commands
 
 ```powershell
-python -m pytest tests                            # unit only, ~45s — the default
-python -m pytest tests -m probe                   # the probes, ~3 min
-python -m pytest tests -m "probe or not probe"    # EVERYTHING, ~4 min
+python -m pytest tests                            # unit only, ~1.5 min — the default
+python -m pytest tests -m probe                   # the probes, ~6.5 min
+python -m pytest tests -m "probe or not probe"    # EVERYTHING, ~8 min
 ```
 
 The last one is **the** verify command: it boots the real app once per probe

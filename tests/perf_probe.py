@@ -231,6 +231,17 @@ def probe(window, rows):
         # rebuild — starring used to be the rebuild trigger here, so when it
         # went surgical the rebuild check had to move to a trigger that still
         # rebuilds.
+        #
+        # The assert is same ROW (exact) held to within one css pixel — not a
+        # rounded-offset string compare. Measured 2026-08-29 on this check's
+        # own geometry: scroll offsets are DEVICE-pixel quantized (this hidden
+        # window runs dpr 1.25, a 0.8 css-px grid — writing 33333.4 stored
+        # 33333.6), so a restore can land at most half a device pixel from the
+        # captured offset; the real residue here was 0.075px (star) / 0.2px
+        # (rebuild) against a ~69px strip swap. The old rounded compare turned
+        # a captured 29.525 — 0.025px from the round boundary — into a "1px
+        # drift" verdict, and passed or failed with the fixture's geometry.
+        # The cliff this guards is a ROW slip: >= 16px, never a fraction.
         r = json.loads(js(window, """(function(){
           var view = document.getElementById('view');
           function topRobot() {
@@ -239,11 +250,11 @@ def probe(window, rows):
             for (var i = 0; i < rows.length; i++) {
               var b = rows[i].getBoundingClientRect();
               if (b.bottom > vt + 2) {
-                return (rows[i].getAttribute('data-robot-id') || '') +
-                       '@' + Math.round(vt - b.top);
+                return { id: rows[i].getAttribute('data-robot-id') || '',
+                         into: vt - b.top };
               }
             }
-            return '';
+            return {};
           }
           view.scrollTop = 0; void view.offsetHeight;
           view.scrollTop = 25000; void view.offsetHeight;
@@ -259,10 +270,20 @@ def probe(window, rows):
           return JSON.stringify({before: before, after: after,
                                  before2: before2, after2: after2});
         })()""") or "{}")
-        check("scroll.anchored_across_star", r.get("before") == r.get("after"),
-              f"(top row {r.get('before')} -> {r.get('after')})")
-        check("scroll.anchored_across_rebuild", r.get("before2") == r.get("after2"),
-              f"(top row {r.get('before2')} -> {r.get('after2')})")
+
+        def anchored(b, a):
+            b, a = b or {}, a or {}
+            if not b.get("id") or b.get("into") is None or a.get("into") is None:
+                return False, f"(no anchor row resolved: {b} -> {a})"
+            drift = abs(a["into"] - b["into"])
+            return (b["id"] == a.get("id") and drift < 1.0,
+                    f"(top row {b['id']}@{b['into']:.3f} -> "
+                    f"{a.get('id')}@{a['into']:.3f}, drift {drift:.3f}px)")
+
+        ok, why = anchored(r.get("before"), r.get("after"))
+        check("scroll.anchored_across_star", ok, why)
+        ok, why = anchored(r.get("before2"), r.get("after2"))
+        check("scroll.anchored_across_rebuild", ok, why)
 
         # shift+click across rows that were never on screen. This is the one
         # that cost 42 SECONDS: BV.checklist asked offsetParent per row, and
