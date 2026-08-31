@@ -98,6 +98,31 @@ def cleanup_state(window):
     return json.loads(raw or "{}")
 
 
+def pinned_outside_category(window):
+    """How many pinned rows sit in the protected fold's plant tree instead of
+    the pinned category - the duplication `mb-pin-cat` exists to prevent. Only
+    `reason == "pinned"` rows carry a pin button inside `.mb-sec-prot`, so
+    counting the ones outside the category asserts that invariant directly.
+
+    The protected fold's TOTAL row count cannot stand in for it: the fold also
+    holds every `kept`/`latest` row, and whether a fixture's dated snapshot is
+    still inside the rolling 90-day window is a fact about the calendar, not
+    about the code. This check read `prot.n == 3` until 2026-08-30, when
+    RB010R01B01's 2026_06_01 backup aged past the cutoff, turned from `recent`
+    (which the fold omits) into `kept` (which it renders), and made it 4 -
+    permanently red, with nothing wrong in the app."""
+    n = js(window, """(function(){
+        var sec=document.querySelector('.mb-sec-prot');
+        if(!sec) return '-1';
+        var cat=sec.querySelector('.mb-pin-cat');
+        return String([].slice.call(sec.querySelectorAll('.mb-cl-row'))
+            .filter(function(r){
+                return r.querySelector('.mb-pin') && !(cat && cat.contains(r));
+            }).length);
+    })()""")
+    return int(n) if n else -1
+
+
 def poll_until(window, ok, tries=24):
     """cleanup_state() until `ok(state)` - repaints race the throttled
     hidden-window timers, so states are re-read, never sampled once."""
@@ -221,11 +246,10 @@ def probe(window):
         js(window, "document.querySelector('.mb-sec-partial .mb-pin').click()")
         st = poll_until(window, lambda s: s.get("partial") is None)
         check("pin.partial_section_empties", st.get("partial") is None, f"({st})")
+        strays = pinned_outside_category(window)
         check("pin.lands_in_pinned_category_only",
-              (st.get("pincat") or {}).get("n") == 1
-              and (st.get("prot") or {}).get("n") == 3,     # pinned + old-but-latest +
-              f"({st})")                                    # sole-partial "only"; a plant-
-                                                            # tree duplicate would make 4
+              (st.get("pincat") or {}).get("n") == 1 and strays == 0,
+              f"(pincat={st.get('pincat')}, copies in the plant tree={strays}, {st})")
         pincat_row = js(window, """(function(){
             var r=document.querySelector('.mb-pin-cat .mb-cl-row');
             return r && r.textContent.indexOf('RB020R01B01')>=0 ? 'y' : '';
