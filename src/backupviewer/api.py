@@ -32,6 +32,7 @@ from . import cvx_remote
 from . import discover
 from . import ftpbackup
 from . import healthscan
+from . import httpbackup
 from . import keyence_workspace
 from . import keyencebackup
 from . import libimport
@@ -338,13 +339,15 @@ _DEVICE_REGISTRY = {
             "include_box": bool(spec.get("include_box")),
         },
     },
-    "": {   # FANUC robot (the default row)
-        "probe": lambda host, spec: ftpbackup.probe_controller(
+    "": {   # FANUC robot (the default row) - auto-detects transport per host:
+            #   Global-4 -> anonymous FTP (ftpbackup); Global-5 (User Management
+            #   blocks anonymous FTP) -> unauthenticated HTTP MD: (httpbackup).
+        "probe": lambda host, spec: httpbackup.probe_robot(
             host, user=spec.get("user", ""), passwd=spec.get("passwd", ""),
             passive=spec.get("passive", True), port=spec.get("port", 21)),
         "diagnose": lambda host, spec: discover.diagnose_controller(
             host, port=spec.get("port", 21)),
-        "job_cls": ftpbackup.BackupJob,
+        "job_cls": httpbackup.RobotBackupJob,
         "job_kw": lambda spec: {
             "user": spec.get("user", ""), "passwd": spec.get("passwd", ""),
             "passive": spec.get("passive", True), "port": spec.get("port", 21),

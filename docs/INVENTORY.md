@@ -23,7 +23,7 @@ batch lands, or with `--check` to hear about drift).
 > When per-subsystem docs land, they supersede this file for their own area. This
 > map's remaining job is breadth: what exists, and where.
 
-**Scope.** 291 files / ~95,327 lines. Covers everything in the working tree except: the
+**Scope.** 293 files / ~96,175 lines. Covers everything in the working tree except: the
 **Scope.** 265 files / ~78,187 lines. Covers everything in the working tree except: the
 **Scope.** 270 files / ~81,013 lines. Covers everything in the working tree except: the
 `.git` internals, build outputs (`dist/`, `build/`, `__pycache__/`), the private
@@ -54,10 +54,10 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `ROADMAP.md` | 501 | lane-claiming roadmap: shipped/building/decided/open items per subsystem, plus the 2.0 editing principles | docs | active |
 | `run.py` | 10 | dev launcher and pyinstaller entry script: puts src on sys.path, calls backupviewer.app.main | build/config | active |
 | `run_libraryimporter.py` | 10 | dev launcher and pyinstaller entry script for the companion libraryimporter app | LibraryImporter | active |
-| `docs/INVENTORY.md` | 662 | this file: dated file-level map of the repo plus the findings from the phase-1 documentation pass, with resolved items marked inline | docs | active |
+| `docs/INVENTORY.md` | 664 | this file: dated file-level map of the repo plus the findings from the phase-1 documentation pass, with resolved items marked inline | docs | active |
 | `docs/proposals/home-split.md` | 284 | investigation of tabs/home.js (2,277 lines) by responsibility, where the real seams are, what must become shared components first, and a phased sequence — no code changed | docs | active |
 | `docs/subsystems/3d-viewer.md` | 773 | subsystem doc #3 (the 3D viewer): the pendant-proven FK solve and its JS twin, the 228-type table's validated-vs-not honesty, flange residuals re-measured on the pins, the zone degradation ladder, and the unprobed-viewport gap said plainly | docs | active |
-| `docs/subsystems/backup-capture.md` | 783 | subsystem doc #2 (the backup/discovery jobs + shared plumbing): transport ground truth tagged live-run-vs-assumed, the gentle-with-equipment invariants, a dedicated failure-modes section, and the batch-flow coverage gap said plainly | docs | active |
+| `docs/subsystems/backup-capture.md` | 823 | subsystem doc #2 (the backup/discovery jobs + shared plumbing): transport ground truth tagged live-run-vs-assumed, the gentle-with-equipment invariants, a dedicated failure-modes section, and the batch-flow coverage gap said plainly | docs | active |
 | `docs/subsystems/parsing.md` | 645 | subsystem doc #1 (parsers/ + session.py): ground truth marked verified-vs-assumed per fact, cross-file invariants, paid-for traps, honest coverage gaps — and the template later subsystem docs follow | docs | active |
 | `docs/subsystems/remote-mobile.md` | 862 | subsystem doc #4 (CV-X/Matrox remotes + phone view): the reverse-engineered CV-X wire protocol whose reference client is gone, the vendor-reflected mouse enum, the only listening socket's trust posture, and the app's one UAC elevation | docs | active |
 | `packaging/backupviewer.ico` | *75 KB* | multi-resolution app icon embedded in the exe and inherited by the pywebview window | build/config | active |
@@ -65,7 +65,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `packaging/libraryimporter.spec` | 41 | pyinstaller onefile spec for libraryimporter.exe, bundling src/libraryimporter/web, no icon | build/config | active |
 | `src/backupviewer/__init__.py` | 1 | package marker holding the single source of the app version string (1.4) | shared/infra | active |
 | `src/backupviewer/__main__.py` | 6 | python -m backupviewer entry point delegating to app.main | shared/infra | active |
-| `src/backupviewer/api.py` | 5125 | the pywebview bridge class: 131 @_endpoint methods returning {ok,data} envelopes across every feature area | shared/infra | active |
+| `src/backupviewer/api.py` | 5128 | the pywebview bridge class: 131 @_endpoint methods returning {ok,data} envelopes across every feature area | shared/infra | active |
 | `src/backupviewer/app.py` | 268 | window boot: arg parsing, resource_path, pywebview window, and the one-shot webview2 failure rescue relaunch | shared/infra | active |
 | `src/backupviewer/backuplog.py` | 144 | durable backup-run log in %appdata%: per-run job rows, retry attempt counting, failed-spec list, never a password | backup capture | active |
 | `src/backupviewer/compare.py` | 527 | pure two-backup diff functions: io/registers/frames/payloads/programs rows plus tp-line alignment | compare engine | active |
@@ -75,6 +75,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/cvx_remote.py` | 612 | cv-x remote-desktop client: handshake replay on 3 sockets, jpeg frame harvest, mouse events, mjpeg server | remote/mobile | active |
 | `src/backupviewer/discover.py` | 997 | subnet scan job finding fanuc/keyence over ftp and matrox via ethernet/ip, plus adapter list and live name probe | backup capture | active |
 | `src/backupviewer/ftpbackup.py` | 656 | ftp backup engine: gentle md: pull, dated+latest tree, .part/complete-marker crash safety, shared job base | backup capture | active |
+| `src/backupviewer/httpbackup.py` | 440 | http backup engine for global-5 (r-50ia) whose user management blocks anonymous ftp: index-page md: enumeration + no-login /md/ pull, per-file stall tolerance with a dead-connection breaker, and the ftp-vs-http auto-detect dispatcher | backup capture | active |
 | `src/backupviewer/healthscan.py` | 1230 | fleet health-scan engine: 17-check registry, lazy per-robot parse context, threaded job, fleet-wide verdict passes | flag scanning | active |
 | `src/backupviewer/keyence_workspace.py` | 374 | cv-x simulator workspace.xml writer/reader plus flat-folder export guarded by a we-created-this ledger | cameras | active |
 | `src/backupviewer/keyencebackup.py` | 359 | cv-x camera backup job over anonymous ftp, plus pre-flight probe, read-only diagnose and self-naming | cameras | active |
@@ -203,7 +204,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/cvx_sim.py` | 214 | a loopback fake cv-x controller speaking the 850x framing: ctx per service type, op1/op6 replies the replay blocks on, push_frame down the video channel, inputs() decode — a wire-shape fake, not an emulator | tests | active |
 | `tests/fixtureutil.py` | 70 | tracked half of the private-fixture plumbing: the require-or-error gate (missing fixture = error where the tree is expected, visible skip elsewhere) and runtime backup-root discovery | tests | active |
 | `tests/libraryimporter_probe.py` | 240 | end-to-end probe of the libraryimporter app: drop, checklist ranges, import, sidecars on disk | tests | active |
-| `tests/perf_probe.py` | 342 | plant-scale timing probe: 2400 stubbed rows with ms budgets for notes, stars, shift-range and picker — the library screen's only performance-cliff guard | tests | active |
+| `tests/perf_probe.py` | 363 | plant-scale timing probe: 2400 stubbed rows with ms budgets for notes, stars, shift-range and picker — the library screen's only performance-cliff guard | tests | active |
 | `tests/probeutil.py` | 87 | the probes' shared preamble: temp-APPDATA/watcher isolation before any app import, plus check/js/poll and the FAILURES list all nine used to carry their own copy of | tests | active |
 | `tests/test_alarms.py` | 41 | pytest for the alarm-history parser over the private fixture's ERRALL/ERRACT/ERRHIST/ERRMOT dumps *(untracked, local-only)* | tests | active |
 | `tests/test_backup_export.py` | 678 | pytest for the export tab's engine: pure plan shapes (newest-N completed, segment reorder/omit + custom folders, days window, collision + nested-target flags, named skips), verified copies and zip archives at a chosen boundary level that never touch sources, opt-in sidecar ride-along/materialize, cancel, and the `lib_export` job seam (no rescan ever paid) | tests | active |
@@ -230,6 +231,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/test_fixture_gate.py` | 60 | the absence reporter (a clean clone says "0 backup roots" in its summary instead of nothing) plus unit tests of the fixture gate's own error/skip branches | tests | active |
 | `tests/test_frames.py` | 55 | pytest for the tool/user/jog frame model built from SYSFRAME.VA plus FRAMEVAR.VA comments *(untracked, local-only)* | tests | active |
 | `tests/test_ftpbackup.py` | 272 | pytest for the fanuc ftp pull against a fake controller: disk layout, completion marker, library register | tests | active |
+| `tests/test_httpbackup.py` | 342 | pytest for the global-5 http pull against a fake web server: index parse + dedup, transport auto-detect, disk layout + completion marker, stalled-file skip vs dead-connection abort, dispatcher choice | tests | active |
 | `tests/test_healthscan.py` | 1011 | pytest for every fleet health check plus the scan job, driven by synthetic file texts through a fake session | tests | active |
 | `tests/test_import_endpoints.py` | 124 | pytest for the drop-import bridge on a windowless Api: envelopes, BUSY refusals, background copy + progress poll, handle_drop's path push | tests | active |
 | `tests/test_io.py` | 54 | pytest for merged IOCONFIG/IOSTATE signals: states, rack/slot/port ranges, pendant short names *(untracked, local-only)* | tests | active |
@@ -314,23 +316,23 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 
 | subsystem | files | ~lines |
 |---|---:|---:|
-| tests | 97 | 29,855 |
-| shared/infra | 27 | 9,585 |
+| tests | 98 | 30,218 |
+| shared/infra | 27 | 9,588 |
 | library | 5 | 8,264 |
-| docs | 12 | 7,603 |
+| docs | 12 | 7,645 |
 | theming | 34 | 6,505 |
 | backup parsing | 32 | 6,376 |
 | 3D viewer | 18 | 5,508 |
 | cameras | 15 | 5,044 |
 | program editor | 5 | 4,940 |
-| backup capture | 6 | 3,005 |
+| backup capture | 7 | 3,445 |
 | remote/mobile | 10 | 2,309 |
 | flag scanning | 2 | 2,229 |
 | LibraryImporter | 11 | 1,395 |
 | compare engine | 5 | 1,355 |
 | tools/scripts | 5 | 1,087 |
 | build/config | 7 | 267 |
-| **total** | **291** | **95,327** |
+| **total** | **293** | **96,175** |
 
 > Counts are by *primary* subsystem only — a file appears once, so these add up to the
 > whole repo. The `tests` row is the largest because every probe and unit suite counts as
