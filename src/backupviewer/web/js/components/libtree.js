@@ -34,6 +34,10 @@
                                (nested = a camera indented under its linked robot)
        lineExtras(ln, lineRobots, key) -> node|null   appended to a line head
                                (home hangs its select-all checkbox here)
+       plantExtras(pl, plantRobots, key) -> node|null  the same for a plant
+                               head. Called AFTER its lines are built, so
+                               plantRobots is what the plant actually rendered
+                               (filter applied) rather than what it holds.
        matches(r, q) -> bool   row filter (default: robot/model/IP/notes text;
                                BV.libTree.defaultMatches is exposed so a custom
                                matcher can extend it instead of re-listing fields)
@@ -144,6 +148,7 @@
           var lines = plants[pl];
           var lineKeys = groupKeys(lines);
           var renderedLines = 0, plantRobots = 0;
+          var plantList = [];        /* what this plant actually rendered */
           if (opts.skeleton && !lineKeys.length && (!q || plMatch)) {
             plantBody.appendChild(BV.el("div", { class: "dim lib-empty-note" },
               "empty plant folder — add line folders inside"));
@@ -160,6 +165,7 @@
             lineRobots = lineRobots.slice().sort(cmp);
             shown += lineRobots.length;
             plantRobots += lineRobots.length;
+            plantList = plantList.concat(lineRobots);
             var key = pl + "|||" + ln;
             var lineNode = BV.el("div", { class: "lib-line" });
             var lineHead = BV.el("div", { class: "lib-line-h" });
@@ -212,6 +218,10 @@
           });
           if (q && !renderedLines && !plMatch) return;   /* nothing here matches */
           if (plantCount) plantCount.textContent = String(plantRobots);
+          if (opts.plantExtras) {
+            var pex = opts.plantExtras(pl, plantList, pl);
+            if (pex) plantHead.appendChild(pex);
+          }
           fold(plantNode, plantHead, plantBody, pl, "plant", !!q);
           body.appendChild(plantNode);
         });

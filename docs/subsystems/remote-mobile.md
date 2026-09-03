@@ -109,7 +109,10 @@ reading a backup. All of them vanish when there is nothing to drive:
    session into the full remote (§5 invariants 5 and 9). The toolbar's **CV-X
    live** switch takes the whole vendor off the wall in one click: the tiles
    leave the grid and every session is hung up immediately, which is the fast
-   path for handing a line's remote slots back to the people at the HMIs.
+   path for handing a line's remote slots back to the people at the HMIs. The
+   **cameras** picker beside it does the same thing per plant / line / camera
+   (`home.js openCamPick`) — the cameras it takes off leave the grid, and any
+   CV-X among them is hung up on the spot rather than left to the reaper.
 
 The subsystem's centre of gravity is the CV-X protocol; the rest is
 comparatively ordinary once the trust posture is stated. Everything below
@@ -426,7 +429,10 @@ What must stay true, what enforces it, what breaks if it doesn't.
    path that does not wait for the reaper: turning it off calls
    `releaseCvxTiles()` directly, because a user saying "stop mirroring these"
    should not leave a terminal locked for another eight seconds
-   (`cvxswitch.off_frees_the_slots` in `ui_camwall_probe.py`). Since the tile-still pass that is the
+   (`cvxswitch.off_frees_the_slots` in `ui_camwall_probe.py`). The wall picker
+   takes the same shortcut for the cameras it removes — `releaseCvxTiles(ips)`
+   with a list, so the tiles still being watched keep mirroring
+   (`campick.cvx_off_frees_its_slot` / `campick.cvx_off_keeps_the_others`). Since the tile-still pass that is the
    *only* pause mechanism: a paused wall has nothing to detach, so skipping the
    pass IS the pause (`detachCvxStreams` is gone). Test-enforced
    (`test_cvx_tiles.py`; the adopt/redial choreography in `ui_batch_probe.py`).

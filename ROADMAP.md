@@ -258,6 +258,21 @@ one click backs up the robot + all its cameras together.
   See §7 of `docs/subsystems/remote-mobile.md` for why three separate test
   gaps let this reach a plant floor.
 
+- ✅ **Pick which cameras tile** (`cam-pick`) — a wall of sixty tiles is not
+  the wall a tech watching one line wants, so the cam lens's toolbar gained a
+  **cameras** button beside the CV-X switch: a drop panel of the wall's own
+  PLANT → LINE → CAMERA folders with a checkbox at every level, so "just this
+  line" is one click. The pick is stored as the cameras that are OFF, never
+  the ones that are on — a camera discovered tomorrow lands on the wall by
+  itself rather than being invisible until somebody remembers to come back.
+  Taking a CV-X off frees its remote slot immediately (`releaseCvxTiles(ips)`),
+  the same courtesy the vendor switch pays; the button carries the count
+  (`cameras · 12 of 61`) so a trimmed wall is never a silent absence.
+  Pinned by the `campick.*` checks in `ui_camwall_probe.py`, including the two
+  traps the panel is placed to avoid: a chrome-mounted panel paints *under*
+  the view once frost is on, and a plain floating one closes itself on the
+  scroll its own repaint causes.
+
 - ✅ **Both remote bars carry the same options** — reload · open in window ·
   phone · fullscreen · close, on Matrox and CV-X alike. CV-X reload is a
   Python-side hang-up-then-redial under the same session id, and its pop-out

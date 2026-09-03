@@ -1531,6 +1531,15 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
    margin-left:auto rather than a spacer element, so a wrapped toolbar still
    pushes it to the end of whatever row it lands on */
 .lib-cvx-live { margin-left: auto; flex: none; }
+/* the wall picker rides beside it, same right-hand end of the bar and the same
+   reason: it decides what the wall SHOWS, which is not a library action.
+   Exactly ONE auto margin does the pushing — flexbox splits free space equally
+   between two of them, which would strand the pair mid-bar. */
+.lib-cam-pick { margin-left: auto; flex: none; }
+.lib-cam-pick ~ .lib-cvx-live { margin-left: 0; }
+/* a trimmed wall is a STATE worth seeing from across the room: the button
+   wears the accent while some cameras are off it */
+.lib-cam-pick.is-picked { color: var(--accent); }
 .lib-cvx-live[aria-pressed="true"] { color: var(--ok); }
 /* off is a STATE, not a disabled button: it still reads as clickable */
 .lib-cvx-live.is-off { color: var(--sub); }
@@ -2687,3 +2696,39 @@ text.v3-ax-z { fill: var(--accent); }
 .net-pick-row:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .net-pick-row.on { color: var(--accent); }
 .net-pick-why { margin-left: auto; color: var(--sub-alt); font-size: 0.85em; }
+
+/* ---- the multi-cam wall picker (home.js openCamPick) ----
+   The toolbar's "cameras" button drops the wall's own PLANT -> LINE -> CAMERA
+   folders with a checkbox at every level. It FLOATS (BV.dropPanel's measured
+   half) rather than mounting into #chrome-top: html.frosted puts a
+   backdrop-filter on that slab, which makes it a stacking context, and a panel
+   inside one paints under the view it is supposed to hang over. Floating is
+   safe here because the anchor is a chrome button no page scroll can move
+   (dropPanel's anchorFixed) — which matters, because every box ticked
+   repaints the wall underneath. */
+.bv-drop.campick-drop { width: min(24rem, 92vw); }
+.campick-head {
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.15rem 0.35rem 0.45rem;
+  border-bottom: 1px solid var(--edge-soft, var(--edge));
+  font-size: 0.8rem;
+}
+.campick-head .btn { padding: 0.12em 0.6em; font-size: 0.95em; }
+.campick-all { margin-left: auto; }
+.campick-tree { padding-top: 0.35rem; }
+.campick-empty { padding: 0.4rem 0.5rem; font-size: 0.84rem; }
+/* the shared tree heads, sized for a panel (the library screen's own
+   overrides are scoped to .home-library, the picker's to here) */
+.campick-drop .lib-plant-h { font-size: 0.82rem; margin-bottom: 0.15rem; }
+.campick-drop .lib-line { margin: 0 0 0.25rem 0.45rem; }
+.campick-drop .lib-line-h { font-size: 0.8rem; margin-bottom: 0.1rem; }
+.campick-row {
+  display: flex; align-items: center; gap: 0.45rem;
+  padding: 0.18rem 0.45rem 0.18rem 1rem;
+  border-radius: calc(var(--radius) / 2); cursor: pointer;
+}
+.campick-row:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.campick-name { color: var(--text); font-size: 0.84rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.campick-ip { margin-left: auto; flex: none; font-size: 0.78rem;
+  font-variant-numeric: tabular-nums; }

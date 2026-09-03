@@ -22,6 +22,8 @@
   var _showHidden = false;      /* reveal hidden robots in the list */
   var _showHiddenBtn = null;    /* the header toggle (shown only when some are hidden) */
   var _cvxLiveBtn = null;       /* the cam lens's CV-X on/off switch (cam lens only) */
+  var _camPickBtn = null;       /* the cam lens's wall picker button (cam lens only) */
+  var _camPickPanel = null;     /* the picker's open drop panel, for the toggle */
   var _warnedTruncated = false; /* the scan-cap warning toast fires once per session */
   var _visibleRobots = [];      /* the currently-rendered robots — the sticky toolbar's scope */
   var _sortMode = "";           /* name | ip | date; lazily read from settings (lib_sort) */
@@ -211,6 +213,13 @@
       _cvxLiveBtn.classList.toggle("hidden", !cam);
       syncCvxLiveBtn();
     }
+    /* same rule for the wall picker: it picks TILES, so it exists only where
+       there are tiles - and its panel cannot outlive the lens it belongs to */
+    if (_camPickBtn) {
+      _camPickBtn.classList.toggle("hidden", !cam);
+      syncCamPickBtn();
+      if (!cam && _camPickPanel) _camPickPanel.close();
+    }
   }
 
   function nameCmp(a, b) { return (a.robot || "").localeCompare(b.robot || ""); }
@@ -365,6 +374,188 @@
     },
     row: function (c) { return camTile(c); },
   });
+
+  /* ---- which cameras this wall shows: the picker ----
+
+     The CV-X switch above decides what the wall may DIAL; this decides what it
+     SHOWS. A tech watching one line does not want the plant's other fifty
+     tiles on the screen (or spending the refresh budget), so the toolbar's
+     "cameras" button drops a PLANT -> LINE -> CAMERA tree of checkboxes — the
+     same folders the wall itself is grouped by, with a box at every level so
+     "just this line" is one click, not fifty.
+
+     Stored as the cameras that are OFF the wall, never the ones that are on:
+     a camera discovered tomorrow is not in that list, so it lands on the wall
+     by itself. An "on" list would have made every newly-added camera
+     invisible until somebody thought to come back here — the same silence
+     the show-hidden toggle exists to prevent. */
+  var _camOff = null;           /* camera id -> true (off the wall); null = not hydrated */
+
+  function camOff() {
+    if (_camOff === null) {
+      var saved = (BV.state.settings || {}).lib_cam_off;
+      _camOff = (saved && typeof saved === "object") ? Object.assign({}, saved) : {};
+    }
+    return _camOff;
+  }
+
+  var _saveCamOff = BV.debounce(function () {
+    if (BV.state.settings) BV.state.settings.lib_cam_off = camOff();
+    BV.api.call("set_setting", "lib_cam_off", camOff()).catch(function () {});
+  }, 500);
+
+  function onWall(c) { return !camOff()[c.id]; }
+
+  /* the cameras this wall COULD show — the picker's universe and the "n of m"
+     denominator. Hidden entries follow the grid's own rule: behind the
+     show-hidden toggle, never silently gone. */
+  function wallCams() {
+    return (_robots || []).filter(function (r) {
+      return isCam(r) && (!r.hidden || _showHidden);
+    });
+  }
+
+  /* commit a pick. A CV-X leaving the wall hands its controller's single
+     remote slot back NOW rather than waiting out the tile reaper's 8 s — the
+     same courtesy the CV-X switch pays, for the same reason: somebody is
+     standing at that HMI. */
+  function applyWall(on, off) {
+    var freed = [];
+    on.forEach(function (c) { delete camOff()[c.id]; });
+    off.forEach(function (c) {
+      camOff()[c.id] = true;
+      var ip = (c.ips && c.ips[0]) || "";
+      if (isCvxCam(c) && ip) freed.push(ip);
+    });
+    _saveCamOff();
+    if (freed.length) releaseCvxTiles(freed);
+    syncCamPickBtn();
+    rerenderFromCache();
+  }
+
+  function syncCamPickBtn() {
+    if (!_camPickBtn) return;
+    var cams = wallCams();
+    var on = cams.filter(onWall).length;
+    var trimmed = on < cams.length;
+    _camPickBtn.textContent = trimmed ? "cameras · " + on + " of " + cams.length
+                                      : "cameras · all";
+    _camPickBtn.classList.toggle("is-picked", trimmed);
+    _camPickBtn.title = trimmed
+      ? on + " of " + cams.length + " cameras are on the wall. Click to " +
+        "choose — by plant, by line, or one at a time."
+      : "choose which cameras tile — by plant, by line, or one at a time.";
+  }
+
+  /* the boxes are the truth after any click: everything the panel lists and
+     does not have ticked is off the wall. Seeding them (open, "all", "none")
+     must not run this, or opening the panel would repaint the wall — and a
+     repaint restarts every tile's picture. */
+  var _pickSeeding = false;
+  var _pickCl = BV.checklist({
+    onChange: function () {
+      if (_pickSeeding) return;
+      var on = [], off = [];
+      wallCams().forEach(function (c) { (_pickCl.has(c.id) ? on : off).push(c); });
+      applyWall(on, off);
+    },
+  });
+
+  /* the panel's tree: the wall's folders again, rows replaced by checkboxes.
+     Deliberately NOT filtered by the head's search box — the filter is a
+     transient "where is it", the pick is a standing choice, and a picker that
+     listed only what a filter left would hide the box you came to untick. */
+  var _pickTree = BV.libTree({
+    counts: true,
+    noun: "cameras",
+    persistKey: "lib_campick_folds",
+    startOpen: function (key, kind) { return kind === "plant"; },
+    row: function (c) {
+      var row = BV.el("label", { class: "campick-row" });
+      var cb = BV.el("input", { type: "checkbox", class: "lf-check",
+        title: "show this camera on the wall (shift+click for a range)" });
+      row.appendChild(_pickCl.bind(cb, c.id));
+      row.appendChild(BV.el("span", { class: "campick-name" }, BV.esc(c.robot || "")));
+      var ip = (c.ips && c.ips[0]) || "";
+      if (ip) row.appendChild(BV.el("span", { class: "campick-ip dim" }, BV.esc(ip)));
+      return row;
+    },
+    /* one box per folder, the library's own select-all idiom (tri-state: any
+       ticked -> a click clears, none ticked -> a click takes the lot) */
+    lineExtras: function (ln, lineCams, key) {
+      return pickGroupBox(lineCams, key, "show this whole line on the wall");
+    },
+    plantExtras: function (pl, plantCams, key) {
+      return pickGroupBox(plantCams, "plant|" + key, "show this whole plant on the wall");
+    },
+  });
+
+  function pickGroupBox(cams, gkey, title) {
+    var wrap = BV.el("div", { class: "lib-line-controls" });
+    /* the folder head's own click toggles the fold — a box inside it must not */
+    wrap.addEventListener("click", function (e) { e.stopPropagation(); });
+    var cb = BV.el("input", { type: "checkbox", class: "lf-check", title: title });
+    _pickCl.group(cb, function () {
+      return cams.map(function (c) { return c.id; });
+    }, gkey);
+    wrap.appendChild(cb);
+    return wrap;
+  }
+
+  function setPickBoxes(cams, on) {
+    _pickSeeding = true;
+    cams.forEach(function (c) { _pickCl.set(c.id, on); });
+    _pickCl.sync();          /* repaints every bound box, folder boxes included */
+    _pickSeeding = false;
+  }
+
+  function openCamPick() {
+    if (_camPickPanel) { _camPickPanel.close(); return; }
+    var cams = wallCams();
+    var content = BV.el("div", { class: "campick" });
+    var head = BV.el("div", { class: "campick-head" });
+    head.appendChild(BV.el("span", { class: "dim" }, "cameras on the wall"));
+    var allBtn = BV.el("button", { class: "btn campick-all" }, "all");
+    var noneBtn = BV.el("button", { class: "btn campick-none" }, "none");
+    allBtn.addEventListener("click", function () {
+      setPickBoxes(cams, true);
+      applyWall(cams, []);
+    });
+    noneBtn.addEventListener("click", function () {
+      setPickBoxes(cams, false);
+      applyWall([], cams);
+    });
+    head.appendChild(allBtn);
+    head.appendChild(noneBtn);
+    var tree = BV.el("div", { class: "campick-tree" });
+    content.appendChild(head);
+    content.appendChild(tree);
+    /* seed from the saved pick, then paint the tree that binds to it */
+    _pickSeeding = true;
+    _pickCl.clear();
+    cams.forEach(function (c) { if (onWall(c)) _pickCl.set(c.id, true); });
+    _pickTree.render(tree, { robots: cams }, { cmp: robotComparator() });
+    _pickCl.sync();
+    _pickSeeding = false;
+    if (!cams.length) {
+      tree.innerHTML = '<div class="dim campick-empty">no cameras in the library ' +
+        "yet — add them with “+ add robot → discover on network”.</div>";
+    }
+    /* it FLOATS (measured off the button) rather than mounting into the chrome
+       slab: html.frosted gives #chrome-top a backdrop-filter, and a panel
+       inside that stacking context paints under the view it hangs over.
+       anchorFixed is what makes floating safe here — every box repaints the
+       wall, and the repaint's scroll restore would otherwise shut the panel
+       on the first click. */
+    var p = BV.dropPanel(_camPickBtn, content, {
+      className: "campick-drop",
+      align: "right",
+      anchorFixed: true,
+      onClose: function () { _camPickPanel = null; },
+    });
+    if (!p) return;          /* the swallowed half of a toggle */
+    _camPickPanel = p;
+  }
 
   /* ---- screen ---- */
 
@@ -644,6 +835,14 @@
       id: "lib-cvx-live", role: "switch" }, "CV-X live · on");
     _cvxLiveBtn.addEventListener("click", function () { setCvxLive(!cvxLive()); });
     syncCvxLiveBtn();
+    /* and beside it, for the same reason: which cameras the wall shows is not
+       a library action either. A panel left over from a previous mount is
+       anchored to a button that no longer exists - close it now. */
+    if (_camPickPanel) _camPickPanel.close();
+    _camPickBtn = BV.el("button", { class: "btn lib-cam-pick hidden",
+      id: "lib-cam-pick", "aria-haspopup": "true" }, "cameras · all");
+    _camPickBtn.addEventListener("click", openCamPick);
+    syncCamPickBtn();
     headActs.appendChild(fnBtn);
     headActs.appendChild(sortBtn);
     headActs.appendChild(cancelAll);
@@ -652,6 +851,7 @@
     headActs.appendChild(addBtn);
     head.appendChild(headActs);
     head.appendChild(selActs);
+    head.appendChild(_camPickBtn);
     head.appendChild(_cvxLiveBtn);
     syncHeadMode();   /* a remount lands in the persisted lens, head included */
     return head;
@@ -1579,6 +1779,14 @@
     var cvxOff = cams.length && !cvxLive();
     var cvxHeld = cvxOff ? cams.filter(isCvxCam).length : 0;
     if (cvxOff) cams = cams.filter(function (r) { return !isCvxCam(r); });
+    /* the picker is the second display filter with teeth: the cameras a tech
+       took off this wall leave the grid (and a CV-X's slot was handed back
+       when they did). The toolbar button carries the count, so the trim is
+       never silent. */
+    var picked = cams.filter(onWall);
+    var pickHeld = cams.length - picked.length;
+    cams = picked;
+    syncCamPickBtn();          /* the library may have grown or shrunk */
     if (!cams.length) {
       /* an empty grid must not deny cameras that are merely hidden — hidden
          things are listed behind the toggle, never silently absent. The CV-X
@@ -1587,7 +1795,11 @@
       var hiddenCams = (_robots || []).filter(function (r) {
         return isCam(r) && r.hidden;
       }).length;
-      body.innerHTML = cvxHeld
+      body.innerHTML = pickHeld
+        ? '<div class="empty-lib">' + pickHeld + " camera" +
+          (pickHeld === 1 ? " is" : "s are") + " off the wall — use “cameras” " +
+          "above to put " + (pickHeld === 1 ? "it" : "them") + " back.</div>"
+        : cvxHeld
         ? '<div class="empty-lib">' + cvxHeld + " CV-X camera" +
           (cvxHeld === 1 ? " is" : "s are") + " switched off — use “CV-X live” " +
           "above to tile " + (cvxHeld === 1 ? "it" : "them") + " again.</div>"
@@ -1816,12 +2028,16 @@
 
   /* the lens flipped away (or the library left the screen): hang up every
      tile session NOW instead of making the cameras wait out the TTL */
-  function releaseCvxTiles() {
-    Object.keys(_cvxTiles).forEach(function (tip) {
+  /* hand the controllers their remote slots back. With no argument that is
+     every live tile session (the CV-X switch, leaving the lens); with a list
+     of ips it is only those (a camera the wall picker just took off) — the
+     rest of the wall is still being watched and must keep mirroring. */
+  function releaseCvxTiles(ips) {
+    (ips || Object.keys(_cvxTiles)).forEach(function (tip) {
       var l = _cvxTiles[tip];
       if (l && l.sid) BV.api.call("cvx_tile_stop", l.sid).catch(function () {});
+      delete _cvxTiles[tip];
     });
-    _cvxTiles = {};
   }
 
   function startCamRefresh() {

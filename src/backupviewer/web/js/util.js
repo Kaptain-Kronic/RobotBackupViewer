@@ -288,7 +288,14 @@ window.BV = {};
          a live diagnostic you are reading while you scroll the library is
          exactly the case that made this worth splitting. */
       if (!opts.pinned) {
-        window.addEventListener("scroll", onScroll, true);
+        /* anchorFixed: floating coords, but measured off an anchor in the
+           CHROME — which no page scroll can move, so scrolling cannot make
+           them stale and closing on it would only be rude. A resize still
+           can, so that half stays. (The cam wall's picker: every box it
+           ticks repaints the wall underneath, and a repaint restores the
+           view's scroll position — which used to shut the panel on the
+           first click.) */
+        if (!opts.anchorFixed) window.addEventListener("scroll", onScroll, true);
         window.addEventListener("resize", close);
       }
     }, 0);
@@ -368,7 +375,13 @@ window.BV = {};
      bottom bar — and content height stops mattering at all. A mounted panel is
      also `pinned`: its coords cannot go stale, so page scroll and window resize
      no longer close it.
-     opts: {align: "right", className, mount, onKey(e)->bool, onClose}. */
+
+     opts.anchorFixed is the middle ground, for a panel hanging off a CHROME
+     control (the toolbar, the topbar): it still floats and is still measured,
+     but no page scroll can move that anchor, so scrolling stops closing it.
+     Reach for it when the panel's own controls repaint the screen underneath.
+     opts: {align: "right", className, mount, anchorFixed,
+            onKey(e)->bool, onClose}. */
   BV.dropPanel = function (anchorEl, contentEl, opts) {
     opts = opts || {};
     var anchorNode = anchorEl && anchorEl.nodeType === 1 ? anchorEl : null;
@@ -386,6 +399,7 @@ window.BV = {};
       anchorNode: anchorNode,
       escOnWindow: true,
       pinned: !!opts.mount,
+      anchorFixed: !!opts.anchorFixed,
       onKey: opts.onKey,
       onClose: opts.onClose,
     });

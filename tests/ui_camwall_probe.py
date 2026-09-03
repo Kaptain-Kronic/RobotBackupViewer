@@ -48,6 +48,10 @@ What it pins, on real DOM in a real WebView2:
   F. the CV-X live switch really switches CV-X OFF: the tiles leave the grid
      AND every session is hung up, because the point of the switch is handing
      each controller's single remote slot back to whoever is at the HMI.
+  G. the wall PICKER trims the wall by plant/line/camera: a line taken off
+     leaves only that line's tiles, the count on the button says so, a CV-X
+     taken off frees its slot at once, the pick survives a lens flip, and the
+     panel is not closed by the repaint its own checkbox causes.
 
 The tick only fetches a tile it believes is ON SCREEN, so this probe has to
 open the tree's folds and wait for the tiles to have real boxes before it
@@ -71,7 +75,8 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from probeutil import FAILURES, check, exit_code, isolate, js, poll, report
+from probeutil import (FAILURES, check, exit_code, isolate, js, poll,  # noqa: E501
+                       poller, report)
 
 _TMP = isolate("bv_camwall_probe_")
 
@@ -91,6 +96,14 @@ from cvx_sim import _TINY_JPEG  # noqa: E402
 CVX_CAMS = ["192.0.2.%d" % (70 + i) for i in range(8)]     # TEST-NET
 MTX_COUNT = 16
 TOTAL = len(CVX_CAMS) + MTX_COUNT                          # 24 tiles
+CVX_NAME = "CELL-01CVX10"                                  # the first CV-X, by name
+# a SECOND line, added only for the picker section (G): per-line granularity
+# cannot be told from "took everything off" on a library with one line.
+LINE2_COUNT = 2
+# section G waits on wall repaints, and it runs after twenty other probes have
+# been through the same machine - the default six seconds of patience is a
+# dev-box number, not a plant-PC one.
+wait = poller(tries=40)
 
 
 class _ShotHandler(BaseHTTPRequestHandler):
@@ -213,6 +226,69 @@ _ADD_CAMS_JS = """window.__added=0;
     }
     cvx.forEach(function(ip,i){ add('CELL-01CVX'+(10+i),'camera-keyence',ip); });
     mtx.forEach(function(h,i){ add('CELL-01MTX'+(10+i),'camera-mtx',h); });"""
+
+# The picker's DOM, addressed the way a user does: by the name on the folder
+# and the name on the row, never by position - a sort order change must not
+# silently repoint these at a different camera.
+_ADD_LINE2_JS = """window.__added2=0;
+    %s.forEach(function(h,i){
+      BV.api.call('lib_add', {robot:'CELL-02MTX'+(10+i), plant:'FakePlant',
+        line:'LINE02', device_type:'camera-mtx', ips:[h], model:'', notes:'',
+        latest_path:'', ftp:{user:'', passive:true}})
+        .then(function(){ window.__added2++; });
+    });"""
+
+# Does the panel actually PAINT over the wall? elementFromPoint answers in
+# paint order, so it catches the stacking-context trap this panel is placed to
+# avoid: html.frosted puts a backdrop-filter on #chrome-top, and a panel
+# mounted inside that would be covered by the view it hangs over. Frost is
+# switched on for the read precisely because that is the case that breaks.
+_PANEL_PAINTS_JS = """(function(){
+    var p=document.querySelector('.campick-drop');
+    if(!p) return 'no-panel';
+    var frosted=document.documentElement.classList.contains('frosted');
+    document.documentElement.classList.add('frosted');
+    var r=p.getBoundingClientRect();
+    var hit=document.elementFromPoint(r.left+r.width/2, r.top+Math.min(30,r.height/2));
+    if(!frosted) document.documentElement.classList.remove('frosted');
+    if(r.bottom>window.innerHeight+1||r.right>window.innerWidth+1||r.left<0)
+      return 'off-screen';
+    return (hit && p.contains(hit)) ? 'ok' : 'covered';
+})()"""
+
+# the two wall controls belong TOGETHER at the right-hand end of the bar: one
+# auto margin does the pushing, because flexbox splits the free space between
+# two of them and would strand the pair mid-toolbar
+_HEAD_GEO_JS = """JSON.stringify((function(){
+    function r(sel){ var e=document.querySelector(sel);
+      return e ? e.getBoundingClientRect() : null; }
+    var add=r('.lib-add-robot'), pick=r('.lib-cam-pick'), cvx=r('.lib-cvx-live');
+    if(!add||!pick||!cvx) return {};
+    return { gapFromVerbs: pick.left-add.right, gapBetween: cvx.left-pick.right,
+             sameRow: Math.abs(pick.top-cvx.top)<2 };
+})())"""
+
+_CLICK_LINE_BOX_JS = """(function(){
+    var ls=[].slice.call(document.querySelectorAll('.campick-drop .lib-line'));
+    var t=ls.filter(function(n){
+      var nm=n.querySelector('.lib-line-name');
+      return nm && nm.textContent==='LINE02'; })[0];
+    if(!t) return 'no-line';
+    var cb=t.querySelector('.lib-line-h .lf-check');
+    if(!cb) return 'no-box';
+    cb.click();
+    return 'ok';
+})()"""
+
+_CLICK_CAM_ROW_JS = """(function(){
+    var rows=[].slice.call(document.querySelectorAll('.campick-drop .campick-row'));
+    var r=rows.filter(function(n){
+      var nm=n.querySelector('.campick-name');
+      return nm && nm.textContent===%s; })[0];
+    if(!r) return 'no-row';
+    r.querySelector('input').click();
+    return 'ok';
+})()"""
 
 _OPEN_LINES_JS = """[].forEach.call(document.querySelectorAll('.lib-line-h'),
      function(h){
@@ -356,6 +432,112 @@ def probe(window, api, mtx_hosts):
         check("cvxswitch.on_repaints", w2.get("painted") == w2.get("onscreen"),
               "(painted %s of %s after switching CV-X back on)"
               % (w2.get("painted"), w2.get("onscreen")))
+
+
+        # ---- G: the wall picker ----
+        # The second line goes in HERE, after every assertion above has run,
+        # so nothing earlier moves.
+        js(window, _ADD_LINE2_JS % json.dumps(mtx_hosts[:LINE2_COUNT]))
+        check("campick.second_line_added",
+              wait(window, "window.__added2===%d ? 'y' : ''" % LINE2_COUNT) == "y",
+              "(got %s of %d)" % (js(window, "window.__added2"), LINE2_COUNT))
+        js(window, "BV.state.emit('library-dirty')")
+        everything = TOTAL + LINE2_COUNT
+        check("campick.wall_shows_both_lines",
+              wait(window, "%s===%d ? 'y' : ''" % (TILES_JS, everything)) == "y",
+              "(got %s of %d)" % (js(window, TILES_JS), everything))
+
+        check("campick.button_on_cam_lens",
+              js(window, "!!document.getElementById('lib-cam-pick') && "
+                         "!document.getElementById('lib-cam-pick')"
+                         ".classList.contains('hidden')") is True,
+              "(the picker is missing from the cam lens toolbar)")
+
+        js(window, "document.getElementById('lib-cam-pick').click()")
+        check("campick.panel_opens",
+              bool(wait(window, "!!document.querySelector('.campick-drop')")))
+        # every camera in the library gets a row — the invariant, not a number.
+        # A picker that lists a subset cannot be used to get the rest back.
+        rows = js(window, "document.querySelectorAll('.campick-row').length")
+        check("campick.lists_every_camera", rows == everything,
+              "(%s rows for %d cameras)" % (rows, everything))
+        paints = js(window, _PANEL_PAINTS_JS)
+        check("campick.panel_paints_over_the_wall", paints == "ok",
+              "(%s - a panel the wall covers is a panel nobody can click)"
+              % paints)
+        geo = json.loads(js(window, _HEAD_GEO_JS) or "{}")
+        check("campick.rides_beside_the_cvx_switch",
+              bool(geo.get("sameRow")) and
+              geo.get("gapBetween", 999) < geo.get("gapFromVerbs", 0),
+              "(%r - the pair must sit together at the right end, not split "
+              "the bar between two auto margins)" % (geo,))
+
+        # one click on a LINE's box takes that line off the wall, and only it
+        check("campick.line_box_found", js(window, _CLICK_LINE_BOX_JS) == "ok",
+              "(no select-all box on the second line's header)")
+        off = wait(window, "%s===%d ? 'y' : ''" % (TILES_JS, TOTAL)) == "y"
+        check("campick.line_off_takes_only_that_line", off,
+              "(%s tiles left, expected line one's %d)"
+              % (js(window, TILES_JS), TOTAL))
+        # the panel must survive the repaint its own box just caused: a wall
+        # repaint restores the view's scroll position, and a plain floating
+        # panel closes on any scroll — which would shut the picker on the
+        # first click of every visit.
+        check("campick.panel_survives_its_own_repaint",
+              js(window, "!!document.querySelector('.campick-drop')") is True,
+              "(the panel closed when the wall repainted under it)")
+        # a trimmed wall says so on the button: the missing tiles are never a
+        # silent absence
+        label = js(window, "document.getElementById('lib-cam-pick').textContent")
+        check("campick.button_counts_honestly",
+              label == "cameras · %d of %d" % (TOTAL, everything),
+              "(button reads %r)" % label)
+
+        # a CV-X taken off the wall hands its controller's remote slot back at
+        # once, exactly as the CV-X switch does — it must not wait out the
+        # reaper while somebody is standing at that HMI
+        FakeCvxSession.stops = []
+        check("campick.cvx_row_found",
+              js(window, _CLICK_CAM_ROW_JS % json.dumps(CVX_NAME)) == "ok",
+              "(no picker row named %s)" % CVX_NAME)
+        for _ in range(40):                 # let the hang-up call land
+            if FakeCvxSession.stops:
+                break
+            time.sleep(0.25)
+        check("campick.cvx_off_frees_its_slot",
+              CVX_CAMS[0] in FakeCvxSession.stops,
+              "(hung up %r — expected the unpicked camera's session)"
+              % (FakeCvxSession.stops,))
+        check("campick.cvx_off_keeps_the_others",
+              len(set(FakeCvxSession.stops)) == 1,
+              "(hung up %d sessions — only the unpicked one may go)"
+              % len(set(FakeCvxSession.stops)))
+
+        # the pick is a standing choice: it lives in settings, so it survives
+        # a lens flip — and the button itself vanishes where there are no
+        # tiles to pick
+        js(window, "document.getElementById('cube-lib').click()")
+        check("campick.button_hides_on_backup_lens",
+              bool(wait(window, "document.getElementById('lib-cam-pick')"
+                                ".classList.contains('hidden') ? 'y' : ''")),
+              "(the picker is still on the toolbar over robot rows)")
+        js(window, "document.getElementById('cube-cam').click()")
+        kept = wait(window, "%s===%d ? 'y' : ''" % (TILES_JS, TOTAL - 1)) == "y"
+        check("campick.pick_survives_a_lens_flip", kept,
+              "(%s tiles after flipping back, expected %d)"
+              % (js(window, TILES_JS), TOTAL - 1))
+
+        # and "all" puts the whole wall back in one click
+        js(window, "document.getElementById('lib-cam-pick').click()")
+        wait(window, "!!document.querySelector('.campick-drop')")
+        js(window, "document.querySelector('.campick-all').click()")
+        whole = wait(window, "%s===%d ? 'y' : ''" % (TILES_JS, everything)) == "y"
+        check("campick.all_restores_the_wall", whole,
+              "(%s tiles after “all”, expected %d)"
+              % (js(window, TILES_JS), everything))
+        label = js(window, "document.getElementById('lib-cam-pick').textContent")
+        check("campick.button_reads_all", label == "cameras · all",
+              "(button reads %r)" % label)
 
         report()
     except Exception as e:  # noqa: BLE001
