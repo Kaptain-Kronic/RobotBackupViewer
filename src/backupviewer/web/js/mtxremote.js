@@ -35,6 +35,9 @@
     var rkey = "mtx:" + ip;
     /* re-opening a camera that already has a chip brings its view back up */
     if (!chipless && BV.remotes.focus(rkey)) return;
+    /* ...and a camera already up in a FLOATING box is the same story: point at
+       that box rather than opening a second view of one camera */
+    if (BV.camFloats && BV.camFloats.focusIp(ip)) return;
     /* per-invocation flag: a slow probe that resolves after THIS panel closed
        (and another opened) must check its OWN teardown, or it dead-ends the
        newer one */
@@ -77,13 +80,13 @@
     /* --- chip lifecycle (same shape as the CV-X remote) ------------------ */
     function place() {
       if (chipless) return;               /* the whole window is the remote */
-      var fs = BV.fullscreen.active();    /* fullscreen: cover the chrome too */
       /* below the TOPBAR (navigation + chips stay reachable), over the
-         toolbar row - that row is context for the screen this panel covers */
-      var tb = document.getElementById("topbar");
-      var sb = document.getElementById("statusbar");
-      overlay.style.top = (fs || !tb) ? "0" : tb.getBoundingClientRect().bottom + "px";
-      overlay.style.bottom = (fs || !sb) ? "0" : sb.offsetHeight + "px";
+         toolbar row - that row is context for the screen this panel covers.
+         BV.chromeInset is the shared measurement (the float layer uses it
+         too); it handles fullscreen and a missing slab. */
+      var ci = BV.chromeInset();
+      overlay.style.top = ci.top + "px";
+      overlay.style.bottom = ci.bottom + "px";
     }
     function show() {
       overlay.style.display = "";

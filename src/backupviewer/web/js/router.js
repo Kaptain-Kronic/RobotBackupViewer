@@ -269,6 +269,12 @@
     /* a live remote view is an overlay on a chip, not a route: ANY navigation
        returns to the app and parks the remote (session stays connected) */
     if (BV.remotes) BV.remotes.hideVisible();
+    /* the floating camera boxes park on the same rule, one step softer: they
+       belong to the library screen, so leaving it HIDES the layer (which is
+       also what stops camfeed feeding the pictures inside) and coming back
+       restores the same boxes in the same places. Nothing is disconnected and
+       nothing is rearranged. */
+    if (BV.camFloats) BV.camFloats.syncRoute();
 
     var hash = location.hash.slice(1);
     var parts = hash.split("/");

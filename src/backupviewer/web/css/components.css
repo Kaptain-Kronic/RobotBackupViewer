@@ -2732,3 +2732,101 @@ text.v3-ax-z { fill: var(--accent); }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .campick-ip { margin-left: auto; flex: none; font-size: 0.78rem;
   font-variant-numeric: tabular-nums; }
+
+/* ---- floating camera boxes (components/floatbox.js + camfloat.js) ----
+   The layer spans the CONTENT region only (js sets top/bottom from
+   BV.chromeInset), so a float can never cover navigation or the statusbar.
+   z 70 puts it above #toast / .card.expanded (60) and below .cvx-remote (80)
+   and #modal-root (90): a full remote or a dialog covers the floats, and while
+   either is up camfeed stops feeding them.
+   pointer-events: the LAYER is transparent to the mouse and each box turns
+   them back on, so the wall underneath stays clickable between the boxes. */
+#floatlayer {
+  position: fixed; left: 0; right: 0; z-index: 70; pointer-events: none;
+}
+.fbox-ghost {
+  position: absolute; pointer-events: none; border-radius: var(--radius);
+  border: 2px dashed var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.fbox {
+  position: absolute; pointer-events: auto; display: flex; flex-direction: column;
+  background: var(--panel); border: 1px solid var(--edge);
+  border-radius: var(--radius); overflow: hidden;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.55);
+}
+html.frosted .fbox { backdrop-filter: var(--glass-blur); }
+/* while a box is being moved or sized it must not fight the pointer, and the
+   transition would lag a drag by a frame */
+.fbox.fbox-moving, .fbox.fbox-sizing { user-select: none; }
+.fbox.fbox-moving { opacity: 0.92; }
+@keyframes fbox-flash {
+  from { box-shadow: 0 0 0 3px var(--accent), 0 10px 40px rgba(0, 0, 0, 0.55); }
+  to { box-shadow: 0 10px 40px rgba(0, 0, 0, 0.55); }
+}
+.fbox.fbox-flash { animation: fbox-flash 0.9s ease-out; }
+
+.fbox-bar {
+  display: flex; align-items: center; gap: 0.35rem; flex: none;
+  padding: 0.25rem 0.3rem; background: var(--bg2);
+  border-bottom: 1px solid var(--edge); cursor: move;
+}
+.fbox.locked .fbox-bar { cursor: default; }
+button.fbox-title {
+  appearance: none; border: 0; background: transparent; color: var(--text);
+  font: inherit; font-size: 0.82rem; font-weight: 600; cursor: pointer;
+  padding: 0.1rem 0.3rem; border-radius: var(--radius);
+  max-width: 20ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+button.fbox-title:hover { background: var(--panel); }
+.fbox-status { color: var(--sub); font-size: 0.7rem; white-space: nowrap; }
+.fbox-status.err { color: var(--error); }
+.fbox-spacer { margin-left: auto; }
+.fbox-slot { display: flex; gap: 0.25rem; }
+.fbox-bar .btn { padding: 0.08rem 0.38rem; font-size: 0.72rem; line-height: 1.5; }
+.fbox-bar .btn.on { color: var(--accent); border-color: var(--accent); }
+.fbox-lock svg { display: block; width: 0.85rem; height: 0.85rem; }
+
+.fbox-body { flex: 1 1 auto; min-height: 0; display: flex; }
+.fbox-stage {
+  flex: 1 1 auto; min-width: 0; min-height: 0; display: flex;
+  padding: 0.2rem; overflow: auto;
+}
+/* margin:auto, not flex centering: same centering while the picture fits, but
+   a ZOOMED one scrolls to every corner (flex centering pins the overflow's
+   top-left past the scrollport, unreachable) - same reason as .cvx-screen */
+.fbox-screen { position: relative; margin: auto; flex: none; background: var(--bg); }
+.fbox-screen img {
+  width: 100%; height: 100%; display: block; object-fit: fill;
+  user-select: none; -webkit-user-drag: none;
+}
+.fbox-note {
+  position: absolute; inset: 0; display: none; align-items: center;
+  justify-content: center; text-align: center; padding: 0.6rem;
+  color: var(--sub); font-size: 0.75rem; pointer-events: none;
+}
+/* the same promise the wall's tiles make: never a blank black rectangle that
+   could be read as a dead camera. Waiting says so, and dark says which dark. */
+.fbox-screen.wait .fbox-note, .fbox-screen.dark .fbox-note { display: flex; }
+.fbox-screen.dark img { visibility: hidden; }
+
+/* eight grips. px, not rem: these are resizer hit areas, the one place this
+   sheet already writes px (see the pane resizers above). */
+.fbox-rz { position: absolute; }
+.fbox.locked .fbox-rz { display: none; }
+.fbox-rz-n { top: -3px; left: 10px; right: 10px; height: 8px; cursor: ns-resize; }
+.fbox-rz-s { bottom: -3px; left: 10px; right: 10px; height: 8px; cursor: ns-resize; }
+.fbox-rz-w { left: -3px; top: 10px; bottom: 10px; width: 8px; cursor: ew-resize; }
+.fbox-rz-e { right: -3px; top: 10px; bottom: 10px; width: 8px; cursor: ew-resize; }
+.fbox-rz-nw { top: -3px; left: -3px; width: 14px; height: 14px; cursor: nwse-resize; }
+.fbox-rz-ne { top: -3px; right: -3px; width: 14px; height: 14px; cursor: nesw-resize; }
+.fbox-rz-sw { bottom: -3px; left: -3px; width: 14px; height: 14px; cursor: nesw-resize; }
+.fbox-rz-se { bottom: -3px; right: -3px; width: 14px; height: 14px; cursor: nwse-resize; }
+
+/* the tile a floated camera leaves behind: same place in the grid so nothing
+   reflows under you, but quiet and carrying no <img> at all - which is what
+   makes "the picture is only ever fetched once" true by construction rather
+   than by a guard somewhere. */
+.cam-tile.floating { cursor: pointer; }
+.cam-tile.floating .cam-tile-box { opacity: 0.5; }
+.cam-tile.floating .cam-tile-note { display: block; color: var(--accent); }

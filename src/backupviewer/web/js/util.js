@@ -115,6 +115,84 @@ window.BV = {};
     };
   })();
 
+  /* Where the content region actually starts and ends, in viewport px: below
+     the TOPBAR (so navigation and the session chips stay reachable) and above
+     the STATUSBAR. Both camera remotes measured this for themselves and the
+     float layer wants the same answer, so it lives here once.
+
+     Fullscreen covers the chrome too, and so does a missing slab (a solo
+     pop-out has no statusbar) - both answer 0 for that edge. */
+  BV.chromeInset = function () {
+    var fs = BV.fullscreen.active();
+    var tb = document.getElementById("topbar");
+    var sb = document.getElementById("statusbar");
+    return {
+      top: (fs || !tb) ? 0 : tb.getBoundingClientRect().bottom,
+      bottom: (fs || !sb) ? 0 : sb.offsetHeight,
+    };
+  };
+
+  /* A fixed-aspect picture fitted into a scrolling stage, with a view zoom.
+
+     The picture is SIZED, never transformed: `screen` is given px dimensions
+     of (fitted size x zoom) and the stage scrolls, so the mouse math anywhere
+     downstream can read the live rect and never has to know a zoom exists.
+     (A body/page transform is also the thing that breaks every
+     getBoundingClientRect popup in this app - see CLAUDE.md.)
+
+     opts: { size() -> {w,h} of the source picture, min, max, onZoom(z) }
+     Returns { fit, setZoom, zoom, wheel }: `wheel` is a ctrl+wheel handler the
+     caller binds wherever it wants the gesture to answer, and nothing here
+     ever forwards anything to a camera - the zoom is local to this view. */
+  BV.zoomStage = function (stage, screen, opts) {
+    opts = opts || {};
+    var min = opts.min || 1, max = opts.max || 4;
+    var zoom = 1;
+
+    function fit() {
+      /* a hidden stage measures 0 and would collapse the picture; the caller
+         re-fits on show (that is what parking a remote on its chip does) */
+      if (!stage.clientWidth || !stage.clientHeight) return;
+      var src = opts.size ? opts.size() : { w: 4, h: 3 };
+      var cs = getComputedStyle(stage);
+      var sw = stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      var sh = stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+      var ar = (src.w || 4) / (src.h || 3);
+      var w = sw, h = sw / ar;
+      if (h > sh) { h = sh; w = sh * ar; }
+      /* floor, not round: a 0.5px overshoot at 100% grows a phantom scrollbar */
+      screen.style.width = Math.floor(w * zoom) + "px";
+      screen.style.height = Math.floor(h * zoom) + "px";
+    }
+    function setZoom(z, ev) {
+      z = Math.round(Math.max(min, Math.min(max, z)) * 100) / 100;
+      if (z === zoom) return;
+      /* hold the point under the cursor (no cursor: the view center) still
+         while the box resizes around it */
+      var r = screen.getBoundingClientRect();
+      var sr = stage.getBoundingClientRect();
+      var ax = ev ? ev.clientX : sr.left + sr.width / 2;
+      var ay = ev ? ev.clientY : sr.top + sr.height / 2;
+      var fx = (ax - r.left) / r.width, fy = (ay - r.top) / r.height;
+      zoom = z;
+      fit();
+      var r2 = screen.getBoundingClientRect();   /* forces layout, post-fit */
+      stage.scrollLeft += (r2.left + fx * r2.width) - ax;
+      stage.scrollTop += (r2.top + fy * r2.height) - ay;
+      if (opts.onZoom) opts.onZoom(zoom);
+    }
+    return {
+      fit: fit,
+      setZoom: setZoom,
+      zoom: function () { return zoom; },
+      wheel: function (e) {
+        if (!e.ctrlKey) return;
+        e.preventDefault();
+        setZoom(zoom * (e.deltaY < 0 ? 1.25 : 0.8), e);
+      },
+    };
+  };
+
   /* clipboard with the WebView2-safe fallback; every report/copy button in the
      app (scan report, backup log, future exports) shares this one path */
   BV.copyText = function (text, okMsg) {

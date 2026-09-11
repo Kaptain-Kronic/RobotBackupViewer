@@ -47,6 +47,10 @@
     /* one session per CONTROLLER (it has a single remote slot): re-opening a
        camera that already has a chip just brings its view back up */
     if (!chipless && BV.remotes.focus(rkey)) return;
+    /* ...and a camera already up in a FLOATING box is the same story: that box
+       holds the controller's one slot, so point at it rather than dialling a
+       session there is no room for */
+    if (BV.camFloats && BV.camFloats.focusIp(ip)) return;
 
     var sid = null, statusTimer = null, lastMove = 0, downBtn = null;
     var pressPt = null, dragging = false, wheelAcc = 0;
@@ -100,13 +104,13 @@
        Chipless (owned window / solo) keeps inset:0 and never registers. */
     function place() {
       if (chipless) return;               /* the whole window is the remote */
-      var fs = BV.fullscreen.active();    /* fullscreen: cover the chrome too */
       /* below the TOPBAR (navigation + chips stay reachable), over the
-         toolbar row - that row is context for the screen this panel covers */
-      var tb = document.getElementById("topbar");
-      var sb = document.getElementById("statusbar");
-      overlay.style.top = (fs || !tb) ? "0" : tb.getBoundingClientRect().bottom + "px";
-      overlay.style.bottom = (fs || !sb) ? "0" : sb.offsetHeight + "px";
+         toolbar row - that row is context for the screen this panel covers.
+         BV.chromeInset is the shared measurement (the float layer uses it
+         too); it handles fullscreen and a missing slab. */
+      var ci = BV.chromeInset();
+      overlay.style.top = ci.top + "px";
+      overlay.style.bottom = ci.bottom + "px";
     }
     function show() {
       overlay.style.display = "";
@@ -130,53 +134,26 @@
        ctrl+= / ctrl+- / the % button. View-local on purpose - WebView2's own
        page zoom is disabled app-wide, and nothing here reaches the camera.
        It lives with this overlay: a fresh open starts back at 100%. */
-    var zoom = 1;
-    function fit() {
-      if (overlay.style.display === "none") return;   /* re-fit happens on show() */
-      var cs = getComputedStyle(stage);
-      var sw = stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-      var sh = stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-      var ar = SCREEN_W / SCREEN_H;
-      var w = sw, h = sw / ar;
-      if (h > sh) { h = sh; w = sh * ar; }
-      /* floor, not round: a 0.5px overshoot at 100% grows a phantom scrollbar */
-      screen.style.width = Math.floor(w * zoom) + "px";
-      screen.style.height = Math.floor(h * zoom) + "px";
-    }
+    var zs = BV.zoomStage(stage, screen, {
+      size: function () { return { w: SCREEN_W, h: SCREEN_H }; },
+      min: 1, max: 4,
+      onZoom: function (z) { zoomBtn.textContent = Math.round(z * 100) + "%"; },
+    });
+    function fit() { zs.fit(); }
+    function setZoom(z, ev) { zs.setZoom(z, ev); }
     function onResize() { place(); fit(); }
     window.addEventListener("resize", onResize);
     show();   /* opens showing: placed, fitted, keys attached (chip case and takeover alike) */
 
-    function setZoom(z, ev) {
-      z = Math.round(Math.max(1, Math.min(4, z)) * 100) / 100;
-      if (z === zoom) return;
-      /* hold the point under the cursor (no cursor: the view center) still
-         while the box resizes around it */
-      var r = screen.getBoundingClientRect();
-      var sr = stage.getBoundingClientRect();
-      var ax = ev ? ev.clientX : sr.left + sr.width / 2;
-      var ay = ev ? ev.clientY : sr.top + sr.height / 2;
-      var fx = (ax - r.left) / r.width, fy = (ay - r.top) / r.height;
-      zoom = z;
-      fit();
-      var r2 = screen.getBoundingClientRect();   /* forces layout, post-fit */
-      stage.scrollLeft += (r2.left + fx * r2.width) - ax;
-      stage.scrollTop += (r2.top + fy * r2.height) - ay;
-      zoomBtn.textContent = Math.round(zoom * 100) + "%";
-    }
     zoomBtn.addEventListener("click", function () {
       BV.menu(zoomBtn, [100, 150, 200, 300, 400].map(function (p) {
-        return { label: p + "%", active: Math.round(zoom * 100) === p,
+        return { label: p + "%", active: Math.round(zs.zoom() * 100) === p,
                  onClick: function () { setZoom(p / 100); } };
       }));
     });
     /* on the OVERLAY so it also answers over the bar and the stage padding;
        the screen's own wheel handler steps aside on ctrl (see below) */
-    overlay.addEventListener("wheel", function (e) {
-      if (!e.ctrlKey) return;
-      e.preventDefault();
-      setZoom(zoom * (e.deltaY < 0 ? 1.25 : 0.8), e);
-    }, { passive: false });
+    overlay.addEventListener("wheel", zs.wheel, { passive: false });
 
     /* --- teardown ------------------------------------------------------- */
     /* keepSession: the remote lives on elsewhere (it just moved to its own
@@ -231,9 +208,9 @@
         else if (chipless) close();
         else BV.remotes.hideVisible();
       } else if (e.ctrlKey && (e.key === "=" || e.key === "+")) {
-        e.preventDefault(); setZoom(zoom * 1.25);
+        e.preventDefault(); setZoom(zs.zoom() * 1.25);
       } else if (e.ctrlKey && e.key === "-") {
-        e.preventDefault(); setZoom(zoom * 0.8);
+        e.preventDefault(); setZoom(zs.zoom() * 0.8);
       } else if (e.ctrlKey && e.key === "0") {
         e.preventDefault(); setZoom(1);
       } else if (e.key === "f" || e.key === "F") {

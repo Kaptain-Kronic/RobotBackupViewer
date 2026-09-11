@@ -24,6 +24,7 @@
   var _cvxLiveBtn = null;       /* the cam lens's CV-X on/off switch (cam lens only) */
   var _camPickBtn = null;       /* the cam lens's wall picker button (cam lens only) */
   var _camPickPanel = null;     /* the picker's open drop panel, for the toggle */
+  var _floatBtn = null;         /* the cam lens's floating-boxes control (cam lens only) */
   var _warnedTruncated = false; /* the scan-cap warning toast fires once per session */
   var _visibleRobots = [];      /* the currently-rendered robots — the sticky toolbar's scope */
   var _sortMode = "";           /* name | ip | date; lazily read from settings (lib_sort) */
@@ -191,6 +192,27 @@
       syncCamPickBtn();
       if (!cam && _camPickPanel) _camPickPanel.close();
     }
+    /* the floating boxes belong to the wall too. They do NOT close when the
+       lens flips - a box you parked somewhere is still what you wanted to be
+       watching - so only the control hides, never the boxes. */
+    if (_floatBtn) {
+      _floatBtn.classList.toggle("hidden", !cam);
+      syncFloatBtn();
+    }
+  }
+
+  /* the count is the whole point of this control: a camera that left the wall
+     for a floating box has to be findable from the wall it left. Asserted
+     against the layer's own box count, never a remembered number. */
+  function syncFloatBtn() {
+    if (!_floatBtn) return;
+    var n = BV.camFloats.count();
+    _floatBtn.textContent = "floating · " + n;
+    _floatBtn.classList.toggle("is-picked", n > 0);
+    _floatBtn.disabled = !n;
+    _floatBtn.title = n
+      ? "arrange or close the " + n + " floating camera box" + (n === 1 ? "" : "es")
+      : "right-click a camera tile to pop it out into a floating box";
   }
 
   function nameCmp(a, b) { return (a.robot || "").localeCompare(b.robot || ""); }
@@ -814,6 +836,21 @@
       id: "lib-cam-pick", "aria-haspopup": "true" }, "cameras · all");
     _camPickBtn.addEventListener("click", openCamPick);
     syncCamPickBtn();
+    /* the floating boxes are popped out by right-clicking a tile, never from
+       here: this carries the COUNT (a wall that changed is never a silent
+       change - the same promise the picker's count makes) and the two things
+       you cannot do to one box at a time. */
+    _floatBtn = BV.el("button", { class: "btn lib-cam-float hidden",
+      id: "lib-cam-float", "aria-haspopup": "true" }, "floating · 0");
+    _floatBtn.addEventListener("click", function () {
+      BV.menu(_floatBtn, [
+        { label: "tile them across the screen",
+          onClick: function () { BV.camFloats.tileThem(); } },
+        { label: "close every floating box",
+          onClick: function () { BV.camFloats.closeAll(); } },
+      ]);
+    });
+    syncFloatBtn();
     headActs.appendChild(fnBtn);
     headActs.appendChild(sortBtn);
     headActs.appendChild(cancelAll);
@@ -822,6 +859,7 @@
     headActs.appendChild(addBtn);
     head.appendChild(headActs);
     head.appendChild(selActs);
+    head.appendChild(_floatBtn);
     head.appendChild(_camPickBtn);
     head.appendChild(_cvxLiveBtn);
     syncHeadMode();   /* a remount lands in the persisted lens, head included */
@@ -845,6 +883,16 @@
 
   BV.state.on("library-dirty", function () {
     if (refreshWelcome()) refresh();
+  });
+
+  /* a box opened, closed or swapped: the wall's placeholders and the toolbar
+     count both follow from the layer, so repaint from the cache rather than
+     refetching the library for a change that never touched it */
+  BV.state.on("camfloats", function () {
+    syncFloatBtn();
+    if (_libWrap && document.body.contains(_libWrap) && viewMode() === "multicam") {
+      rerenderFromCache();
+    }
   });
 
   /* the background rescan settled: the cache is fresh and this refetch is a
@@ -1132,6 +1180,11 @@
 
   function renderTree(body, data) {
     var robots = (data && data.robots) || [];
+    /* the floating boxes need the library's cameras: this is where a saved
+       arrangement is first rebuildable, and where a camera that has LEFT the
+       library stops being findable (its box keeps its place and says so).
+       Both lenses feed it - a box parked on the backup lens is still a box. */
+    BV.camFloats.sync(robots.filter(isCam));
     /* one snapshot of who is mid-backup for this whole paint (not per row) */
     _liveTargets = (BV.jobs && BV.jobs.activeTargets)
       ? BV.jobs.activeTargets() : { ids: {}, hosts: {} };
@@ -1804,7 +1857,15 @@
       tabindex: "0", role: "button" });
     tile.setAttribute("data-robot-id", c.id);
     var box = BV.el("div", { class: "cam-tile-box" });
-    if (ip) {
+    /* this camera is up in a floating box. The tile HOLDS ITS PLACE (a wall
+       that reflows under you loses the tech's bearings) but carries no <img>
+       at all — which is what makes "a floating camera is fetched exactly
+       once" true by construction rather than by a guard. */
+    var floated = BV.camFloats.has(c.id);
+    if (floated) {
+      tile.classList.add("floating");
+      box.appendChild(BV.el("div", { class: "cam-tile-note" }, "floating ↗"));
+    } else if (ip) {
       var img = BV.el("img", { alt: "" });
       var note = BV.el("div", { class: "cam-tile-note dim" }, BV.camFeed.NOTE.wait);
       /* the shared beat owns the load lifecycle, the retry backoff and the
@@ -1838,9 +1899,30 @@
       meta.join(' <span class="sep">·</span> ')));
     tile.appendChild(main);
 
-    tile.title = ip ? "remote operation · " + ip : "no IP on record";
+    tile.title = ip
+      ? (floated ? "up in a floating box — click to find it"
+                 : "remote operation · " + ip + " · right-click to pop it out")
+      : "no IP on record";
+    /* pop-out lives on the RIGHT-click so a plain click still means what it
+       has always meant here (open the full remote) and the tile grows no new
+       chrome that would crowd a 16rem-wide box */
+    tile.addEventListener("contextmenu", function (e) {
+      e.preventDefault();
+      if (!ip) { BV.toast("this camera has no IP on record"); return; }
+      BV.menu({ x: e.clientX, y: e.clientY }, [
+        floated
+          ? { label: "find its floating box",
+              onClick: function () { BV.camFloats.focusCam(c.id); } }
+          : { label: "pop out into a floating box",
+              onClick: function () { BV.camFloats.popOut(c.id); } },
+        { label: "remote operation", onClick: function () { tile.click(); } },
+      ]);
+    });
     tile.addEventListener("click", function () {
       if (!ip) { BV.toast("this camera has no IP on record"); return; }
+      /* already floating: the box IS this camera's view - point at it rather
+         than dialling a controller whose one remote slot is already spoken for */
+      if (floated) { BV.camFloats.focusCam(c.id); return; }
       if (!isCvx) { BV.openMtxRemote(ip, c.robot || ip); return; }
       /* a CV-X tile already holds the controller's one remote slot — the
          overlay ADOPTS that session (promoted out of view-only on the python
