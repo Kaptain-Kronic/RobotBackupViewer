@@ -23,7 +23,7 @@ batch lands, or with `--check` to hear about drift).
 > When per-subsystem docs land, they supersede this file for their own area. This
 > map's remaining job is breadth: what exists, and where.
 
-**Scope.** 293 files / ~96,663 lines. Covers everything in the working tree except: the
+**Scope.** 294 files / ~96,818 lines. Covers everything in the working tree except: the
 **Scope.** 265 files / ~78,187 lines. Covers everything in the working tree except: the
 **Scope.** 270 files / ~81,013 lines. Covers everything in the working tree except: the
 `.git` internals, build outputs (`dist/`, `build/`, `__pycache__/`), the private
@@ -54,7 +54,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `ROADMAP.md` | 516 | lane-claiming roadmap: shipped/building/decided/open items per subsystem, plus the 2.0 editing principles | docs | active |
 | `run.py` | 10 | dev launcher and pyinstaller entry script: puts src on sys.path, calls backupviewer.app.main | build/config | active |
 | `run_libraryimporter.py` | 10 | dev launcher and pyinstaller entry script for the companion libraryimporter app | LibraryImporter | active |
-| `docs/INVENTORY.md` | 664 | this file: dated file-level map of the repo plus the findings from the phase-1 documentation pass, with resolved items marked inline | docs | active |
+| `docs/INVENTORY.md` | 665 | this file: dated file-level map of the repo plus the findings from the phase-1 documentation pass, with resolved items marked inline | docs | active |
 | `docs/proposals/home-split.md` | 284 | investigation of tabs/home.js (2,277 lines) by responsibility, where the real seams are, what must become shared components first, and a phased sequence — no code changed | docs | active |
 | `docs/subsystems/3d-viewer.md` | 773 | subsystem doc #3 (the 3D viewer): the pendant-proven FK solve and its JS twin, the 228-type table's validated-vs-not honesty, flange residuals re-measured on the pins, the zone degradation ladder, and the unprobed-viewport gap said plainly | docs | active |
 | `docs/subsystems/backup-capture.md` | 823 | subsystem doc #2 (the backup/discovery jobs + shared plumbing): transport ground truth tagged live-run-vs-assumed, the gentle-with-equipment invariants, a dedicated failure-modes section, and the batch-flow coverage gap said plainly | docs | active |
@@ -127,11 +127,12 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/web/css/base.css` | 570 | root css: theme variable contract (--bg/--accent/--edge/--panel), app shell layout, chrome bars, bgfx layers | theming | active |
 | `src/backupviewer/web/css/components.css` | 2734 | the app's single component stylesheet: cards, tables, pills, modals, plus per-tab styles for every subsystem | theming | active |
 | `src/backupviewer/web/fonts/Orbitron-VariableFont_wght.ttf` | *38 KB* | bundled orbitron variable font, loaded by base.css @font-face and offered as the 'rog' ui font in settings | theming | vendored |
-| `src/backupviewer/web/index.html` | 153 | the single page: the two chrome rows (topbar with the screens button, per-screen toolbar), #view, jobstrip, statusbar, and the ordered script list | shared/infra | active |
+| `src/backupviewer/web/index.html` | 154 | the single page: the two chrome rows (topbar with the screens button, per-screen toolbar), #view, jobstrip, statusbar, and the ordered script list | shared/infra | active |
 | `src/backupviewer/web/js/api.js` | 153 | promise wrapper over the pywebview bridge: {ok,data} envelope, solo/cvx-window sid injection, slow-call dedupe | shared/infra | active |
 | `src/backupviewer/web/js/bgfx.js` | 2088 | canvas/css background-effects engine: 18 themed looks (16 canvas) with global and per-effect sliders | theming | active |
 | `src/backupviewer/web/js/components/backuptabs.js` | 351 | BV.session plus the #sessionbar browser-style backup tab strip: switch, close, reorder, pop out, tear off; the active tab is the breadcrumb hosting the screens menu | shared/infra | active |
 | `src/backupviewer/web/js/components/builders.js` | 84 | BV.kv / BV.card / BV.hero: dom builders for key-value lists, the card shell and the identity hero line | shared/infra | active |
+| `src/backupviewer/web/js/components/camfeed.js` | 399 | BV.camFeed: the one beat behind every live camera picture - per-img load lifecycle, honesty notes, retry backoff, the rotating per-beat fetch budget and the shared CV-X tile-lease map, fed by any number of surfaces | cameras | active |
 | `src/backupviewer/web/js/components/checklist.js` | 135 | BV.checklist: the one multiselect controller — shift-click ranges, tri-state group boxes, rebind-safe selection | shared/infra | active |
 | `src/backupviewer/web/js/components/dragreorder.js` | 162 | BV.dragReorder: generic drag-to-reorder across drop zones with insertion markers, edge auto-scroll, click guard | shared/infra | active |
 | `src/backupviewer/web/js/components/fk.js` | 110 | BV.fk: js twin of the FANUC forward-kinematics chain — 4x4 matrix math over an imported .def joint chain | 3D viewer | active |
@@ -170,7 +171,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/web/js/tabs/edit.js` | 2723 | the #edit multi-robot .ls workspace: split panes, working-set rail, find/replace, live pane diff, export | program editor | active |
 | `src/backupviewer/web/js/tabs/files.js` | 306 | raw file browser tab: virtualized list with ext filter, text/hex preview, and a camera-remote button | backup parsing | active |
 | `src/backupviewer/web/js/tabs/frames.js` | 250 | frames tab: pendant-style tool/uframe/jog/payload cards per motion group, with show-empty and vs mode | backup parsing | active |
-| `src/backupviewer/web/js/tabs/home.js` | 3678 | the #home library screen: plant/line/robot tree, per-row actions, batch ftp backup, discover, cam tiles | library | active |
+| `src/backupviewer/web/js/tabs/home.js` | 3432 | the #home library screen: plant/line/robot tree, per-row actions, batch ftp backup, discover, cam tiles | library | active |
 | `src/backupviewer/web/js/tabs/io.js` | 336 | io tab: pendant-style signal browser by category, in/out panes, rack/slot/port config view, vs mode | backup parsing | active |
 | `src/backupviewer/web/js/tabs/logic.js` | 316 | logic tab: a cv-x program's calculation scripts as code beside the names present in it, with what the format does not prove said on screen | cameras | active |
 | `src/backupviewer/web/js/tabs/macros.js` | 113 | macro table (name, program, assignment) rendered inside the programs tab, with side-by-side vs mode | backup parsing | active |
@@ -317,13 +318,13 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | subsystem | files | ~lines |
 |---|---:|---:|
 | tests | 98 | 30,400 |
-| shared/infra | 27 | 9,602 |
-| library | 5 | 8,490 |
-| docs | 12 | 7,666 |
+| shared/infra | 27 | 9,603 |
+| library | 5 | 8,244 |
+| docs | 12 | 7,667 |
 | theming | 34 | 6,550 |
 | backup parsing | 32 | 6,376 |
 | 3D viewer | 18 | 5,508 |
-| cameras | 15 | 5,044 |
+| cameras | 16 | 5,443 |
 | program editor | 5 | 4,940 |
 | backup capture | 7 | 3,445 |
 | remote/mobile | 10 | 2,309 |
@@ -332,7 +333,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | compare engine | 5 | 1,355 |
 | tools/scripts | 5 | 1,087 |
 | build/config | 7 | 267 |
-| **total** | **293** | **96,663** |
+| **total** | **294** | **96,818** |
 
 > Counts are by *primary* subsystem only — a file appears once, so these add up to the
 > whole repo. The `tests` row is the largest because every probe and unit suite counts as

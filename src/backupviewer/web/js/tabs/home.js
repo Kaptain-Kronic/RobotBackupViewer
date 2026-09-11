@@ -34,7 +34,6 @@
   var _camCounts = {};          /* robot id -> linked-camera count, built once per tree paint */
   var _shownList = [];          /* the tree paint's post-hidden-filter list — repaintFavorite feeds it back to favSection */
   var _viewMode = "";           /* backup | multicam; set by a user flip, else home_view is read live */
-  var _camTimer = null;         /* multi-cam live-image refresher (self-stops off-screen) */
   var _camRobotNames = {};      /* robot id -> name, for the tiles' "↳ robot" note */
 
   var SORT_LABELS = { name: "name", ip: "IP", date: "last backup",
@@ -47,34 +46,6 @@
                            saved: "desc", cams: "desc", status: "desc",
                            vendor: "asc" };
   var _sortDir = "";            /* asc | desc; lazily read from settings (lib_sort_dir) */
-  var CAM_REFRESH_MS = 2000;    /* live tile refresh — a beat gentler than the HMI's 1s */
-  /* how many NEW picture fetches one beat may start. The cap is a courtesy to
-     the plant network (a wall of 250 KB frames adds up fast), never a limit on
-     which cameras are allowed to be live: the tick rotates it, so the cost of
-     a big wall is a slower lap, never a tile that stays black forever. */
-  var CAM_MAX_LOADS = 6;
-  /* how far off-screen still counts as worth fetching, in viewports. Kept
-     small on purpose: every tile inside this margin competes for the same
-     budget, so a generous look-ahead spends the beat on tiles nobody is
-     looking at. A tile scrolled into view is served on the next beat anyway —
-     never-painted outranks refresh — which is what the look-ahead was for. */
-  var CAM_NEAR_SCREEN = 0.5;
-  var _camCursor = 0;           /* whose turn it is: the budget rotates, never restarts */
-  /* what a dark tile says. Three different darks, and a tech reads them very
-     differently: a held slot is not a dead camera, and a controller that has
-     simply not pushed a picture yet is neither. */
-  var CAM_NOTE_DARK = "no image — not answering";
-  var CAM_NOTE_BUSY = "in use — another terminal holds it";
-  var CAM_NOTE_QUIET = "connected — no picture yet";
-  var CAM_NOTE_NO_HMI = "no HMI image published";
-  /* not a verdict — the honest thing to say BEFORE a tile's first picture */
-  var CAM_NOTE_WAIT = "waiting for its first frame…";
-  /* live CV-X tile sessions, keyed by ip -> {sid, shotUrl, streamUrl}.
-     Module-scoped so a re-render (filter keystroke, library refresh) reuses
-     the live session instead of redialing the controller's single remote
-     slot; after a page reload it rebuilds from nothing and python's lease
-     reaper collects the orphaned sessions on its own. */
-  var _cvxTiles = {};
 
   function sortMode() {
     if (!_sortMode) {
@@ -153,7 +124,7 @@
     /* hand the controllers their slots back NOW - waiting out CVX_TILE_TTL
        would leave a terminal locked for another eight seconds after a user
        has explicitly said "stop mirroring these" */
-    if (!on) releaseCvxTiles();
+    if (!on) BV.camFeed.release();
     syncCvxLiveBtn();
     rerenderFromCache();   /* a display filter: repaint the cached listing */
   }
@@ -428,7 +399,7 @@
       if (isCvxCam(c) && ip) freed.push(ip);
     });
     _saveCamOff();
-    if (freed.length) releaseCvxTiles(freed);
+    if (freed.length) BV.camFeed.release(freed);
     syncCamPickBtn();
     rerenderFromCache();
   }
@@ -1749,13 +1720,6 @@
 
   /* ---- multi-cam (live camera tiles) ---- */
 
-  /* the Matrox web server's live HMI frame — the same image the wall-monitor
-     page shows. Cache-busting belongs to fetchFrame, which is the one place
-     either vendor's picture is actually asked for. */
-  function camLiveUrl(ip) {
-    return "http://" + ip + "/SavedImages/HMIImage.jpg";
-  }
-
   function isCam(r) { return (r.device_type || "").indexOf("camera") === 0; }
   function isCvxCam(r) { return r.device_type === "camera-keyence"; }
 
@@ -1824,7 +1788,7 @@
     };
     var res = _camTree.render(body, { robots: cams }, { q: _filter, cmp: cmp });
     if (_filterBox) _filterBox.setCount(_filter ? res.shown : undefined, res.total);
-    startCamRefresh();
+    mountCamFeed();
   }
 
   /* one live tile: the camera's current picture — a matrox HMI frame polled
@@ -1841,128 +1805,20 @@
     tile.setAttribute("data-robot-id", c.id);
     var box = BV.el("div", { class: "cam-tile-box" });
     if (ip) {
-      var img = BV.el("img", { class: "cam-live", alt: "" });
-      img.dataset.ip = ip;
-      if (isCvx) img.dataset.cvx = "1";
-      var note = BV.el("div", { class: "cam-tile-note dim" }, CAM_NOTE_WAIT);
-      /* the tile owns its own load lifecycle; the shared tick decides WHEN by
-         calling img._camLoad(), never by touching src (reassigning src aborts
-         an in-flight transfer and restarts it from byte 0 — a camera needing
-         >2s per frame could never complete a single load). No load happens at
-         creation: renders fire on every filter keystroke / library refresh,
-         and fetching every tile each time hammered the plant network.
-
-         BOTH vendors poll a still picture: a matrox serves its HMI jpeg, a
-         CV-X its mirrored screen through the bridge (dial once for the lease,
-         then ask that lease for a frame each beat). A tile deliberately does
-         NOT hold a stream open — a wall of never-ending responses starves on
-         the browser's six-connections-per-origin cap, and every tile past the
-         sixth then sits dark forever; cvx_remote.SHOT_PATH has the long form. */
-      var pending = 0;       /* Date.now() when the in-flight load started */
-      var fails = 0;         /* consecutive failures, for retry backoff */
-      var slowTimer = null;
-      img._camDue = 0;       /* earliest next load; the tick reads this */
-      img._camNote = CAM_NOTE_DARK;   /* WHICH dark this tile is, if it goes dark */
-      img._camShown = 0;     /* has this tile ever painted? first picture beats a refresh */
-      /* until the first picture lands the tile SAYS so. A blank black box that
-         explains nothing is the one thing a wall must never show: it is
-         indistinguishable from a dead camera, and that is exactly how a
-         starved tile used to read. Every tile now carries a note in every
-         state — waiting, dark, or busy — so silence can never come back. */
+      var img = BV.el("img", { alt: "" });
+      var note = BV.el("div", { class: "cam-tile-note dim" }, BV.camFeed.NOTE.wait);
+      /* the shared beat owns the load lifecycle, the retry backoff and the
+         CV-X lease (components/camfeed.js) — the tile only dresses the states
+         it reports. That shared lease is what lets a floating box show the
+         same camera without dialling a controller that has one remote slot. */
       tile.classList.add("cam-wait");
-
-      /* one place decides what a dark tile says, so the 8s timer, the error
-         handler and the tick cannot disagree — and a verdict can be revised,
-         because python knows whether a live session has pushed a picture. */
-      img._camSay = function (text) {
-        img._camNote = text;
-        if (tile.classList.contains("cam-off")) note.textContent = text;
-      };
-      function dark() {
-        note.textContent = img._camNote;
-        tile.classList.remove("cam-wait");   /* a verdict outranks "waiting" */
-        tile.classList.add("cam-off");
-        if (!isCvx) probeMtxDark();
-      }
-      /* WHY a matrox tile is dark. The img's error event cannot tell us: a 404
-         and an unplugged camera look identical from here. One python probe
-         separates them — a camera that answers at all is up, and a Design
-         Assistant project either publishes SavedImages/HMIImage.jpg or it
-         never will — so the answer is stable and worth asking for at most
-         once a minute, and only for a tile that has already gone dark. */
-      function probeMtxDark() {
-        if (img._camProbeAt && Date.now() - img._camProbeAt < 60000) return;
-        img._camProbeAt = Date.now();
-        BV.api.call("mtx_tile_probe", { ip: ip }).then(function (r) {
-          if (r && r.state === "no_image") img._camSay(CAM_NOTE_NO_HMI);
-          else if (r && r.state === "down") img._camSay(CAM_NOTE_DARK);
-        }).catch(function () { /* the tile keeps whatever it already said */ });
-      }
-      /* ask for ONE picture, and arm the honesty timer around it: an ABORTED
-         or hung load fires no error event, so still nothing after 8s -> say
-         so (a frame that lands later clears it). Armed around the fetch and
-         never around the dial — the 8s has to measure the picture, not the
-         handshake in front of it. */
-      function fetchFrame(url) {
-        pending = Date.now();
-        clearTimeout(slowTimer);
-        slowTimer = setTimeout(dark, 8000);
-        img.src = url + "?t=" + Date.now();
-      }
-
-      img._camLoad = function () {
-        if (pending) {
-          if (Date.now() - pending < 30000) return false;  /* let it finish first */
-          fails++;                    /* hung past any TCP timeout: re-kick */
-          dark();
-        }
-        if (!isCvx) { fetchFrame(camLiveUrl(ip)); return true; }
-        var lease = _cvxTiles[ip];
-        if (lease && lease.shotUrl) {
-          fetchFrame(lease.shotUrl);
-          return false;               /* a loopback still is not a plant fetch */
-        }
-        /* no lease yet: take the controller's one view-only slot, and every
-           beat after this one just asks that session for a picture */
-        pending = Date.now();
-        BV.api.call("cvx_tile_start", { ip: ip }).then(function (r) {
-          pending = 0;
-          img._camSay(CAM_NOTE_DARK);     /* a fresh dial retires an old verdict */
-          _cvxTiles[ip] = { sid: r.session_id, shotUrl: r.shot_url,
-                            streamUrl: r.stream_url };
-          fetchFrame(r.shot_url);
-        }).catch(function (e) {
-          pending = 0; fails++;
-          /* say WHICH kind of dark this is: a held slot is not a dead cam */
-          img._camSay((e && e.code === "CVX_BUSY") ? CAM_NOTE_BUSY : CAM_NOTE_DARK);
-          dark();
-          img._camDue = Date.now() + Math.min(CAM_REFRESH_MS * Math.pow(2, fails), 30000);
-        });
-        return true;                      /* a dial counts against the beat cap */
-      };
-
-      img.addEventListener("load", function () {
-        pending = 0; fails = 0;
-        clearTimeout(slowTimer);
-        tile.classList.remove("cam-off");
-        tile.classList.remove("cam-wait");
-        img._camShown = 1;        /* it has a picture now: it joins the rotation */
-        img._camSay(CAM_NOTE_DARK);
-        img._camProbeAt = 0;      /* a camera that started publishing gets re-asked */
-        /* every tile polls, so every tile has a next beat. Nothing parks at
-           Infinity any more — that is what used to strand a tile whose picture
-           never arrived: unreachable by the tick, and dark until a restart. */
-        img._camDue = Date.now() + CAM_REFRESH_MS;
-      });
-      img.addEventListener("error", function () {
-        pending = 0; fails++;
-        clearTimeout(slowTimer);
-        dark();
-        /* 4s, 8s, 16s, then every 30s — a dead camera decays to a slow retry
-           instead of being re-polled at full rate forever. A CV-X whose lease
-           died under us heals a beat later, when cvx_tile_sync reports the
-           session gone and drops it. */
-        img._camDue = Date.now() + Math.min(CAM_REFRESH_MS * Math.pow(2, fails), 30000);
+      BV.camFeed.attach(img, {
+        ip: ip, cvx: isCvx,
+        onNote: function (text) { note.textContent = text; },
+        onState: function (state) {
+          tile.classList.toggle("cam-off", state === "dark");
+          tile.classList.remove("cam-wait");   /* a verdict outranks "waiting" */
+        },
       });
       box.appendChild(img);
       box.appendChild(note);
@@ -1990,10 +1846,9 @@
          overlay ADOPTS that session (promoted out of view-only on the python
          side) instead of dialling twice. A beat too late (just reaped) falls
          back to a fresh dial after the slot settles. */
-      var lease = _cvxTiles[ip];
+      var lease = BV.camFeed.take(ip);   /* the overlay owns the session from here */
       if (lease && lease.sid) {
         var sid = lease.sid;
-        delete _cvxTiles[ip];              /* the overlay owns it from here */
         img._camDue = 0;                   /* redial when the overlay hands it back */
         BV.api.call("cvx_tile_adopt", sid).then(function () {
           BV.openCvxRemote(ip, c.robot || ip, { adopt: sid });
@@ -2012,131 +1867,30 @@
     return tile;
   }
 
-  /* one shared tick drives every live tile through its _camLoad. Only tiles
-     actually showing fetch: folded lines, a hidden window, tiles far off the
-     viewport, and any open modal or remote-operation overlay all pause them —
-     while a tech is inside one camera's remote session the wall behind it
-     goes quiet. New loads are capped per beat so a plant-sized grid never
-     bursts every camera at once. Self-stops when the library leaves the
-     screen or the lens flips back to backup; tiles render unloaded, so first
-     fetches land here too. */
-  /* pause = stop asking. Every tile polls a still now, so a paused wall has
-     nothing to let go of: skipping the pass is the whole pause. The leases
-     simply stop being renewed, and python's reaper hands the controllers'
-     single remote slots back within CVX_TILE_TTL — one mechanism covering
-     every way a wall stops being watched, which is what invariant 9 asks for. */
 
-  /* the lens flipped away (or the library left the screen): hang up every
-     tile session NOW instead of making the cameras wait out the TTL */
-  /* hand the controllers their remote slots back. With no argument that is
-     every live tile session (the CV-X switch, leaving the lens); with a list
-     of ips it is only those (a camera the wall picker just took off) — the
-     rest of the wall is still being watched and must keep mirroring. */
-  function releaseCvxTiles(ips) {
-    (ips || Object.keys(_cvxTiles)).forEach(function (tip) {
-      var l = _cvxTiles[tip];
-      if (l && l.sid) BV.api.call("cvx_tile_stop", l.sid).catch(function () {});
-      delete _cvxTiles[tip];
+  /* The wall is one SURFACE over the shared feed (components/camfeed.js): it
+     hands over its tiles and a liveness test, and the feed owns the rest —
+     one beat, one per-beat budget and one CV-X lease map across the wall and
+     the floating boxes alike, which is what stops a tile and a float from
+     both dialling a controller that has a single remote slot.
+
+     Only tiles actually showing fetch: folded lines, a hidden window, tiles
+     far off the viewport, and any open modal or remote overlay all pause them
+     — while a tech is inside one camera's remote session the wall behind it
+     goes quiet. Registering is idempotent, so every repaint just refreshes
+     the closure; when alive() goes false (the lens flipped, the library left
+     the screen) the feed drops the wall and hands back every session nothing
+     else is watching, rather than making those cameras wait out the TTL. */
+  function mountCamFeed() {
+    BV.camFeed.register("wall", {
+      imgs: function () {
+        return _libWrap ? _libWrap.querySelectorAll("img.cam-live") : [];
+      },
+      alive: function () {
+        return !!_libWrap && document.body.contains(_libWrap) &&
+               viewMode() === "multicam";
+      },
     });
-  }
-
-  function startCamRefresh() {
-    if (_camTimer) return;
-    function pass() {
-      if (!_libWrap || !document.body.contains(_libWrap) || viewMode() !== "multicam") {
-        clearInterval(_camTimer); _camTimer = null;
-        releaseCvxTiles();
-        return;
-      }
-      if (document.hidden) return;
-      /* the CV-X and MTX remote overlays share the cvx-remote class */
-      if (document.querySelector(".cvx-remote") || BV.modalOpen()) return;
-      var imgs = _libWrap.querySelectorAll("img.cam-live");
-      var now = Date.now(), kicked = 0, sids = [], showing = [];
-      for (var i = 0; i < imgs.length; i++) {
-        var img = imgs[i];
-        /* folded/filtered: the house idiom — a raw offsetParent read inside a
-           content-visibility subtree forces layout (checklist.js has the
-           42-second receipt), and this loop runs forever on a timer */
-        var vis = (img.checkVisibility ? img.checkVisibility() : img.offsetParent !== null);
-        if (vis) {
-          var r = img.getBoundingClientRect();
-          vis = !(r.bottom < -window.innerHeight * CAM_NEAR_SCREEN ||
-                  r.top > window.innerHeight * (1 + CAM_NEAR_SCREEN));
-        }
-        if (!vis) continue;        /* scrolled/folded away: stop asking, keep the lease */
-        showing.push(img);
-        if (img.dataset.cvx) {
-          /* renew the lease of every tile actually on screen. NOT gated on
-             img.src any more: a tile whose first picture has not landed yet
-             still holds a live session, and letting that get reaped is how a
-             slow camera used to lose the slot it had just been given. */
-          var lease = _cvxTiles[img.dataset.ip];
-          if (lease && lease.sid) sids.push(lease.sid);
-        }
-      }
-      /* Spend the beat's budget as a ROTATION, not on a prefix.
-         This loop used to walk the tiles in DOM order and stop at six. A
-         CV-X tile survived that, because only its first dial costs a slot and
-         every frame after it is a free loopback read - but a MATROX tile pays
-         a slot for every frame it ever fetches, so the same handful at the top
-         of the list won the budget every single beat and the rest were never
-         asked for a picture at all. Twelve fed, whatever the wall's size:
-         with 56 cameras in the library, 44 of them could never paint.
-         And a tile that is never ASKED never fails either - no error, no 8s
-         timeout, so dark() never runs, .cam-off is never set, and the CSS
-         keeps the note hidden. The result was a silent black rectangle that
-         looked exactly like a broken camera while the camera was fine. That
-         is the honesty rule inverted, and it sent techs to the wrong line.
-         So: a tile that has NEVER painted goes first, wherever it sits (a
-         region just scrolled into view fills in on the next beat instead of
-         waiting out a lap), and the refresh rotation then resumes where the
-         last beat stopped, so every tile on the wall gets its turn. */
-      for (var f = 0; f < showing.length && kicked < CAM_MAX_LOADS; f++) {
-        var ft = showing[f];
-        if (ft._camShown || now < ft._camDue) continue;
-        if (ft._camLoad()) kicked++;
-      }
-      for (var k = 0; k < showing.length && kicked < CAM_MAX_LOADS; k++) {
-        var idx = (_camCursor + k) % showing.length;
-        var rt = showing[idx];
-        if (!rt._camShown || now < rt._camDue) continue;
-        if (rt._camLoad()) { kicked++; _camCursor = (idx + 1) % showing.length; }
-      }
-      /* one lease-renewal per pass for every tile actually on screen. Python
-         answers with liveness AND the session's frame count, which is what
-         lets a tile tell a quiet controller from a dark one. */
-      if (sids.length) {
-        BV.api.call("cvx_tile_sync", sids).then(function (alive) {
-          Object.keys(_cvxTiles).forEach(function (tip) {
-            var l = _cvxTiles[tip];
-            if (!l || !l.sid || !alive[l.sid]) return;
-            var im = _libWrap && _libWrap.querySelector(
-              'img.cam-live[data-ip="' + tip + '"]');
-            if (alive[l.sid].alive === false) {
-              /* the session died under us: drop the lease so the tile redials
-                 on its own backoff instead of re-asking a sid that is gone */
-              delete _cvxTiles[tip];
-              if (im) {
-                im.removeAttribute("src");
-                im._camDue = Date.now() + CAM_REFRESH_MS;
-                if (im._camSay) im._camSay(CAM_NOTE_DARK);
-                var t = im.closest(".cam-tile");
-                if (t) t.classList.add("cam-off");
-              }
-              return;
-            }
-            /* alive: a session that has never pushed a picture is a quiet
-               camera, not an absent one — say the true thing if it goes dark */
-            if (im && im._camSay) {
-              im._camSay(alive[l.sid].frames ? CAM_NOTE_DARK : CAM_NOTE_QUIET);
-            }
-          });
-        }).catch(function () {});
-      }
-    }
-    _camTimer = setInterval(pass, CAM_REFRESH_MS);
-    setTimeout(pass, 150);   /* first tiles light up now-ish, not a beat later */
   }
 
   /* ---- selection ---- */
