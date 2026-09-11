@@ -57,6 +57,7 @@
   var _cvxTiles = {};
   var _sources = [];            /* {key, imgs, alive} - the wall, the float layer */
   var _timer = null;
+  var _sweepDue = false;        /* a surface left: check for orphans next beat */
   var _cursor = 0;              /* whose turn it is: the budget rotates, never restarts */
 
   /* the Matrox web server's live HMI frame — the same image the wall-monitor
@@ -154,7 +155,8 @@
       /* no lease yet: take the controller's one view-only slot, and every beat
          after this one just asks that session for a picture */
       pending = Date.now();
-      BV.api.call("cvx_tile_start", { ip: ip }).then(function (r) {
+      BV.api.call("cvx_tile_start", { ip: ip, viewer: viewer() })
+        .then(function (r) {
         pending = 0;
         img._camSay(NOTE.dark);     /* a fresh dial retires an old verdict */
         _cvxTiles[ip] = { sid: r.session_id, shotUrl: r.shot_url,
@@ -201,10 +203,18 @@
      every live session (the CV-X switch, leaving the lens); with a list of ips
      it is only those (a camera the wall picker just took off) — everything
      else is still being watched and must keep mirroring. */
+  /* which WINDOW this is, as far as a lease is concerned. Two windows can
+     watch one camera - the wall tiles it small while the camera window shows
+     it big - and python counts viewers per session, so neither window looking
+     away can black the other one out. */
+  function viewer() { return BV.camWin ? "camwin" : "main"; }
+
   function release(ips) {
     (ips || Object.keys(_cvxTiles)).forEach(function (tip) {
       var l = _cvxTiles[tip];
-      if (l && l.sid) BV.api.call("cvx_tile_stop", l.sid).catch(function () {});
+      if (l && l.sid) {
+        BV.api.call("cvx_tile_stop", l.sid, viewer()).catch(function () {});
+      }
       delete _cvxTiles[tip];
     });
   }
@@ -238,18 +248,36 @@
   /* a surface leaving does NOT hang up every session: another surface may
      still be showing that camera. Release exactly the leases nothing wants any
      more, which for the last surface out is all of them. */
+  /* A surface leaving does not sweep on the spot: it is usually leaving in the
+     MIDDLE of a repaint that is about to put the same cameras back (the last
+     floating box closing re-renders the wall, and sync() runs before the new
+     tiles are in the DOM). Sweeping there saw no imgs, called every session an
+     orphan, hung them up - and the tiles that appeared a moment later had to
+     dial the controllers all over again. The next beat is late enough for the
+     DOM to have settled. With no surfaces left at all there is no repaint
+     coming, so that case still releases immediately. */
   function unregister(key) {
     var i = _sources.findIndex(function (s) { return s.key === key; });
     if (i < 0) return;
     _sources.splice(i, 1);
-    sweep();
+    if (!_sources.length) sweep(); else _sweepDue = true;
   }
+  /* A surface went away. Guessing from the DOM which sessions are now orphans
+     is a race we kept losing: the surface is usually leaving in the middle of
+     a repaint that puts the same cameras straight back, and a camera watched
+     in ANOTHER WINDOW is not in this document at all. Either way the eager
+     guess hung up a live camera and something had to redial it.
+
+     So eagerness is reserved for the places a PERSON asked for it - the CV-X
+     switch, the wall picker, closing a box - which all call release() by name.
+     Incidental churn is left to python's reaper, which already collects any
+     lease nobody renews within CVX_TILE_TTL and counts viewers across windows
+     while it does. The one case that still releases here is the last surface
+     leaving: nothing is coming back, so there is nothing to race. */
   function sweep() {
-    var wanted = {};
-    liveImgs().forEach(function (im) { if (im.dataset.cvx) wanted[im.dataset.ip] = 1; });
-    var orphans = Object.keys(_cvxTiles).filter(function (tip) { return !wanted[tip]; });
-    if (orphans.length) release(orphans);
-    if (!_sources.length) { clearInterval(_timer); _timer = null; }
+    if (_sources.length) return;
+    release();
+    clearInterval(_timer); _timer = null;
   }
   /* every feedable img across every surface still on screen; dead surfaces are
      dropped as we go, which is what self-stops the beat when a lens flips or
@@ -282,6 +310,7 @@
   }
 
   function pass() {
+    if (_sweepDue) { _sweepDue = false; sweep(); }
     var before = _sources.length;
     var imgs = liveImgs();
     /* a surface stopped being alive (the lens flipped, the library left the
@@ -347,7 +376,7 @@
        answers with liveness AND the session's frame count, which is what lets
        a quiet controller be told from a dark one. */
     if (sids.length) {
-      BV.api.call("cvx_tile_sync", sids).then(function (alive) {
+      BV.api.call("cvx_tile_sync", sids, viewer()).then(function (alive) {
         Object.keys(_cvxTiles).forEach(function (tip) {
           var l = _cvxTiles[tip];
           if (!l || !l.sid || !alive[l.sid]) return;

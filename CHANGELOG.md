@@ -1,6 +1,28 @@
 # Changelog
 
 ## unreleased — backups drag in and export out, the statusbar finds the switch, a program plays in 3d, the camera wall lights up all the way down, and a matrox pull brings home its photo history
+- **Pick several cameras and pop them all out, into a window of their own if
+  you want one.** The wall's tiles gained the same selection checkbox every
+  other list in the app has (shift+click ranges included), and a **pop out · N**
+  button puts the lot into floating boxes, arranged rather than stacked. From
+  the **floating** menu, *move them to their own window* hands the boxes to a
+  second OS window that is nothing but the cameras — so the main window is free
+  for the backup work — with its own slim bar to add, tile and close.
+  Both windows then keep feeding cameras, which needed the tile leases to count
+  **viewers** rather than assume one: a CV-X has a single session, so the second
+  window *joins* it instead of dialling beside it, each window renews its own
+  lease, and the session only stops when nobody holds one. Before that, flipping
+  the lens in one window hung up a camera the other window was showing.
+  Moving boxes between windows costs **zero dials**.
+  Two fixes to the boxes themselves: the **lock and close buttons did nothing**
+  — raising a box re-appended it to the DOM on every mousedown, which aborts the
+  click the browser was about to fire (dragging, which needs no click, worked
+  fine and hid it); boxes stack by z-index now and never move. And the resize
+  grips were painted over the top-right of the bar, swallowing the ✕ where
+  people actually aim. The probe missed both because `el.click()` bypasses hit
+  testing entirely — it reads `elementFromPoint` at each button's corners now,
+  and asserts a press never re-parents the box.
+
 - **The camera wall grows floating boxes.** A tile is 150 px tall, which is not
   big enough to read a camera's screen from a step away — the workaround was
   four camera remotes opened into their own OS windows and arranged by hand,

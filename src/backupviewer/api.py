@@ -394,12 +394,19 @@ class Api:
         # The session MOVES (the overlay in the sending window closes), so a
         # controller's single remote slot is never asked for twice.
         self._cvx_windows: dict[str, object] = {}
+        self._cam_window = None                  # the camera window, if it is up
+        self._cam_window_slots: list = []        # the float slots it is showing
         # CV-X tile sessions (the cam lens): sid -> last-sync monotonic. A
         # LEASE, not ownership - the grid renews it every tick it is actually
         # watching, and the reaper hangs up anything unsynced past
         # CVX_TILE_TTL, so an unwatched wall frees every controller's single
         # remote slot on its own (lens flipped, window hidden, JS gone).
-        self._cvx_tiles: dict[str, float] = {}
+        # sid -> {viewer: last renew}. A VIEWER is a window: the main one, or
+        # the camera window. Two windows can legitimately watch one camera -
+        # the wall tiles it small while a box shows it big - and a CV-X has one
+        # session for both. Counting viewers is what stops one window's lens
+        # flip from hanging up a camera the other window is showing.
+        self._cvx_tiles: dict[str, dict[str, float]] = {}
         self._cvx_tiles_lock = threading.Lock()
         self._cvx_tile_reaper: threading.Thread | None = None
         # which windows are borderless-fullscreen right now, by window key
@@ -820,6 +827,8 @@ class Api:
         windows = [e["window"] for e in list(self._sessions.values())
                    if e.get("window") is not None]
         windows += list(self._cvx_windows.values())
+        if self._cam_window is not None:
+            windows.append(self._cam_window)
         for w in windows:
             try:
                 w.destroy()
@@ -3071,7 +3080,12 @@ class Api:
         are stopped after it (stop() closes sockets - not lock territory)."""
         doomed = []
         with self._cvx_tiles_lock:
-            for sid in [s for s, t in self._cvx_tiles.items() if now - t > CVX_TILE_TTL]:
+            for sid in list(self._cvx_tiles):
+                viewers = self._cvx_tiles[sid]
+                for v in [v for v, t in viewers.items() if now - t > CVX_TILE_TTL]:
+                    viewers.pop(v)
+                if viewers:
+                    continue          # somebody else is still watching it
                 self._cvx_tiles.pop(sid)
                 sess = self._cvx.pop(sid, None)
                 if sess is not None:
@@ -3088,19 +3102,24 @@ class Api:
                 log.exception("cvx tile reaper")
 
     @_endpoint
-    def cvx_tile_start(self, spec: dict):
+    def cvx_tile_start(self, spec: dict):   # noqa: D401
         """Open (or return) the view-only tile session for the camera at
         spec['ip']. Idempotent per ip: a page reload that lost the JS registry
         heals onto the live session instead of asking the controller's single
         remote slot twice. A NON-tile session (overlay / pop-out) to that ip
         is BUSY, never joined - a tile must not piggyback a session the user
-        is driving."""
+        is driving.
+
+        spec['viewer'] names the window asking (default 'main'). A second
+        window watching the same camera JOINS the session rather than dialling
+        beside it, and holds its own lease on it."""
         ip = _require_ip(spec)
+        viewer = str(spec.get("viewer") or "main")
         with self._cvx_tiles_lock:
             for sid in list(self._cvx_tiles):
                 sess = self._cvx.get(sid)
                 if sess is not None and sess.ip == ip and sess.alive:
-                    self._cvx_tiles[sid] = time.monotonic()
+                    self._cvx_tiles[sid][viewer] = time.monotonic()
                     return self._cvx_tile_shape(sid, sess)
         for sid, sess in list(self._cvx.items()):
             if sess.ip == ip and sess.alive and sid not in self._cvx_tiles:
@@ -3112,7 +3131,7 @@ class Api:
         sid = uuid.uuid4().hex
         self._cvx[sid] = sess
         with self._cvx_tiles_lock:
-            self._cvx_tiles[sid] = time.monotonic()
+            self._cvx_tiles[sid] = {viewer: time.monotonic()}
             if self._cvx_tile_reaper is None:
                 self._cvx_tile_reaper = threading.Thread(
                     target=self._cvx_tile_reap_loop, name="cvx-tile-reaper", daemon=True)
@@ -3120,30 +3139,41 @@ class Api:
         return self._cvx_tile_shape(sid, sess)
 
     @_endpoint
-    def cvx_tile_sync(self, sids: list):
+    def cvx_tile_sync(self, sids: list, viewer: str | None = None):
         """Renew the lease on every tile the grid is actually showing; report
         which are still alive. An unknown or dead sid answers alive: False and
-        the tile redials on its own backoff."""
+        the tile redials on its own backoff. Each WINDOW renews its own lease,
+        so a session outlives any one of them looking away."""
         out = {}
         now = time.monotonic()
+        viewer = str(viewer or "main")
         with self._cvx_tiles_lock:
             for sid in sids or []:
                 sess = self._cvx.get(sid)
                 if sid in self._cvx_tiles and sess is not None and sess.alive:
-                    self._cvx_tiles[sid] = now
+                    self._cvx_tiles[sid][viewer] = now
                     out[sid] = {"alive": True, "frames": sess.frames}
                 else:
                     out[sid] = {"alive": False}
         return out
 
     @_endpoint
-    def cvx_tile_stop(self, session_id: str):
+    def cvx_tile_stop(self, session_id: str, viewer: str | None = None):
         """Prompt release when the lens flips away - the TTL is the net
         underneath. Only ever stops a TILE session: an unknown or non-tile sid
-        is a quiet no-op, so this can never hang up an overlay."""
+        is a quiet no-op, so this can never hang up an overlay.
+
+        Drops THIS window's lease. The session only really stops once nobody is
+        watching it: one window flipping its lens must not black out a camera
+        the other window is showing."""
+        viewer = str(viewer or "main")
         with self._cvx_tiles_lock:
-            if session_id not in self._cvx_tiles:
+            viewers = self._cvx_tiles.get(session_id)
+            if viewers is None:
                 return True
+            viewers.pop(viewer, None)
+            if viewers:
+                return True           # still being watched elsewhere
             self._cvx_tiles.pop(session_id)
             sess = self._cvx.pop(session_id, None)
         if sess is not None:
@@ -3174,7 +3204,7 @@ class Api:
                 "screen": {"w": cvx_remote.SCREEN_W, "h": cvx_remote.SCREEN_H}}
 
     @_endpoint
-    def cvx_tile_yield(self, session_id: str):
+    def cvx_tile_yield(self, session_id: str, viewer: str | None = None):
         """The inverse of cvx_tile_adopt: demote a promoted session back to a
         view-only tile lease. A floating box that took CONTROL of a camera and
         then gave it up must hand the picture back to the wall's beat WITHOUT
@@ -3195,12 +3225,73 @@ class Api:
             raise ApiError("NO_SESSION", "that session is gone")
         sess.video_only = True
         with self._cvx_tiles_lock:
-            self._cvx_tiles[session_id] = time.monotonic()
+            self._cvx_tiles.setdefault(session_id, {})[str(viewer or "main")] =                 time.monotonic()
             if self._cvx_tile_reaper is None:
                 self._cvx_tile_reaper = threading.Thread(
                     target=self._cvx_tile_reap_loop, name="cvx-tile-reaper", daemon=True)
                 self._cvx_tile_reaper.start()
         return self._cvx_tile_shape(session_id, sess)
+
+    # -- the camera window: the floating boxes in an OS window of their own ----------
+    # A tech watching a line wants the cameras big and the backup work beside
+    # them, which one window cannot do. This is a second pywebview window in
+    # camera-wall mode (#camwall): the float layer, a slim bar, no library.
+    # The boxes MOVE there - the slots ride through this object rather than
+    # through settings, so the new window has them before its first paint.
+    # Both windows keep feeding cameras; python counts viewers per tile session
+    # (see _cvx_tiles), so neither can black the other out.
+
+    @_endpoint
+    def cam_window_open(self, slots: list | None = None):
+        """Open (or front) the camera window, handing it these float slots."""
+        import webview
+
+        from .app import resource_path
+
+        self._cam_window_slots = list(slots or [])
+        if self._cam_window is not None:
+            try:
+                self._cam_window.restore()
+                self._cam_window.show()
+                return {"opened": False}
+            except Exception:  # noqa: BLE001 - it went away without telling us
+                log.exception("could not front the camera window")
+                self._cam_window = None
+        url = resource_path("web/index.html").as_uri() + "#camwall"
+        w = webview.create_window(
+            "backupviewer · cameras", url, js_api=self,
+            width=1280, height=860, min_size=(640, 420))
+        self._cam_window = w
+        # reverse lookup at close time, never a captured handle: the same
+        # reason _close_cvx_window_obj does it that way
+        w.events.closed += (lambda: self._close_cam_window_obj(w))
+        return {"opened": True}
+
+    def _close_cam_window_obj(self, w):
+        if self._cam_window is w:
+            self._cam_window = None
+            self._cam_window_slots = []
+
+    @_endpoint
+    def cam_window_slots(self):
+        """What the camera window should show. Read once, on its boot."""
+        return {"slots": list(self._cam_window_slots)}
+
+    @_endpoint
+    def cam_window_push(self, slots: list | None = None):
+        """The camera window's arrangement, as it changes. Kept here so a
+        re-open lands on what was there, and so the main window can ask what
+        the other window is holding without reaching into it."""
+        self._cam_window_slots = list(slots or [])
+        return True
+
+    @_endpoint
+    def cam_window_state(self):
+        """Is the camera window up, and which cameras does it hold? The main
+        window's wall asks so it can say where a camera went."""
+        return {"open": self._cam_window is not None,
+                "cams": [s.get("camId") for s in self._cam_window_slots
+                         if isinstance(s, dict) and s.get("camId")]}
 
     # -- Matrox live remote (the camera's own web UI) ---------------------------------
     # A Matrox camera is operated through the web page it serves on port 80, so

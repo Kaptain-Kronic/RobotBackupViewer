@@ -29,6 +29,14 @@
   } catch (e2) { /* malformed marker - boot as the main window */ }
   if (BV.cvxWin) document.body.classList.add("cvxwin");
 
+  /* camera-window mode: the floating camera boxes in an OS window of their
+     own (cam_window_open stamps #camwall), so the main window is free for the
+     backup work. It shows no library and no chrome - just the float layer and
+     a slim bar. Deliberately NOT `solo`, which pins a BACKUP session and would
+     inject its sid into content calls. */
+  BV.camWin = (location.hash || "").indexOf("#camwall") === 0;
+  if (BV.camWin) document.body.classList.add("camwin");
+
   /* which window is this? - the key viewfinder_start mirrors (null = the main
      app window). Every phone button asks THIS, so the phone shows the window
      the button was pressed in. */

@@ -101,6 +101,7 @@ class FakeCvxSession:
         self.ip = ip
         self.mouse = []
         self.video_only = False
+        self.stopped = False
         self.alive = True
         self.frames = 1
         self.handshake_done = True
@@ -112,6 +113,7 @@ class FakeCvxSession:
 
     def stop(self):
         FakeCvxSession.stops.append(self.ip)
+        self.stopped = True
         self.alive = False
 
     def queue_mouse(self, seq, event_id, x, y):
@@ -282,6 +284,63 @@ _DRIVE_JS = """(function(){
 })()"""
 
 
+# Is every control on the bar actually REACHABLE? el.click() bypasses hit
+# testing entirely, so it happily "clicks" a button something else is painted
+# over - which is exactly how the resize grips came to swallow the lock and
+# close buttons without a single check going red. elementFromPoint is the only
+# honest answer, and it is the same technique the cam picker's panel uses.
+_BAR_HITS_JS = """JSON.stringify((function(){
+    var b=document.querySelector('.fbox');
+    if(!b) return {};
+    var out={};
+    [].forEach.call(b.querySelectorAll('.fbox-bar button'), function(btn){
+      var r=btn.getBoundingClientRect();
+      var name=btn.className.replace('btn','').trim() || 'title';
+      /* the CORNERS, not just the middle: the resize grips covered the top and
+         the top-right of these buttons while dead centre stayed clear, so a
+         centre-only probe called it fine while the ✕ was unclickable in the
+         half of it people actually aim at */
+      var pts=[[0.5,0.5],[0.12,0.12],[0.88,0.12],[0.12,0.88],[0.88,0.88]];
+      out[name]=pts.every(function(p){
+        var hit=document.elementFromPoint(r.left+r.width*p[0], r.top+r.height*p[1]);
+        return !!(hit && (hit===btn || btn.contains(hit)));
+      });
+    });
+    return out;
+})())"""
+
+# A press must not MOVE the box in the DOM. Raising by re-appending the node
+# aborts the click the browser was about to fire, so every bar button silently
+# did nothing while dragging - which needs no click - kept working. Synthetic
+# events cannot produce a trusted click, so this pins the CAUSE instead.
+_REPARENT_JS = """(function(){
+    var b=document.querySelector('.fbox');
+    var layer=document.getElementById('floatlayer');
+    if(!b||!layer) return 'no-box';
+    var moved=0;
+    var obs=new MutationObserver(function(recs){
+      recs.forEach(function(r){
+        if(r.type!=='childList') return;
+        if([].indexOf.call(r.removedNodes,b)>=0
+           ||[].indexOf.call(r.addedNodes,b)>=0) moved++;
+      });
+    });
+    obs.observe(layer,{childList:true});
+    var btn=b.querySelector('.fbox-x');
+    var r=btn.getBoundingClientRect();
+    btn.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,
+      button:0, clientX:r.left+r.width/2, clientY:r.top+r.height/2}));
+    obs.takeRecords().forEach(function(rec){
+      if(rec.type==='childList'
+         &&([].indexOf.call(rec.removedNodes,b)>=0
+            ||[].indexOf.call(rec.addedNodes,b)>=0)) moved++;
+    });
+    obs.disconnect();
+    document.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));
+    return String(moved);
+})()"""
+
+
 def _state(window):
     return json.loads(js(window, _STATE_JS) or "{}")
 
@@ -341,6 +400,17 @@ def probe(window, api, mtx_hosts):
         check("popout.placeholder_has_no_img", st["placeholderImgs"] == 0,
               "(a floated camera's tile still carries an <img>: that is the "
               "double-fetch this design exists to make impossible)")
+        hits = json.loads(js(window, _BAR_HITS_JS) or "{}")
+        check("popout.every_bar_control_is_clickable",
+              hits and all(hits.values()),
+              "(something is painted over %s - el.click() would still 'work', "
+              "which is why this reads elementFromPoint instead)" %
+              [k for k, v in hits.items() if not v])
+        check("popout.press_does_not_reparent_the_box",
+              js(window, _REPARENT_JS) == "0",
+              "(pressing a bar button moved the box in the DOM - that aborts the "
+              "click the browser was about to fire, which is how lock and close "
+              "came to do nothing at all while dragging still worked)")
         check("popout.count_is_honest", st["btn"] == "floating · 1",
               "(button reads %r)" % st["btn"])
         check("feed.no_camera_fetched_twice", st["dupes"] == [],
@@ -355,6 +425,76 @@ def probe(window, api, mtx_hosts):
               "return i && i.naturalWidth>0 ? 'y':'';})()")
         check("feed.the_box_paints", painted == "y",
               "(the floating box never got a picture: %s)" % js(window, _WHY_JS))
+
+        # ---- A2. select several, pop them all out ---------------------------
+        js(window, "BV.camFloats.closeAll()")
+        wait(window, "document.querySelectorAll('.fbox').length===0 ? 'y':''")
+        for _ in range(20):
+            js(window, _OPEN_LINES_JS)
+            if js(window, "document.querySelectorAll('.cam-tile .cam-check').length"
+                          "===%d ? 'y':''" % TOTAL) == "y":
+                break
+            time.sleep(0.3)
+        check("select.every_poppable_tile_has_a_box",
+              js(window, "document.querySelectorAll('.cam-tile .cam-check').length")
+              == TOTAL,
+              "(%s of %d tiles offer a selection checkbox)" %
+              (js(window, "document.querySelectorAll('.cam-tile .cam-check').length"),
+               TOTAL))
+        check("select.no_action_with_nothing_ticked", js(window,
+              "document.getElementById('lib-cam-popout').classList.contains('hidden')"),
+              "(an action with nothing to act on must be gone, not greyed)")
+
+        # tick three, the shared checklist's shift-range included
+        js(window, """(function(){
+            var cbs=[].slice.call(document.querySelectorAll('.cam-tile .cam-check'));
+            cbs[0].click();
+            cbs[2].dispatchEvent(new MouseEvent('click',{bubbles:true,shiftKey:true}));
+        })()""")
+        check("select.shift_click_ranges", js(window,
+              "document.querySelectorAll('.cam-tile .cam-check:checked').length") == 3,
+              "(shift+click selected %s, expected the 3-tile range - this comes "
+              "from BV.checklist, so it must behave like every other list)" %
+              js(window, "document.querySelectorAll('.cam-tile .cam-check:checked').length"))
+        check("select.button_counts_them", js(window,
+              "document.getElementById('lib-cam-popout').textContent") == "pop out · 3",
+              "(button reads %r)" %
+              js(window, "document.getElementById('lib-cam-popout').textContent"))
+
+        dials_multi = len(FakeCvxSession.dials)
+        js(window, "document.getElementById('lib-cam-popout').click()")
+        wait(window, "document.querySelectorAll('.fbox').length===3 ? 'y':''")
+        st3 = _state(window)
+        check("select.pops_out_all_three", st3["boxes"] == 3,
+              "(%d boxes from a 3-camera selection)" % st3["boxes"])
+        check("select.no_camera_fetched_twice", st3["dupes"] == [],
+              "(two live imgs for %s)" % st3["dupes"])
+        check("select.costs_no_extra_dial",
+              len(FakeCvxSession.dials) == dials_multi,
+              "(popping a selection out redialled %d times)" %
+              (len(FakeCvxSession.dials) - dials_multi))
+        check("select.selection_clears_after", js(window,
+              "document.querySelectorAll('.cam-tile .cam-check:checked').length") == 0,
+              "(the ticks survived the pop-out, so pressing it again would "
+              "re-pop cameras that are already in boxes)")
+        zones = json.loads(js(window, _GEOM_JS) or "[]")
+        check("select.they_are_arranged_not_stacked",
+              len(set(g["snap"] for g in zones)) == len(zones) and
+              all(g["snap"] for g in zones),
+              "(three boxes popped out on top of each other: %r)" %
+              [g["snap"] for g in zones])
+
+        js(window, "BV.camFloats.closeAll()")
+        wait(window, "document.querySelectorAll('.fbox').length===0 ? 'y':''")
+        for _ in range(20):
+            js(window, _OPEN_LINES_JS)
+            if js(window, "document.querySelectorAll('.cam-tile img.cam-live')"
+                          ".length===%d ? 'y':''" % TOTAL) == "y":
+                break
+            time.sleep(0.3)
+        wait(window, "BV.camFeed.lease(%s) ? 'y':''" % json.dumps(CVX_CAMS[0]))
+        js(window, _POPOUT_JS % json.dumps(CVX_NAME))
+        wait(window, "document.querySelectorAll('.fbox').length===1 ? 'y':''")
 
         # ---- B. where it paints ---------------------------------------------
         check("layer.paints_over_the_wall", js(window, _PAINT_JS) == "ok",
@@ -486,6 +626,9 @@ def probe(window, api, mtx_hosts):
               "(a box that never took control sent %d mouse events - and python "
               "should have refused them too)" % mouse_events())
 
+        # a fresh baseline: the sections above closed and re-popped boxes, so
+        # the pop-out baseline taken at the top of the run is long stale here
+        ctl_dials = len(FakeCvxSession.dials)
         js(window, "document.querySelector('.fbox .fbox-ctl').click()")
         took = wait(window, "BV.camFloats.armed() ? 'y':''")
         check("control.take_promotes_the_session", took == "y",
@@ -494,7 +637,7 @@ def probe(window, api, mtx_hosts):
               "(document.querySelector('#floatlayer img.cam-live').src||'')"
               ".indexOf('/cvx/')>=0"),
               "(a controlling box must hold the live stream, not the 2s still)")
-        check("control.no_extra_dial", len(FakeCvxSession.dials) == dials_before,
+        check("control.no_extra_dial", len(FakeCvxSession.dials) == ctl_dials,
               "(taking control redialled: it must ADOPT the lease it already has)")
         check("control.the_bar_says_so", js(window,
               "document.querySelector('.fbox .fbox-ctl').textContent") == "driving",
@@ -607,6 +750,104 @@ def probe(window, api, mtx_hosts):
               "(the wall did not take the camera back: %r)" % st)
         check("close.count_is_honest", st["btn"] == "floating · 0",
               "(button reads %r)" % st["btn"])
+
+        # ---- J. the camera window: the boxes in an OS window of their own ----
+        # Pop two out here, then move them across. The point of the whole
+        # viewer count is that BOTH windows can then feed cameras: the wall
+        # here keeps tiling one small while a box over there shows it big, and
+        # neither looking away can black the other out.
+        js(window, """(function(){
+            var cbs=[].slice.call(document.querySelectorAll('.cam-tile .cam-check'));
+            cbs[0].click();
+            cbs[1].dispatchEvent(new MouseEvent('click',{bubbles:true,shiftKey:true}));
+            document.getElementById('lib-cam-popout').click();
+        })()""")
+        wait(window, "document.querySelectorAll('.fbox').length===2 ? 'y':''")
+        # the baseline has to be taken once the boxes are actually LIVE: a box
+        # that has not dialled yet would dial during the move and read as a
+        # cost the move did not cause
+        wait(window, "[].every.call("
+                     "document.querySelectorAll('#floatlayer img.cam-live'),"
+                     "function(i){return i.naturalWidth>0;}) ? 'y':''")
+        time.sleep(1.0)
+        moved_dials = len(FakeCvxSession.dials)
+        js(window, "BV.camFloats.toWindow()")
+        gone = wait(window, "document.querySelectorAll('.fbox').length===0 ? 'y':''")
+        check("camwin.boxes_leave_this_window", gone == "y",
+              "(they must MOVE, not be copied - two windows showing one box is "
+              "two arrangements to keep in step)")
+        win2 = api._cam_window
+        check("camwin.window_opened", win2 is not None,
+              "(cam_window_open did not create a window)")
+        if win2 is not None:
+            time.sleep(4)
+            check("camwin.boots_in_camera_mode",
+                  js(win2, "document.body.classList.contains('camwin')") and
+                  js(win2, "!!document.querySelector('.camwin-bar')"),
+                  "(the camera window did not boot into camera-wall mode)")
+            check("camwin.no_library_chrome", js(win2,
+                  "getComputedStyle(document.getElementById('view')).display") == "none",
+                  "(the library came along - this window is the boxes and "
+                  "nothing else)")
+            check("camwin.holds_the_boxes",
+                  js(win2, "document.querySelectorAll('.fbox').length") == 2,
+                  "(%s boxes arrived, expected 2)" %
+                  js(win2, "document.querySelectorAll('.fbox').length"))
+            check("camwin.layer_clears_its_own_bar", js(win2, """(function(){
+                var b=document.querySelector('.camwin-bar');
+                var l=document.getElementById('floatlayer');
+                if(!b||!l) return false;
+                return l.getBoundingClientRect().top >= b.getBoundingClientRect().bottom - 1;
+            })()"""),
+                  "(the float layer is covering the camera window's own bar - "
+                  "chromeInset has to measure THIS window's chrome)")
+            check("camwin.pictures_paint", wait(win2,
+                  "document.querySelectorAll('#floatlayer img.cam-live').length && "
+                  "[].every.call(document.querySelectorAll('#floatlayer img.cam-live'),"
+                  "function(i){return i.naturalWidth>0;}) ? 'y':''") == "y",
+                  "(the boxes arrived but never got a picture)")
+            extra = FakeCvxSession.dials[moved_dials:]
+            check("camwin.moving_costs_no_dial", not extra,
+                  "(moving the boxes to their own window redialled %r - the "
+                  "session is shared, the window is not. leases now: %r)" %
+                  (extra, {k: list(v) for k, v in api._cvx_tiles.items()}))
+            check("camwin.names_itself_as_a_viewer",
+                  any("camwin" in v for v in api._cvx_tiles.values()),
+                  "(the camera window holds no lease of its own: %r)" %
+                  [list(v) for v in api._cvx_tiles.values()])
+
+            # THE point of the viewer count: this window's wall and that
+            # window's boxes both watch one camera, and one of them looking
+            # away must not black the other out.
+            shared = [sid for sid, v in api._cvx_tiles.items()
+                      if "camwin" in v and "main" in v]
+            check("camwin.both_windows_share_one_session", bool(shared),
+                  "(no session is held by both windows, so the interesting "
+                  "case is not being tested: %r)" %
+                  [list(v) for v in api._cvx_tiles.values()])
+            if shared:
+                sid = shared[0]
+                sess = api._cvx[sid]
+                stops_at = len(FakeCvxSession.stops)
+                js(window, "document.getElementById('cube-lib').click()")  # lens flip
+                time.sleep(2.5)
+                check("camwin.other_window_keeps_its_picture",
+                      sid in api._cvx and not sess.stopped and
+                      len(FakeCvxSession.stops) == stops_at,
+                      "(flipping the lens in THIS window hung up a camera the "
+                      "OTHER window is showing - that is the whole reason "
+                      "leases count viewers)")
+                check("camwin.this_window_did_drop_its_lease",
+                      "main" not in api._cvx_tiles.get(sid, {}),
+                      "(the main window kept a lease on a wall it is no longer "
+                      "showing)")
+                js(window, "document.getElementById('cube-cam').click()")
+                time.sleep(1.0)
+
+            win2.destroy()
+            time.sleep(2)
+            check("camwin.close_forgets_the_window", api._cam_window is None,
+                  "(the window closed but python still thinks it is up)")
 
         report()
     except Exception as e:  # noqa: BLE001

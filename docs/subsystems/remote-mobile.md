@@ -23,7 +23,9 @@ zoom** (never forwarded to the device); and the MJPEG server's framing was
 fixed to close every part **eagerly** (§4a, §7 — the frozen-until-input bug).
 The NAV_KEYS fullscreen tab-guard is retired (closing section).*
 
-*Updated 2026-09-11 by the floating-boxes pass (branch `cam-floats`): §1 gains
+*Updated 2026-09-11 by the floating-boxes pass (branch `cam-floats`), and again
+the same day by the camera-window pass on top of it (tile leases now count
+VIEWERS, and the boxes can take an OS window of their own): §1 gains
 a SIXTH surface and the one-controller rule that goes with it. Three promotions
 landed under it and both remotes were converted onto them rather than copied -
 `BV.camFeed` (the wall's beat, now shared with the floats), `BV.cvxMouse` (the
@@ -147,6 +149,33 @@ reading a backup. All of them vanish when there is nothing to drive:
 The subsystem's centre of gravity is the CV-X protocol; the rest is
 comparatively ordinary once the trust posture is stated. Everything below
 spends its length accordingly.
+
+A float layer can also be handed a **window of its own** (`cam_window_open`,
+booting on `#camwall`): the boxes move there, the main window is left free for
+the backup work, and the wall keeps tiling those cameras small while the boxes
+show them big. Which is only safe because of the next section.
+
+### Tile leases count VIEWERS, not viewers-of-one
+
+`self._cvx_tiles` is `sid -> {viewer: last renew}`, where a viewer is a window
+(`"main"` / `"camwin"`). A CV-X has one session, so a second window watching a
+camera **joins** that session rather than dialling beside it — `cvx_tile_start`
+is idempotent per ip and just adds a viewer. `cvx_tile_sync` renews only the
+window that asked; `cvx_tile_stop` drops that window's lease and stops the
+session only once **nobody** holds one; the reaper expires viewers
+individually and collects the session when the last goes.
+
+Without the count, flipping the lens in one window hung up a camera the other
+window was showing, and the box went dark for no reason a tech could see.
+
+**Eager release is reserved for what a person asked for.** The CV-X switch, the
+wall picker and closing a box all call `camFeed.release()` by name and free the
+slot instantly. Incidental surface churn does **not** — guessing orphans from
+the DOM is a race that was lost twice (a surface leaves mid-repaint, just as
+the same cameras are about to come back; and a camera watched in another window
+is not in this document at all). Both guesses hung up a live camera and made
+something redial it. Churn is left to the reaper, which already knows about
+every window.
 
 ### The one-controller rule, and where the slot can leak
 

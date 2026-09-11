@@ -474,6 +474,24 @@
       });
       return;
     }
+    /* the camera window is nothing but the float layer: no library, no tabs,
+       no routing. It needs the settings (theme, text size) and the library's
+       cameras, and then camfloat fills it from the slots that came across. */
+    if (BV.camWin) {
+      document.title = "backupviewer · cameras";
+      BV.theme.load().catch(function () {}).then(function () {
+        return BV.api.call("get_settings").catch(function () { return null; });
+      }).then(function (settings) {
+        BV.state.settings = settings || {};
+        BV.uiPrefs.apply(BV.state.settings);
+        return BV.camFloats.bootWindow();
+      }).catch(function (e) {
+        document.getElementById("view").innerHTML =
+          '<div class="empty-lib">could not open the camera window: ' +
+          BV.esc(e && e.message) + "</div>";
+      });
+      return;
+    }
     BV.api.call("get_version").then(function (v) {
       BV.state.version = v;
       updateStatus();

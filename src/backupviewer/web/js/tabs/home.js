@@ -25,6 +25,11 @@
   var _camPickBtn = null;       /* the cam lens's wall picker button (cam lens only) */
   var _camPickPanel = null;     /* the picker's open drop panel, for the toggle */
   var _floatBtn = null;         /* the cam lens's floating-boxes control (cam lens only) */
+  var _popBtn = null;           /* "pop out · n" — shown while cameras are ticked */
+  /* the cam lens's own selection. A second checklist rather than the robot one
+     (_cl): the two lenses select different KINDS of thing, and a stale robot
+     tick must never turn into a camera about to be popped out. */
+  var _camCl = BV.checklist({ onChange: syncPopBtn });
   var _warnedTruncated = false; /* the scan-cap warning toast fires once per session */
   var _visibleRobots = [];      /* the currently-rendered robots — the sticky toolbar's scope */
   var _sortMode = "";           /* name | ip | date; lazily read from settings (lib_sort) */
@@ -199,6 +204,33 @@
       _floatBtn.classList.toggle("hidden", !cam);
       syncFloatBtn();
     }
+    /* leaving the cam lens drops the camera selection outright: a tick left
+       behind would be a camera the next visit pops out without being asked */
+    if (!cam && _camCl.size()) { _camCl.clear(); _camCl.sync(); }
+    syncPopBtn();
+  }
+
+  /* "pop out · n", shown only while something is ticked - an action with
+     nothing to act on is gone entirely, not greyed */
+  function syncPopBtn() {
+    if (!_popBtn) return;
+    var n = _camCl.size();
+    var cam = viewMode() === "multicam";
+    _popBtn.classList.toggle("hidden", !cam || !n);
+    _popBtn.textContent = "pop out · " + n;
+    _popBtn.title = "put the " + n + " selected camera" + (n === 1 ? "" : "s") +
+      " into floating boxes";
+  }
+
+  /* every ticked camera into a box, then arrange them - popping four out one
+     at a time and leaving them stacked is not what "pop these out" means */
+  function popOutSelected() {
+    var ids = _camCl.selected();
+    if (!ids.length) return;
+    ids.forEach(function (id) { BV.camFloats.popOut(id); });
+    _camCl.clear(); _camCl.sync();
+    BV.camFloats.tileThem();
+    syncPopBtn();
   }
 
   /* the count is the whole point of this control: a camera that left the wall
@@ -844,6 +876,11 @@
       id: "lib-cam-float", "aria-haspopup": "true" }, "floating · 0");
     _floatBtn.addEventListener("click", function () {
       BV.menu(_floatBtn, [
+        { label: "move them to their own window",
+          title: "the boxes move into a camera window of their own, leaving "
+                 + "this one free for the backup work",
+          onClick: function () { BV.camFloats.toWindow(); } },
+        { sep: true },
         { label: "tile them across the screen",
           onClick: function () { BV.camFloats.tileThem(); } },
         { label: "close every floating box",
@@ -851,6 +888,12 @@
       ]);
     });
     syncFloatBtn();
+    /* select tiles, then press this - "pop out the ones I ticked", which is
+       the whole reason the tiles gained a checkbox */
+    _popBtn = BV.el("button", { class: "btn lib-cam-popout hidden",
+      id: "lib-cam-popout" }, "pop out · 0");
+    _popBtn.addEventListener("click", popOutSelected);
+    syncPopBtn();
     headActs.appendChild(fnBtn);
     headActs.appendChild(sortBtn);
     headActs.appendChild(cancelAll);
@@ -859,6 +902,7 @@
     headActs.appendChild(addBtn);
     head.appendChild(headActs);
     head.appendChild(selActs);
+    head.appendChild(_popBtn);
     head.appendChild(_floatBtn);
     head.appendChild(_camPickBtn);
     head.appendChild(_cvxLiveBtn);
@@ -1862,6 +1906,16 @@
        at all — which is what makes "a floating camera is fetched exactly
        once" true by construction rather than by a guard. */
     var floated = BV.camFloats.has(c.id);
+    /* the same checkbox every other list in the app uses, so shift+click
+       ranges and selection-surviving-a-repaint come from BV.checklist rather
+       than a second implementation. Only on tiles there is something to do
+       with: a camera with no IP, or one already in a box, is not poppable. */
+    if (ip && !floated) {
+      var selBox = BV.el("input", { type: "checkbox", class: "lf-check cam-check",
+        title: "select (shift+click selects a range) — then “pop out”" });
+      _camCl.bind(selBox, c.id);
+      box.appendChild(selBox);
+    }
     if (floated) {
       tile.classList.add("floating");
       box.appendChild(BV.el("div", { class: "cam-tile-note" }, "floating ↗"));
@@ -1909,14 +1963,21 @@
     tile.addEventListener("contextmenu", function (e) {
       e.preventDefault();
       if (!ip) { BV.toast("this camera has no IP on record"); return; }
-      BV.menu({ x: e.clientX, y: e.clientY }, [
+      var items = [
         floated
           ? { label: "find its floating box",
               onClick: function () { BV.camFloats.focusCam(c.id); } }
           : { label: "pop out into a floating box",
               onClick: function () { BV.camFloats.popOut(c.id); } },
-        { label: "remote operation", onClick: function () { tile.click(); } },
-      ]);
+      ];
+      /* a selection outranks the tile under the cursor: if you ticked six
+         cameras, "pop out" means those six */
+      if (_camCl.size() > 1 || (_camCl.size() === 1 && !_camCl.has(c.id))) {
+        items.unshift({ label: "pop out the " + _camCl.size() + " selected",
+                        onClick: popOutSelected });
+      }
+      items.push({ label: "remote operation", onClick: function () { tile.click(); } });
+      BV.menu({ x: e.clientX, y: e.clientY }, items);
     });
     tile.addEventListener("click", function () {
       if (!ip) { BV.toast("this camera has no IP on record"); return; }

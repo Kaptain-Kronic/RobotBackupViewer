@@ -258,6 +258,20 @@ one click backs up the robot + all its cameras together.
   See §7 of `docs/subsystems/remote-mobile.md` for why three separate test
   gaps let this reach a plant floor.
 
+- ✅ **The camera window, and multi-select pop-out** (`cam-floats`) — tick
+  several tiles (the shared checklist, so shift+click ranges work) and **pop
+  out · N** puts them all into boxes; *move them to their own window* hands the
+  boxes to a second OS window that holds nothing but cameras, leaving the main
+  window for the backup work. This is what made tile leases count **viewers**:
+  `_cvx_tiles` is `sid -> {viewer: renew}`, a second window JOINS a session
+  rather than dialling beside it, and a session stops only when nobody holds a
+  lease — without it, a lens flip in one window blacked out a camera the other
+  was showing. Eager release is now reserved for what a person asked for (the
+  CV-X switch, the picker, closing a box); incidental churn goes to the reaper,
+  because guessing orphans from the DOM is a race that was lost twice. Still
+  owed: closing the camera window closes its boxes rather than handing them
+  back to the main window, and Matrox control in a box is still unbuilt.
+
 - ✅ **Floating camera boxes** (`cam-floats`) — a 150 px tile is not big
   enough to read a camera's screen from a step away, and the workaround was
   four remotes in four OS windows arranged by hand. Right-click a tile to pop

@@ -41,6 +41,12 @@
   var DIRS = ["n", "s", "e", "w", "ne", "nw", "se", "sw"];
 
   var _layer = null, _ghost = null, _boxes = [], _wired = false;
+  /* Stacking is a z-index, NEVER DOM order. Raising by re-appending the node
+     looks equivalent and is not: raise() runs on every mousedown, and
+     re-inserting the element that received the press aborts the click the
+     browser was about to fire - so the bar's lock and close buttons silently
+     did nothing while dragging (mousedown/move/up, no click) worked fine. */
+  var _zTop = 0;
 
   function rootFs() {
     return parseFloat(getComputedStyle(document.documentElement).fontSize) || 14;
@@ -276,7 +282,7 @@
       if (i >= 0 && i !== _boxes.length - 1) {
         _boxes.splice(i, 1); _boxes.push(self);
       }
-      if (el.parentNode) el.parentNode.appendChild(el);   /* last child = on top */
+      el.style.zIndex = ++_zTop;    /* never appendChild: see _zTop above */
     };
     /* "this one" — the wall's placeholder tile uses it to point at its box */
     self.flash = function () {

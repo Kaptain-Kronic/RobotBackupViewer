@@ -44,6 +44,13 @@
   }
   function nextId() { return "f" + (++_seq) + "_" + Date.now().toString(36); }
   var save = BV.debounce(function () {
+    /* the camera window pushes its arrangement to python instead of the
+       settings key: two windows writing one key would race and clobber each
+       other, and python is already the thing that knows the window exists */
+    if (BV.camWin) {
+      BV.api.call("cam_window_push", slots()).catch(function () {});
+      return;
+    }
     if (BV.state.settings) BV.state.settings[KEY] = slots();
     BV.api.call("set_setting", KEY, slots()).catch(function () {});
   }, 500);
@@ -218,6 +225,7 @@
     }
     live.paintCtl = paintCtl;
     live.controlling = function () { return ctl.on; };
+    live.release = function () { return releaseControl(); };
 
     function takeControl() {
       if (ctl.on || !ip || !isCvx(cam)) return;
@@ -259,7 +267,8 @@
       note.textContent = BV.camFeed.NOTE.wait;
       paintCtl();
       box.setStatus("");
-      return BV.api.call("cvx_tile_yield", sid).then(function (r) {
+      return BV.api.call("cvx_tile_yield", sid,
+        BV.camWin ? "camwin" : "main").then(function (r) {
         BV.camFeed.give(ip, { sid: r.session_id, shotUrl: r.shot_url,
                               streamUrl: r.stream_url });
         img._camDue = 0;
@@ -348,12 +357,13 @@
   /* floats belong to the library screen: anywhere else they park, which is the
      same contract a remote chip has on every route */
   function onLibrary() {
+    if (BV.camWin) return true;   /* the layer IS this window */
     return (location.hash || "#home").indexOf("#home") === 0;
   }
 
   /* The slot leaves the list FIRST: destroy() calls the box's onClose, which
      lands straight back in here, and a missing slot is what stops that. */
-  function drop(id) {
+  function drop(id, keep) {
     var list = slots();
     var i = list.findIndex(function (s) { return s.id === id; });
     if (i < 0) return;
@@ -367,7 +377,11 @@
        a full session. */
     var owned = b && b.shutdown ? b.shutdown() : null;
     if (b && b.box) b.box.destroy(true);
-    if (owned) BV.api.call("cvx_remote_stop", owned).catch(function () {});
+    /* keep = this box is MOVING (to the camera window), so the session has to
+       survive the move - handing it back here would cost a redial at the other
+       end and a dark box while the controller settles */
+    if (keep) { /* the other window joins the same session */ }
+    else if (owned) BV.api.call("cvx_remote_stop", owned).catch(function () {});
     /* nothing else may be watching that camera: hand the slot straight back
        rather than making the controller wait out the TTL */
     else if (cam && isCvx(cam) && ipOf(cam)) BV.camFeed.release([ipOf(cam)]);
@@ -402,7 +416,61 @@
     return "";
   }
 
+  /* ---- the camera window -------------------------------------------------
+     Boot: take the slots that came across from the main window, look the
+     cameras up in the library, and paint. The bar is deliberately thin - add
+     a camera, arrange, close - because everything else about this window is
+     the boxes. */
+  function bootWindow() {
+    return BV.api.call("cam_window_slots").then(function (r) {
+      _slots = (r && r.slots) || [];
+      _slots.forEach(function (x) { if (!x.id) x.id = nextId(); });
+      return BV.api.call("lib_list");
+    }).then(function (data) {
+      var cams = ((data && data.robots) || []).filter(function (c) {
+        return (c.device_type || "").indexOf("camera") === 0;
+      });
+      document.body.classList.add("camwin-ready");
+      buildWindowBar(cams);
+      BV.camFloats.sync(cams);
+      if (!slots().length) BV.camFloats.tileThem();
+    });
+  }
+
+  function buildWindowBar(cams) {
+    var bar = BV.el("div", { class: "camwin-bar" });
+    var addBtn = BV.el("button", { class: "btn", type: "button" }, "+ add a camera");
+    addBtn.addEventListener("click", function () {
+      BV.menu(addBtn, cams.map(function (c) {
+        return {
+          label: (c.robot || ipOf(c) || "(unnamed)"),
+          active: BV.camFloats.has(c.id),
+          onClick: function () { BV.camFloats.popOut(c.id); },
+        };
+      }));
+    });
+    var tileBtn = BV.el("button", { class: "btn", type: "button" }, "tile them");
+    tileBtn.addEventListener("click", function () { BV.camFloats.tileThem(); });
+    var closeBtn = BV.el("button", { class: "btn", type: "button" }, "close all");
+    closeBtn.addEventListener("click", function () { BV.camFloats.closeAll(); });
+    var count = BV.el("span", { class: "camwin-count" });
+    bar.appendChild(BV.el("span", { class: "camwin-title" }, "cameras"));
+    bar.appendChild(count);
+    bar.appendChild(BV.el("span", { style: "margin-left:auto" }));
+    bar.appendChild(addBtn);
+    bar.appendChild(tileBtn);
+    bar.appendChild(closeBtn);
+    document.body.insertBefore(bar, document.body.firstChild);
+    function paint() {
+      var n = slots().length;
+      count.textContent = n ? n + " box" + (n === 1 ? "" : "es") : "no cameras yet";
+    }
+    BV.state.on("camfloats", paint);
+    paint();
+  }
+
   BV.camFloats = {
+    bootWindow: bootWindow,
     /* home.js hands over the library's cameras on every paint: that is when a
        saved arrangement can first be rebuilt, and when a camera that left the
        library stops being findable */
@@ -478,5 +546,36 @@
     },
     /* the probe and the wall both need to know who is driving */
     armed: function () { return _armed; },
+    /* Hand the boxes to a window of their own. They MOVE: this window's slots
+       go empty, the arrangement rides across in the call, and the camera
+       window opens already holding it. Both windows then feed cameras happily
+       - python counts viewers per tile session, so the wall here can keep
+       tiling a camera the box over there is showing. */
+    toWindow: function () {
+      var list = slots().slice();
+      if (!list.length) { BV.toast("nothing is floating yet"); return; }
+      /* a box that is DRIVING gives control back first: it goes across
+         view-only, and the yield leaves the session leased rather than stopped */
+      var ready = list.map(function (x) {
+        var b = _boxes[x.id];
+        return (b && b.controlling && b.controlling() && b.release)
+          ? b.release() : Promise.resolve();
+      });
+      Promise.all(ready).then(function () {
+        return BV.api.call("cam_window_open", list);
+      }).then(function (r) {
+        /* close them HERE only once the window is really up, or a failure
+           would lose the arrangement with nothing to show for it. keep=true:
+           the sessions move with the boxes, so this costs no dial at either
+           end - the other window JOINS them (cvx_tile_start is idempotent per
+           ip and counts viewers). */
+        list.forEach(function (x) { drop(x.id, true); });
+        BV.toast(r && r.opened === false
+          ? "the camera window already had them"
+          : "moved to the camera window");
+      }).catch(function (e) {
+        BV.toast("could not open the camera window: " + e.message);
+      });
+    },
   };
 })();

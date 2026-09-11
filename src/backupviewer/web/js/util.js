@@ -124,11 +124,16 @@ window.BV = {};
      pop-out has no statusbar) - both answer 0 for that edge. */
   BV.chromeInset = function () {
     var fs = BV.fullscreen.active();
-    var tb = document.getElementById("topbar");
+    /* the camera window hides the app's chrome and puts its own slim bar in
+       its place - measure whichever one this window actually has, or the
+       float layer covers the bar it is supposed to sit under */
+    var tb = document.querySelector(".camwin-bar") ||
+             document.getElementById("topbar");
     var sb = document.getElementById("statusbar");
+    var sbShown = sb && sb.offsetParent !== null;
     return {
       top: (fs || !tb) ? 0 : tb.getBoundingClientRect().bottom,
-      bottom: (fs || !sb) ? 0 : sb.offsetHeight,
+      bottom: (fs || !sbShown) ? 0 : sb.offsetHeight,
     };
   };
 

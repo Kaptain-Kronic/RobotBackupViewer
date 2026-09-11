@@ -2746,6 +2746,7 @@ text.v3-ax-z { fill: var(--accent); }
 }
 .fbox-ghost {
   position: absolute; pointer-events: none; border-radius: var(--radius);
+  z-index: 0;   /* boxes stack from 1: the preview belongs behind them */
   border: 2px dashed var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
@@ -2811,8 +2812,16 @@ button.fbox-title:hover { background: var(--panel); }
 .fbox-screen.dark img { visibility: hidden; }
 
 /* eight grips. px, not rem: these are resizer hit areas, the one place this
-   sheet already writes px (see the pane resizers above). */
-.fbox-rz { position: absolute; }
+   sheet already writes px (see the pane resizers above).
+
+   The grips come after the bar in DOM order, so without a z-order they paint
+   OVER it: rz-ne is 14px square exactly where the ✕ sits, and rz-n is an 8px
+   strip across the top of the lock and close buttons. Dead centre of each
+   button stayed clear, which is why this looked fine - the corners did not.
+   The bar's BUTTONS therefore sit above the grips; the status text and the
+   spacer stay under, so most of the top edge is still grabbable to resize. */
+.fbox-rz { position: absolute; z-index: 1; }
+.fbox-bar button { position: relative; z-index: 2; }
 .fbox.locked .fbox-rz { display: none; }
 .fbox-rz-n { top: -3px; left: 10px; right: 10px; height: 8px; cursor: ns-resize; }
 .fbox-rz-s { bottom: -3px; left: 10px; right: 10px; height: 8px; cursor: ns-resize; }
@@ -2827,6 +2836,17 @@ button.fbox-title:hover { background: var(--panel); }
    reflows under you, but quiet and carrying no <img> at all - which is what
    makes "the picture is only ever fetched once" true by construction rather
    than by a guard somewhere. */
+/* the tile's select box: out of the way until you go looking for it, and
+   plainly there once it is ticked or the tile is under the cursor.
+   (.cam-tile-box is already position:relative, up in the tile block.) */
+.cam-check {
+  position: absolute; top: 0.3rem; left: 0.3rem; z-index: 2;
+  opacity: 0; transition: opacity var(--trans);
+}
+.cam-tile:hover .cam-check, .cam-tile:focus-within .cam-check,
+.cam-check:checked { opacity: 1; }
+.cam-tile:has(.cam-check:checked) { outline: 2px solid var(--accent); outline-offset: -2px; }
+
 .cam-tile.floating { cursor: pointer; }
 .cam-tile.floating .cam-tile-box { opacity: 0.5; }
 .cam-tile.floating .cam-tile-note { display: block; color: var(--accent); }
@@ -2838,3 +2858,20 @@ button.fbox-title:hover { background: var(--panel); }
 .fbox-ctl.armed { color: var(--bg); background: var(--accent); border-color: var(--accent); }
 .fbox.armed { box-shadow: 0 0 0 2px var(--accent), 0 10px 40px rgba(0, 0, 0, 0.55); }
 .fbox-screen.drivable { cursor: crosshair; }
+
+/* ---- the camera window (#camwall) ----
+   A second OS window that is nothing but the float layer: the app's chrome is
+   gone, a slim bar sits where the topbar was, and BV.chromeInset measures that
+   bar (it carries #topbar's id-free shape) so the layer fills the rest. */
+body.camwin #chrome-top, body.camwin #chrome-bottom,
+body.camwin #topbar, body.camwin #statusbar, body.camwin #view { display: none; }
+body.camwin { background: var(--bg); overflow: hidden; }
+.camwin-bar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 71;
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.35rem 0.55rem; background: var(--bg2);
+  border-bottom: 1px solid var(--edge);
+}
+.camwin-title { color: var(--text); font-size: 0.86rem; font-weight: 600; }
+.camwin-count { color: var(--sub); font-size: 0.75rem; }
+.camwin-bar .btn { padding: 0.12rem 0.5rem; font-size: 0.75rem; }
