@@ -170,6 +170,64 @@ def test_adopt_retires_a_leased_corpse(api):
     assert sid not in api._cvx and sid not in api._cvx_tiles
 
 
+# -- yield: control handed back, without letting go of the slot ---------------------
+
+def test_yield_demotes_back_to_a_lease(api):
+    """A floating box that took control and gave it up hands the picture back
+    to the wall's beat. The controller's single remote slot must never be let
+    go of on the way: stop-and-redial would free it and then race for it."""
+    sid = _tile(api)["session_id"]
+    api.cvx_tile_adopt(sid)
+    d = api.cvx_tile_yield(sid)["data"]
+    assert d["session_id"] == sid
+    assert d["shot_url"].endswith(cvx_remote.SHOT_PATH + sid)   # back on the still
+    assert api._cvx[sid].video_only is True                     # view-only again
+    assert sid in api._cvx_tiles                                # leased again
+    assert FakeSession.started == ["192.0.2.61"]                # and never redialled
+    assert not api._cvx[sid].stopped
+    # view-only means view-only: the mouse is refused again
+    assert api.cvx_remote_mouse(sid, 0, 10, 10, 1)["error"]["code"] == "VIEW_ONLY"
+
+
+def test_yield_puts_it_back_under_the_reaper(api):
+    """The whole point of a lease is that something collects it. A session
+    yielded in a run where no tile was ever dialled would otherwise sit in a
+    registry with no reaper running and hold the slot until the app exits."""
+    sid = _tile(api)["session_id"]
+    api.cvx_tile_adopt(sid)
+    api.cvx_tile_yield(sid)
+    api._reap_cvx_tiles(time.monotonic() + api_mod.CVX_TILE_TTL + 1)
+    assert sid not in api._cvx and sid not in api._cvx_tiles
+    assert api._cvx_tile_reaper is not None
+
+
+def test_yield_is_idempotent(api):
+    sid = _tile(api)["session_id"]
+    assert api.cvx_tile_yield(sid)["ok"]      # already leased: just re-stamps
+    assert api.cvx_tile_yield(sid)["ok"]
+    assert sid in api._cvx_tiles and api._cvx[sid].video_only is True
+
+
+def test_yield_of_a_dead_session_retires_it(api):
+    sid = _tile(api)["session_id"]
+    api.cvx_tile_adopt(sid)
+    api._cvx[sid].alive = False
+    r = api.cvx_tile_yield(sid)
+    assert r["error"]["code"] == "NO_SESSION"
+    assert sid not in api._cvx and sid not in api._cvx_tiles
+
+
+def test_yield_round_trip_leaves_exactly_one_session(api):
+    """start -> adopt -> yield -> sync: one live session throughout, one dial."""
+    sid = _tile(api)["session_id"]
+    api.cvx_tile_adopt(sid)
+    api.cvx_tile_yield(sid)
+    alive = api.cvx_tile_sync([sid])["data"]
+    assert alive[sid]["alive"] is True
+    assert len(api._cvx) == 1 and len(api._cvx_tiles) == 1
+    assert FakeSession.started == ["192.0.2.61"]
+
+
 # -- the still url: a wall polls, it does not hold streams open ---------------------
 
 def test_start_offers_a_still_url_beside_the_stream(api):

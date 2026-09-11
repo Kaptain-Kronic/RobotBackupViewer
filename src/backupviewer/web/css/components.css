@@ -2830,3 +2830,11 @@ button.fbox-title:hover { background: var(--panel); }
 .cam-tile.floating { cursor: pointer; }
 .cam-tile.floating .cam-tile-box { opacity: 0.5; }
 .cam-tile.floating .cam-tile-note { display: block; color: var(--accent); }
+
+/* a box in CONTROL is holding a controller's single remote slot, and an ARMED
+   one has the tech's mouse on the camera - both have to be obvious at a glance
+   across a screen of boxes, because neither is a state to be in by accident. */
+.fbox-ctl.on { color: var(--warn); border-color: var(--warn); }
+.fbox-ctl.armed { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+.fbox.armed { box-shadow: 0 0 0 2px var(--accent), 0 10px 40px rgba(0, 0, 0, 0.55); }
+.fbox-screen.drivable { cursor: crosshair; }

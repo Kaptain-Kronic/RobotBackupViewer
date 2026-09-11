@@ -258,6 +258,28 @@ one click backs up the robot + all its cameras together.
   See §7 of `docs/subsystems/remote-mobile.md` for why three separate test
   gaps let this reach a plant floor.
 
+- ✅ **Floating camera boxes** (`cam-floats`) — a 150 px tile is not big
+  enough to read a camera's screen from a step away, and the workaround was
+  four remotes in four OS windows arranged by hand. Right-click a tile to pop
+  it out onto a layer over the wall: drag, magnet-snap to corners/edges with a
+  ghost preview, resize, zoom, lock, and swap which camera a box shows. The
+  design rests on two facts. **Popping out costs zero dials** — the box and its
+  tile are two views of one leased session (`BV.camFeed`), and the wall keeps
+  the tile in place as a placeholder carrying no `<img>`, so a camera is
+  fetched exactly once by construction rather than by a guard. And **control is
+  opt-in, one box at a time** — view-only until pressed, then one click arms
+  the mouse; arming a second box releases the first with its button lifted, and
+  giving control back goes through `cvx_tile_yield` (the new inverse of
+  `cvx_tile_adopt`) so the controller's single slot is never let go of and
+  raced for. Geometry is stored as fractions of the layer plus a snap zone, so
+  a window resize re-derives rather than drifts. Pinned by
+  `tests/ui_camfloat_probe.py` (45 checks), including the two leaks that are
+  invisible in review: a box closed mid-drive (where `cvx_tile_stop` is a
+  deliberate no-op and hands back nothing), and a `take` whose `adopt` then
+  fails. Natural next slice if wanted: **Matrox control in a box** — the same
+  sandboxed operator-page iframe `mtxremote.js` builds, extracted rather than
+  copied.
+
 - ✅ **Pick which cameras tile** (`cam-pick`) — a wall of sixty tiles is not
   the wall a tech watching one line wants, so the cam lens's toolbar gained a
   **cameras** button beside the CV-X switch: a drop panel of the wall's own

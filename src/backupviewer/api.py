@@ -3173,6 +3173,35 @@ class Api:
                 "stream_url": f"http://127.0.0.1:{port}/cvx/{session_id}",
                 "screen": {"w": cvx_remote.SCREEN_W, "h": cvx_remote.SCREEN_H}}
 
+    @_endpoint
+    def cvx_tile_yield(self, session_id: str):
+        """The inverse of cvx_tile_adopt: demote a promoted session back to a
+        view-only tile lease. A floating box that took CONTROL of a camera and
+        then gave it up must hand the picture back to the wall's beat WITHOUT
+        letting go of the controller's single remote slot - stop-and-redial
+        would free that slot and then race whoever else wants it.
+
+        Idempotent, like cvx_tile_start: an already-leased sid just re-stamps.
+        Starts the reaper if it is not running yet, because a session can be
+        yielded in a run where no tile was ever dialled, and a lease with
+        nothing reaping it is a slot held until the app exits."""
+        sess = self._cvx.get(session_id)
+        if sess is None or not sess.alive:
+            if sess is not None:
+                # dead: retire the corpse rather than stranding it, exactly as
+                # cvx_tile_adopt does on the way in
+                self._cvx.pop(session_id, None)
+                sess.stop()
+            raise ApiError("NO_SESSION", "that session is gone")
+        sess.video_only = True
+        with self._cvx_tiles_lock:
+            self._cvx_tiles[session_id] = time.monotonic()
+            if self._cvx_tile_reaper is None:
+                self._cvx_tile_reaper = threading.Thread(
+                    target=self._cvx_tile_reap_loop, name="cvx-tile-reaper", daemon=True)
+                self._cvx_tile_reaper.start()
+        return self._cvx_tile_shape(session_id, sess)
+
     # -- Matrox live remote (the camera's own web UI) ---------------------------------
     # A Matrox camera is operated through the web page it serves on port 80, so
     # "remote" = that page. Preferred: embed it in an in-app overlay (iframe).

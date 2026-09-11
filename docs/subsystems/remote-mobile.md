@@ -23,6 +23,15 @@ zoom** (never forwarded to the device); and the MJPEG server's framing was
 fixed to close every part **eagerly** (§4a, §7 — the frozen-until-input bug).
 The NAV_KEYS fullscreen tab-guard is retired (closing section).*
 
+*Updated 2026-09-11 by the floating-boxes pass (branch `cam-floats`): §1 gains
+a SIXTH surface and the one-controller rule that goes with it. Three promotions
+landed under it and both remotes were converted onto them rather than copied -
+`BV.camFeed` (the wall's beat, now shared with the floats), `BV.cvxMouse` (the
+only mouse path to a live controller), `BV.zoomStage` and `BV.chromeInset` -
+and `cvx_tile_yield` joins `cvx_tile_adopt` as its inverse. The proof each
+extraction was faithful is that `ui_cvxremote_probe` and `ui_camwall_probe`
+pass unmodified; the new surface has `tests/ui_camfloat_probe.py`.*
+
 Covers: src/backupviewer/cvx_remote.py, src/backupviewer/phoneview.py,
 src/backupviewer/qr.py, src/backupviewer/screengrab.py,
 src/backupviewer/cvx_handshake/chan8502_tx.bin,
@@ -30,8 +39,12 @@ src/backupviewer/cvx_handshake/chan8503_tx.bin,
 src/backupviewer/cvx_handshake/chan8504_tx.bin,
 src/backupviewer/web/js/cvxremote.js,
 src/backupviewer/web/js/mtxremote.js,
-src/backupviewer/web/js/phoneview.js
-(10 files)
+src/backupviewer/web/js/phoneview.js,
+src/backupviewer/web/js/camfloat.js,
+src/backupviewer/web/js/components/camfeed.js,
+src/backupviewer/web/js/components/cvxmouse.js,
+src/backupviewer/web/js/components/floatbox.js
+(14 files)
 
 > **Template note.** The ten-section shape is kept, **including §6 Failure
 > modes**. Doc #3's refined keep-rule — keep §6 when the subsystem must
@@ -70,7 +83,7 @@ src/backupviewer/web/js/phoneview.js
 
 ## 1. What it is
 
-Five ways to put a live camera picture — or a live camera *screen* — in front
+Six ways to put a live camera picture — or a live camera *screen* — in front
 of a tech standing at the equipment, none of which exist while the app is only
 reading a backup. All of them vanish when there is nothing to drive:
 
@@ -114,9 +127,50 @@ reading a backup. All of them vanish when there is nothing to drive:
    (`home.js openCamPick`) — the cameras it takes off leave the grid, and any
    CV-X among them is hung up on the spot rather than left to the reaper.
 
+6. **The floating boxes** (`camfloat.js` + `components/floatbox.js`) — a wall
+   tile is 150 px tall, which is not big enough to read a camera's screen from
+   a step away, so right-clicking one pops it out into a box on a layer over
+   the wall: drag it, magnet it to a corner or edge, resize it, zoom inside it,
+   lock it in place, swap which camera it shows. Two facts carry the whole
+   design. **A float and the tile it came from are two views of ONE leased
+   session** — both are fed by `BV.camFeed` off the same lease map, so popping
+   a camera out costs **zero dials** and the wall renders the floated camera as
+   a placeholder carrying no `<img>` at all (fetched exactly once by
+   construction, not by a guard). And **control is opt-in, one box at a time**:
+   a float is view-only until *control* is pressed, which promotes the leased
+   session through `cvx_tile_adopt`, swaps the 2 s still for the MJPEG stream
+   and mounts `BV.cvxMouse`; one click inside then *arms* it, and only an armed
+   box forwards anything. Giving control back goes through the new
+   `cvx_tile_yield` (§3) — demote to a lease rather than stop-and-redial, so
+   the controller's single slot is never let go of and raced for.
+
 The subsystem's centre of gravity is the CV-X protocol; the rest is
 comparatively ordinary once the trust posture is stated. Everything below
 spends its length accordingly.
+
+### The one-controller rule, and where the slot can leak
+
+A CV-X has exactly one remote slot, and this surface has the most ways to lose
+it, so they are enumerated rather than left to be rediscovered:
+
+- **`cvx_tile_stop` is a deliberate no-op for a non-tile sid** (`api.py`, so a
+  tile release can never hang up an overlay). A box that took control holds a
+  *promoted* session, so tearing it down with `cvx_tile_stop` hands back
+  nothing, in silence. `camfloat.js drop()` calls `cvx_remote_stop` for a
+  controlling box and `camFeed.release` only for a view-only one; the probe's
+  `control.closing_while_driving_frees_the_slot` is what keeps that true.
+- **`camFeed.take(ip)` removes the lease before `cvx_tile_adopt` is asked.** If
+  the adopt then fails, the session is in neither registry and the reaper no
+  longer knows about it — so the `.catch` must `camFeed.give(ip, lease)` back
+  before surfacing the error.
+- **A failed `cvx_tile_yield` falls back to `cvx_remote_stop`**, for the same
+  reason: a session that is neither leased nor owned is collected by nothing.
+- **`cvx_tile_yield` starts the reaper if it is not running.** A session can be
+  yielded in a run where no tile was ever dialled, and a lease with nothing
+  reaping it is a slot held until the app exits.
+- **Parking never yields control.** Routing off the library drops the MJPEG
+  connection (`img.src = ""`) but keeps the session — you come back to the box
+  you left, still in control.
 
 ## 2. The files
 

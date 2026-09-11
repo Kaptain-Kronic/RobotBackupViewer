@@ -1,6 +1,39 @@
 # Changelog
 
 ## unreleased — backups drag in and export out, the statusbar finds the switch, a program plays in 3d, the camera wall lights up all the way down, and a matrox pull brings home its photo history
+- **The camera wall grows floating boxes.** A tile is 150 px tall, which is not
+  big enough to read a camera's screen from a step away — the workaround was
+  four camera remotes opened into their own OS windows and arranged by hand,
+  losing the pick, the shared beat and the layout every restart. Now
+  **right-click a tile → pop out into a floating box**: drag it by its bar,
+  magnet it to a corner or an edge (with a ghost preview of the zone it will
+  take), resize it from any of eight grips, ctrl+scroll to zoom inside it, and
+  lock it where it is. The bar's title swaps which camera the box shows, so an
+  arrangement outlives its contents, and `floating · N` on the cam toolbar
+  carries the count with *tile them* / *close all*. Boxes park when you leave
+  the library and come back exactly where you left them.
+  **Popping a camera out costs zero dials**: the box and the tile it came from
+  are two views of one leased session, so a CV-X controller is never asked for
+  a second remote slot it does not have. The wall keeps the tile in place but
+  renders it as a quiet placeholder with no `<img>` in it at all — the camera
+  is fetched exactly once by construction, and the grid never reflows under a
+  tech mid-look.
+  **Control is opt-in and one box at a time.** A float is view-only until you
+  press *control*, which promotes the leased session and swaps the 2 s still
+  for the live stream; one click inside then arms it, and only an armed box
+  forwards a mouse event. Arming a second box releases the first — button
+  included, so no camera is ever left mid-drag — and clicking away or `esc`
+  hands the mouse back to the app. Giving control back demotes the session to a
+  lease (`cvx_tile_yield`, the new inverse of `cvx_tile_adopt`) rather than
+  stopping and redialling, so the controller's single slot is never let go of
+  and raced for.
+  Under it: the wall's beat became `BV.camFeed` (one budget, one lease map,
+  shared by the wall and the floats), the CV-X mouse became `BV.cvxMouse`, and
+  `BV.zoomStage` / `BV.chromeInset` came out of the two remotes — all four are
+  promotions with both remotes converted onto them, not copies, and the
+  existing `ui_cvxremote_probe` / `ui_camwall_probe` passing unmodified is what
+  proves each extraction faithful.
+
 - **Export backups to a stick — the manage-backups modal grows a third tab.**
   Pick robots and/or cameras (grouped plant → line, tri-state select-alls,
   a robots/cameras/both filter), choose how many of each device's newest

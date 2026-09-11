@@ -28,6 +28,11 @@
   var _boxes = {};        /* slot id -> {box, img, note, zs, cam} */
   var _cams = [];         /* the library's cameras, supplied by home.js */
   var _seq = 0;
+  /* ONE box drives a camera at a time, app-wide. Not a technical limit - each
+     controller has its own slot - but a deliberate one: every box in control
+     is a slot taken off somebody standing at an HMI, and a wall of live
+     cursors is not a thing to hand a plant floor. */
+  var _armed = null;      /* slot id whose mouse is live */
 
   function slots() {
     if (_slots === null) {
@@ -42,6 +47,26 @@
     if (BV.state.settings) BV.state.settings[KEY] = slots();
     BV.api.call("set_setting", KEY, slots()).catch(function () {});
   }, 500);
+
+  /* one armed box app-wide: arming a second one releases the first, mouse
+     button included, so no camera is ever left mid-drag by a handover */
+  function disarmAll(except) {
+    Object.keys(_boxes).forEach(function (id) {
+      if (id !== except && _boxes[id].disarm) _boxes[id].disarm();
+    });
+  }
+  /* clicking away or esc gives the mouse back to the app. The click listener
+     is on the CAPTURE phase so it sees the press before anything swallows it,
+     and only ever DISARMS - arming is the box's own click. */
+  document.addEventListener("click", function (e) {
+    if (!_armed) return;
+    var b = _boxes[_armed];
+    if (b && b.box && b.box.el.contains(e.target)) return;
+    disarmAll();
+  }, true);
+  document.addEventListener("keydown", function (e) {
+    if (_armed && e.key === "Escape") { disarmAll(); e.stopPropagation(); }
+  }, true);
 
   function camById(id) {
     for (var i = 0; i < _cams.length; i++) if (_cams[i].id === id) return _cams[i];
@@ -84,10 +109,18 @@
       }));
     });
 
+    /* CONTROL is opt-in and CV-X only: a matrox is driven through its own web
+       page, which is the full remote's job, not a picture's. Taking control
+       promotes the leased view-only session into a real one (cvx_tile_adopt)
+       and swaps the 2s polled still for the live MJPEG stream - safe here
+       where it is not on the wall, because only one box controls at a time,
+       so exactly one of the browser's six per-origin connections is held. */
+    var ctlBtn = BV.el("button", { class: "btn fbox-ctl", type: "button" }, "control");
     var rlBtn = BV.el("button", { class: "btn", type: "button",
       title: "ask this camera for a fresh picture" }, "⟳");
     var zoomBtn = BV.el("button", { class: "btn fbox-zoom", type: "button",
       title: "view zoom — ctrl+scroll inside the box" }, "100%");
+    if (isCvx(cam)) box.slot.appendChild(ctlBtn);
     box.slot.appendChild(rlBtn);
     box.slot.appendChild(zoomBtn);
 
@@ -153,6 +186,120 @@
       BV.camFeed._pass();
     });
 
+    /* ---- control ---------------------------------------------------------
+       Three states, and the bar says which: view-only (the beat feeds a
+       still), controlling but DISARMED (live stream, mouse parked), and armed
+       (the mouse drives). One click inside the picture arms it; that click is
+       not forwarded, because cvxMouse asks armed() on mousedown and the arm
+       only lands on the click after it. */
+    var ctl = { sid: null, lease: null, streamUrl: "", on: false };
+    var mouse = BV.cvxMouse(screen, {
+      sid: function () { return ctl.sid; },
+      size: function () {
+        return { w: img.naturalWidth || 1024, h: img.naturalHeight || 768 };
+      },
+      enabled: function () { return _armed === slot.id; },
+    });
+    function paintCtl() {
+      var armed = _armed === slot.id;
+      ctlBtn.textContent = ctl.on ? (armed ? "driving" : "control · on") : "control";
+      ctlBtn.classList.toggle("on", ctl.on);
+      ctlBtn.classList.toggle("armed", armed);
+      ctlBtn.title = ctl.on
+        ? "giving up control hands this controller's remote slot back"
+        : "take control of this camera — it has ONE remote slot, so this takes "
+          + "it from whoever is at the HMI";
+      box.el.classList.toggle("armed", armed);
+      screen.classList.toggle("drivable", ctl.on);
+      if (ctl.on) {
+        box.setStatus(armed ? "driving · your mouse is on the camera"
+                            : "in control — click the picture to drive");
+      }
+    }
+    live.paintCtl = paintCtl;
+    live.controlling = function () { return ctl.on; };
+
+    function takeControl() {
+      if (ctl.on || !ip || !isCvx(cam)) return;
+      var lease = BV.camFeed.take(ip);   /* the beat stops feeding it: we own it now */
+      if (!lease || !lease.sid) {
+        BV.camFeed.give(ip, lease);
+        BV.toast("no live session to take control of yet");
+        return;
+      }
+      ctlBtn.disabled = true;
+      BV.api.call("cvx_tile_adopt", lease.sid).then(function (r) {
+        ctl.sid = r.session_id; ctl.lease = lease; ctl.on = true;
+        ctl.streamUrl = r.stream_url;
+        ctlBtn.disabled = false;
+        img.src = ctl.streamUrl + "?t=" + Date.now();
+        screen.classList.remove("wait", "dark");
+        arm();
+        paintCtl();
+      }).catch(function (e) {
+        /* the lease left the feed but nothing took it: hand it straight back,
+           or it is a session the reaper no longer knows about and the
+           controller's slot is held until the app exits */
+        BV.camFeed.give(ip, lease);
+        ctlBtn.disabled = false;
+        BV.toast("could not take control: " + e.message);
+      });
+    }
+    /* give it back WITHOUT letting go of the slot: cvx_tile_yield demotes the
+       session to a view-only lease, the beat picks it up again, and the wall
+       tile behind this box is live the moment it comes back */
+    function releaseControl() {
+      if (!ctl.on) return Promise.resolve();
+      var sid = ctl.sid;
+      mouse.release();                  /* never leave a camera mid-drag */
+      if (_armed === slot.id) _armed = null;
+      ctl.on = false; ctl.sid = null;
+      img.src = "";                     /* drop the MJPEG connection */
+      screen.classList.add("wait");
+      note.textContent = BV.camFeed.NOTE.wait;
+      paintCtl();
+      box.setStatus("");
+      return BV.api.call("cvx_tile_yield", sid).then(function (r) {
+        BV.camFeed.give(ip, { sid: r.session_id, shotUrl: r.shot_url,
+                              streamUrl: r.stream_url });
+        img._camDue = 0;
+      }).catch(function () {
+        /* a session that is neither leased nor owned is reaped by nothing:
+           end it rather than strand the controller's slot */
+        BV.api.call("cvx_remote_stop", sid).catch(function () {});
+      });
+    }
+    function arm() {
+      if (!ctl.on || _armed === slot.id) return;
+      disarmAll();
+      _armed = slot.id;
+      paintCtl();
+    }
+    live.disarm = function () {
+      if (_armed !== slot.id) return;
+      mouse.release();
+      _armed = null;
+      paintCtl();
+    };
+    /* parked (routed off the library, or an overlay covering us): drop the
+       stream but KEEP the session - you come back to the box you left */
+    live.park = function (on) {
+      if (!ctl.on) return;
+      if (on) { live.disarm(); img.src = ""; }
+      else if (ctl.streamUrl) img.src = ctl.streamUrl + "?t=" + Date.now();
+    };
+    live.shutdown = function () {
+      mouse.destroy();
+      if (!ctl.on) return null;
+      if (_armed === slot.id) _armed = null;
+      return ctl.sid;
+    };
+    ctlBtn.addEventListener("click", function () {
+      if (ctl.on) releaseControl(); else takeControl();
+    });
+    screen.addEventListener("click", function () { if (ctl.on) arm(); });
+    paintCtl();
+
     live.box = box; live.img = img; live.note = note; live.zs = zs;
     _boxes[slot.id] = live;
     if (slot.zoom && slot.zoom > 1) zs.setZoom(slot.zoom);
@@ -214,10 +361,16 @@
     list.splice(i, 1);
     var b = _boxes[id];
     delete _boxes[id];
+    /* a box that was CONTROLLING holds a promoted session, and cvx_tile_stop
+       is a deliberate no-op for a non-tile sid - calling it here would leak
+       the controller's slot in silence. cvx_remote_stop is the one that ends
+       a full session. */
+    var owned = b && b.shutdown ? b.shutdown() : null;
     if (b && b.box) b.box.destroy(true);
+    if (owned) BV.api.call("cvx_remote_stop", owned).catch(function () {});
     /* nothing else may be watching that camera: hand the slot straight back
        rather than making the controller wait out the TTL */
-    if (cam && isCvx(cam) && ipOf(cam)) BV.camFeed.release([ipOf(cam)]);
+    else if (cam && isCvx(cam) && ipOf(cam)) BV.camFeed.release([ipOf(cam)]);
     if (!slots().length) BV.floatLayer.show(false);
     changed();
   }
@@ -227,7 +380,10 @@
     var s = list.find(function (x) { return x.id === id; });
     if (!s || s.camId === camId) return;
     var old = camById(s.camId);
-    if (old && isCvx(old) && ipOf(old)) BV.camFeed.release([ipOf(old)]);
+    var b0 = _boxes[id];
+    var owned = b0 && b0.shutdown ? b0.shutdown() : null;
+    if (owned) BV.api.call("cvx_remote_stop", owned).catch(function () {});
+    else if (old && isCvx(old) && ipOf(old)) BV.camFeed.release([ipOf(old)]);
     s.camId = camId;
     var b = _boxes[id];
     if (b && b.box) b.box.destroy(true);
@@ -312,7 +468,15 @@
     /* called by the router on every route: show on the library, park anywhere
        else. Parking never disturbs the arrangement. */
     syncRoute: function () {
-      BV.floatLayer.show(!!slots().length && onLibrary());
+      var on = !!slots().length && onLibrary();
+      BV.floatLayer.show(on);
+      /* a controlling box drops its MJPEG connection while parked but KEEPS
+         the session: you come back to the box you left, still in control */
+      Object.keys(_boxes).forEach(function (id) {
+        if (_boxes[id].park) _boxes[id].park(!on);
+      });
     },
+    /* the probe and the wall both need to know who is driving */
+    armed: function () { return _armed; },
   };
 })();

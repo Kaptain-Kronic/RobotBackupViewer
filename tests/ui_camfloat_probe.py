@@ -99,6 +99,8 @@ class FakeCvxSession:
 
     def __init__(self, ip, **kw):
         self.ip = ip
+        self.mouse = []
+        self.video_only = False
         self.alive = True
         self.frames = 1
         self.handshake_done = True
@@ -111,6 +113,9 @@ class FakeCvxSession:
     def stop(self):
         FakeCvxSession.stops.append(self.ip)
         self.alive = False
+
+    def queue_mouse(self, seq, event_id, x, y):
+        self.mouse.append(event_id)
 
     def latest_frame(self):
         return _TINY_JPEG
@@ -262,6 +267,19 @@ _WHY_JS = """JSON.stringify((function(){
             stageBox:[Math.round(st.width),Math.round(st.height)],
             lease: !!BV.camFeed.lease(i.dataset.ip)};
 })())"""
+
+
+# Drive the picture and count what actually reached python. Mouse events on
+# the SCREEN element, which is what BV.cvxMouse listens to.
+_DRIVE_JS = """(function(){
+    var s=document.querySelector('#floatlayer .fbox-screen.drivable')
+          || document.querySelector('#floatlayer .fbox-screen');
+    if(!s) return 'no-screen';
+    var r=s.getBoundingClientRect();
+    s.dispatchEvent(new MouseEvent('mousemove',{bubbles:true,
+      clientX:r.left+12, clientY:r.top+12}));
+    return 'sent';
+})()"""
 
 
 def _state(window):
@@ -453,7 +471,128 @@ def probe(window, api, mtx_hosts):
               "BV.camFloats.focusIp(%s) === true" % json.dumps(CVX_CAMS[0])),
               "(openCvxRemote would dial a camera the layer already holds)")
 
-        # ---- H. closing hands the slot back -----------------------------------
+        # ---- H. control: take it, arm it, and only ever one at a time --------
+        # a view-only box must forward NOTHING. Python refuses a video_only
+        # session too (cvx_remote_mouse -> VIEW_ONLY), so the rule is enforced
+        # on both sides rather than trusted on one.
+        def mouse_events():
+            return sum(len(getattr(s, "mouse", [])) for s in api._cvx.values())
+
+        for s0 in api._cvx.values():
+            s0.mouse = []
+        js(window, _DRIVE_JS)
+        time.sleep(1.0)
+        check("control.view_only_forwards_nothing", mouse_events() == 0,
+              "(a box that never took control sent %d mouse events - and python "
+              "should have refused them too)" % mouse_events())
+
+        js(window, "document.querySelector('.fbox .fbox-ctl').click()")
+        took = wait(window, "BV.camFloats.armed() ? 'y':''")
+        check("control.take_promotes_the_session", took == "y",
+              "(taking control did not arm the box)")
+        check("control.streams_while_driving", js(window,
+              "(document.querySelector('#floatlayer img.cam-live').src||'')"
+              ".indexOf('/cvx/')>=0"),
+              "(a controlling box must hold the live stream, not the 2s still)")
+        check("control.no_extra_dial", len(FakeCvxSession.dials) == dials_before,
+              "(taking control redialled: it must ADOPT the lease it already has)")
+        check("control.the_bar_says_so", js(window,
+              "document.querySelector('.fbox .fbox-ctl').textContent") == "driving",
+              "(nothing on the box says a controller is being driven)")
+
+        for s0 in api._cvx.values():
+            s0.mouse = []
+        js(window, _DRIVE_JS)
+        drove = 0
+        deadline = time.time() + 4
+        while time.time() < deadline and not mouse_events():
+            time.sleep(0.15)
+        drove = mouse_events()
+        check("control.armed_drives_the_camera", drove > 0,
+              "(an armed box forwarded nothing to the controller)")
+
+        # a second box, and arming it must release the first - one camera under
+        # a live cursor at a time, and never one left mid-drag
+        js(window, _POPOUT_JS % json.dumps("CELL-01CVX11"))
+        wait(window, "document.querySelectorAll('.fbox').length===2 ? 'y':''")
+        first = js(window, "BV.camFloats.armed()")
+        js(window, "[].slice.call(document.querySelectorAll('.fbox .fbox-ctl'))"
+                   ".filter(function(b){return b.textContent==='control';})[0].click()")
+        wait(window, "BV.camFloats.armed() && BV.camFloats.armed()!==%s ? 'y':''"
+             % json.dumps(first))
+        check("control.arming_is_exclusive",
+              js(window, "document.querySelectorAll('.fbox.armed').length") == 1,
+              "(%s boxes armed at once)" %
+              js(window, "document.querySelectorAll('.fbox.armed').length"))
+
+        # clicking away gives the mouse back to the app
+        js(window, "document.body.click()")
+        check("control.click_away_disarms",
+              js(window, "BV.camFloats.armed()") in (None, "", False),
+              "(the mouse stayed on the camera after clicking away)")
+        for s0 in api._cvx.values():
+            s0.mouse = []
+        js(window, _DRIVE_JS)
+        time.sleep(1.0)
+        check("control.disarmed_forwards_nothing", mouse_events() == 0,
+              "(a disarmed box is still driving a controller: %d events)"
+              % mouse_events())
+
+        # giving control back must NOT let go of the controller's slot
+        stops_at_release = len(FakeCvxSession.stops)
+        js(window, "[].slice.call(document.querySelectorAll('.fbox .fbox-ctl'))"
+                   ".filter(function(b){return b.classList.contains('on');})"
+                   ".forEach(function(b){b.click();})")
+        back = wait(window, "[].every.call(document.querySelectorAll('.fbox .fbox-ctl'),"
+                            "function(b){return b.textContent==='control';}) ? 'y':''")
+        check("control.release_returns_to_view_only", back == "y",
+              "(the boxes did not go back to view-only)")
+        check("control.release_keeps_the_slot",
+              len(FakeCvxSession.stops) == stops_at_release,
+              "(giving control back stopped the session: yield demotes it to a "
+              "lease so the slot is never let go of and raced for)")
+        check("control.picture_comes_back", wait(window,
+              "[].every.call(document.querySelectorAll('#floatlayer img.cam-live'),"
+              "function(i){return i.naturalWidth>0;}) ? 'y':''") == "y",
+              "(a box that gave control back never got its picture again)")
+
+        # Closing a box that is DRIVING is the subtle leak: a controlling box
+        # holds a promoted session, and cvx_tile_stop is a deliberate no-op for
+        # a non-tile sid - so the obvious teardown would hand back nothing at
+        # all, in silence, and the controller would stay held until app exit.
+        js(window, "document.querySelector('.fbox .fbox-ctl').click()")
+        wait(window, "BV.camFloats.armed() ? 'y':''")
+        stops_driving = len(FakeCvxSession.stops)
+        js(window, "document.querySelector('.fbox .fbox-x').click()")
+        time.sleep(1.2)
+        check("control.closing_while_driving_frees_the_slot",
+              len(FakeCvxSession.stops) > stops_driving,
+              "(a box closed mid-drive handed nothing back - cvx_tile_stop is a "
+              "no-op on a promoted session, it needs cvx_remote_stop)")
+        check("control.nothing_left_armed",
+              js(window, "BV.camFloats.armed()") in (None, "", False),
+              "(the armed box is gone but something still thinks it is driving)")
+
+        js(window, "BV.camFloats.closeAll()")
+        wait(window, "document.querySelectorAll('.fbox').length===0 ? 'y':''")
+        for _ in range(20):
+            js(window, _OPEN_LINES_JS)
+            if js(window, "document.querySelectorAll('.cam-tile img.cam-live')"
+                          ".length===%d ? 'y':''" % TOTAL) == "y":
+                break
+            time.sleep(0.3)
+        # the tile has to have re-taken its lease before the box can inherit it,
+        # or the close below has no session to hand back and the check would
+        # pass for the wrong reason
+        wait(window, "BV.camFeed.lease(%s) ? 'y':''" % json.dumps(CVX_CAMS[0]))
+        js(window, _POPOUT_JS % json.dumps(CVX_NAME))
+        wait(window, "document.querySelectorAll('.fbox').length===1 ? 'y':''")
+        check("close.setup_has_a_lease",
+              js(window, "!!BV.camFeed.lease(%s)" % json.dumps(CVX_CAMS[0])),
+              "(setup: the re-popped box holds no session, so the close check "
+              "below would pass without proving anything)")
+
+        # ---- I. closing hands the slot back -----------------------------------
         stops_before = len(FakeCvxSession.stops)
         js(window, "document.querySelector('.fbox .fbox-x').click()")
         gone = wait(window, "document.querySelectorAll('.fbox').length===0 ? 'y':''")
