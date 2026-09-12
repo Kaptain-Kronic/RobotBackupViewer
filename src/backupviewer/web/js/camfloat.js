@@ -341,20 +341,26 @@
       if (_armed === slot.id) _armed = null;
       ctl.on = false; ctl.sid = null;
       pushOwned();                      /* nothing is being driven here now */
-      img.src = "";                     /* drop the MJPEG connection */
-      screen.classList.add("wait");
-      note.textContent = BV.camFeed.NOTE.wait;
       paintCtl();
       box.setStatus("");
+      /* the LAST FRAME STAYS UP while the hand-back happens. Blanking here and
+         waiting for the next beat is a blink of up to REFRESH_MS every time
+         control is given back - the picture is still true, so leave it. */
       return BV.api.call("cvx_tile_yield", sid,
         BV.camWin ? "camwin" : "main").then(function (r) {
         BV.camFeed.give(ip, { sid: r.session_id, shotUrl: r.shot_url,
                               streamUrl: r.stream_url });
-        BV.camFeed.resume(img);   /* back under the beat, on the polled still */
+        /* straight onto the still, in this turn: no gap, and the MJPEG
+           connection is dropped by the same reassignment */
+        BV.camFeed.resume(img, r.shot_url);
       }).catch(function () {
         /* a session that is neither leased nor owned is reaped by nothing:
            end it rather than strand the controller's slot */
         BV.api.call("cvx_remote_stop", sid).catch(function () {});
+        img.src = "";
+        screen.classList.add("wait");
+        note.textContent = BV.camFeed.NOTE.wait;
+        BV.camFeed.resume(img);
       });
     }
     function arm() {
@@ -601,18 +607,35 @@
     closeAll: function () {
       slots().slice().forEach(function (s) { drop(s.id); });
     },
-    /* lay every box out on the snap grid: 1 -> whole, 2 -> halves, 3-4 ->
-       quarters, more than that keeps the quarters and stacks the rest */
+    /* Lay every box out on a real grid, whatever the count. The magnet zones
+       are halves and quarters, so up to four boxes land on a ZONE (and stay
+       snapped - a window resize then re-derives them exactly). Past four there
+       is no zone for a third of a screen, so they are free-placed on a grid
+       instead: still tidy, still scales with the window, just not magnetic.
+
+       Locked boxes are skipped entirely and the grid is laid out around them -
+       locked means locked, including against a tidy-up. */
     tileThem: function () {
-      var list = slots();
-      var zones = list.length <= 1 ? ["n"]
-        : list.length === 2 ? ["w", "e"]
-        : ["nw", "ne", "sw", "se"];
-      list.forEach(function (s, i) {
-        if (s.locked) return;            /* locked means locked */
-        var z = zones[i % zones.length];
-        var g = BV.floatLayer.ZONES[z];
-        s.snap = z; s.x = g.x; s.y = g.y; s.w = g.w; s.h = g.h;
+      var movable = slots().filter(function (s) { return !s.locked; });
+      if (!movable.length) { BV.toast("every box is locked"); return; }
+      var n = movable.length;
+      /* zones while they exist, because a snapped box survives a resize
+         exactly; a grid past that, because a stacked box helps nobody */
+      var zones = n === 1 ? ["n"] : n === 2 ? ["w", "e"]
+        : n <= 4 ? ["nw", "ne", "sw", "se"] : null;
+      var cols = Math.ceil(Math.sqrt(n));
+      var rows = Math.ceil(n / cols);
+      movable.forEach(function (s, i) {
+        if (zones) {
+          var z = zones[i];
+          var g = BV.floatLayer.ZONES[z];
+          s.snap = z; s.x = g.x; s.y = g.y; s.w = g.w; s.h = g.h;
+        } else {
+          s.snap = "";
+          s.w = 1 / cols; s.h = 1 / rows;
+          s.x = (i % cols) / cols;
+          s.y = Math.floor(i / cols) / rows;
+        }
         var b = _boxes[s.id];
         if (b && b.box) b.box.setGeom(s);
       });

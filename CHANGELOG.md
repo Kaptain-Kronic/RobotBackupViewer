@@ -1,6 +1,16 @@
 # Changelog
 
 ## unreleased — backups drag in and export out, the statusbar finds the switch, a program plays in 3d, the camera wall lights up all the way down, and a matrox pull brings home its photo history
+- **Giving control back no longer blinks, and `tile them` lays out a real
+  grid.** Handing a box back to view-only used to blank the picture and wait
+  for the next beat — up to two seconds of nothing, which reads as a dropped
+  camera. The last frame is still true, so it stays up, and the still is asked
+  for in the same turn as the hand-back. And tiling past four boxes used to
+  cycle the four magnet zones and stack everything after the fourth on top of
+  them; four or fewer still land on real snap zones (so a window resize
+  re-derives them exactly), and beyond that they free-place on a grid. Locked
+  boxes are skipped and the grid lays out around them.
+
 - **Closing the camera window gives the boxes back, and a matrox box can be
   driven too.** Closing that window used to close its cameras with it — the
   arrangement now comes home to the main window, in the same places, and any

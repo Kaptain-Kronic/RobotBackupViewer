@@ -54,7 +54,8 @@ from backupviewer.app import resource_path  # noqa: E402
 from cvx_sim import _TINY_JPEG  # noqa: E402
 
 CVX_CAMS = ["192.0.2.%d" % (70 + i) for i in range(2)]     # TEST-NET
-MTX_COUNT = 2
+MTX_COUNT = 5          # 7 cameras total: enough that tile-them has to leave
+                       # the four magnet zones and lay out a real grid
 TOTAL = len(CVX_CAMS) + MTX_COUNT
 CVX_NAME = "CELL-01CVX10"
 CAM_BEAT = 2.0          # BV.camFeed's tick, in seconds - the window this bug hid in
@@ -728,6 +729,15 @@ def probe(window, api, mtx_hosts):
               len(FakeCvxSession.stops) == stops_at_release,
               "(giving control back stopped the session: yield demotes it to a "
               "lease so the slot is never let go of and raced for)")
+        # the blink jake saw: giving control back used to blank the box and
+        # wait for the next beat. The last frame is still TRUE, so it stays up
+        # and the still is asked for in the same turn.
+        check("control.release_does_not_blank", js(window, """(function(){
+            var i=document.querySelector('#floatlayer .fbox-screen img');
+            return !!i && !!i.src && i.src !== location.href;
+        })()"""),
+              "(the picture was blanked on the way back to view-only - up to a "
+              "full beat of nothing, which reads as a dropped camera)")
         check("control.picture_comes_back", wait(window,
               "[].every.call(document.querySelectorAll('#floatlayer img.cam-live'),"
               "function(i){return i.naturalWidth>0;}) ? 'y':''") == "y",
@@ -801,6 +811,53 @@ def probe(window, api, mtx_hosts):
         # page the camera already serves, sandboxed by the SAME rule the full
         # remote uses. No arming - an iframe takes its own clicks, and a matrox
         # has no single remote slot to take off anyone.
+        # ---- I1b. tile-them lays out a real grid, whatever the count --------
+        # Past four boxes there is no magnet zone for a third of a screen, so a
+        # grid is used instead - the old code cycled the four quarters and
+        # stacked everything after the fourth on top of them.
+        js(window, "BV.camFloats.closeAll()")
+        wait(window, "document.querySelectorAll('.fbox').length===0 ? 'y':''")
+        for _ in range(20):
+            js(window, _OPEN_LINES_JS)
+            if js(window, "document.querySelectorAll('.cam-tile .cam-check').length"
+                          "===%d ? 'y':''" % TOTAL) == "y":
+                break
+            time.sleep(0.3)
+        js(window, """(function(){
+            [].forEach.call(document.querySelectorAll('.cam-tile .cam-check'),
+              function(cb){ cb.click(); });
+            document.getElementById('lib-cam-popout').click();
+        })()""")
+        wait(window, "document.querySelectorAll('.fbox').length===%d ? 'y':''" % TOTAL)
+        js(window, "BV.camFloats.tileThem()")
+        time.sleep(0.6)
+        gs = _geoms(window)
+        overlap = 0
+        for a in range(len(gs)):
+            for b in range(a + 1, len(gs)):
+                p, q = gs[a], gs[b]
+                if (p["x"] < q["x"] + q["w"] - 0.01 and q["x"] < p["x"] + p["w"] - 0.01
+                        and p["y"] < q["y"] + q["h"] - 0.01
+                        and q["y"] < p["y"] + p["h"] - 0.01):
+                    overlap += 1
+        check("tile.no_box_covers_another", overlap == 0,
+              "(%d of %d boxes overlap after tile-them: %r)" %
+              (overlap, len(gs), gs))
+        check("tile.every_box_moved", len(gs) == TOTAL,
+              "(%d boxes, expected %d)" % (len(gs), TOTAL))
+        # a LOCKED box is not tidied away
+        js(window, "document.querySelector('.fbox .fbox-lock').click()")
+        before_lock = [g for g in _geoms(window) if g["locked"]][0]
+        js(window, "BV.camFloats.tileThem()")
+        time.sleep(0.5)
+        after_lock = [g for g in _geoms(window) if g["locked"]]
+        check("tile.leaves_locked_boxes_alone",
+              len(after_lock) == 1 and
+              abs(after_lock[0]["x"] - before_lock["x"]) < 0.02 and
+              abs(after_lock[0]["w"] - before_lock["w"]) < 0.02,
+              "(tile-them moved a locked box: %r -> %r)" % (before_lock, after_lock))
+        js(window, "document.querySelector('.fbox .fbox-lock').click()")
+
         js(window, "BV.camFloats.closeAll()")
         wait(window, "document.querySelectorAll('.fbox').length===0 ? 'y':''")
         for _ in range(20):

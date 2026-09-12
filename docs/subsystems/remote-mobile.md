@@ -177,6 +177,25 @@ is not in this document at all). Both guesses hung up a live camera and made
 something redial it. Churn is left to the reaper, which already knows about
 every window.
 
+### How many pictures the wall can carry
+
+`CAM_MAX_LOADS` (6) new fetches per `CAM_REFRESH_MS` (2 s) beat is the whole
+ceiling, and the two vendors spend it very differently:
+
+- a **Matrox** picture is a plant fetch *every* beat, so it costs a slot every
+  time. N visible Matrox pictures each refresh every `ceil(N / 6)` beats — six
+  or fewer is 2 s, twelve is 4 s, and so on. Floating boxes and wall tiles draw
+  on the SAME budget.
+- a **CV-X** picture costs a slot only for its first dial; every frame after is
+  a loopback read of `/cvxshot/<sid>` and is free. CV-X boxes are therefore
+  limited by controllers and screen space, not by the beat.
+
+The non-obvious part: a wall tile that a floating box is merely *covering* is
+still visible to `checkVisibility()` (occlusion is not visibility), so it goes
+on being fetched and goes on costing budget. Only a camera that is actually
+floating stops costing twice, because its tile is a placeholder carrying no
+`<img>` at all.
+
 ### The one-controller rule, and where the slot can leak
 
 A CV-X has exactly one remote slot, and this surface has the most ways to lose
@@ -218,6 +237,10 @@ it, so they are enumerated rather than left to be rediscovered:
   arming step for one: an iframe takes its own clicks, and a matrox has no
   single remote slot to take off anybody. The one-at-a-time rule is about CV-X
   slots and applies to CV-X alone.
+- **Handing a picture back never blanks it.** `camFeed.resume(img, url)` takes
+  the still url from the yield and points the img at it in the same turn; the
+  old blank-and-wait was a visible blink of up to `REFRESH_MS` every time a box
+  gave control back.
 - **Parking never yields control.** Routing off the library drops the MJPEG
   connection (`img.src = ""`) but keeps the session — you come back to the box
   you left, still in control.

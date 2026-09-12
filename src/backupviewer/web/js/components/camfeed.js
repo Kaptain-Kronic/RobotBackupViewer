@@ -93,12 +93,23 @@
     img.classList.remove("cam-live");
     img._camOwned = 1;
   }
-  function resume(img) {
+  /* `url` hands the picture back already pointing somewhere. Without it the
+     img waits for the next beat, which is up to REFRESH_MS of blank - visible
+     as a blink every time a box gives control back. With it there is no gap:
+     the still is asked for in the same turn, and the box counts as painted so
+     the rotation treats it like any other live picture. */
+  function resume(img, url) {
     if (!img) return;
     img._camOwned = 0;
     img.classList.add("cam-live");
-    img._camDue = 0;             /* ask for a picture on the very next beat */
-    img._camShown = 0;           /* never-painted goes first in the rotation */
+    if (url) {
+      img._camShown = 1;
+      img._camDue = Date.now() + CAM_REFRESH_MS;
+      img.src = url + (url.indexOf("?") < 0 ? "?t=" : "&t=") + Date.now();
+    } else {
+      img._camDue = 0;           /* ask for a picture on the very next beat */
+      img._camShown = 0;         /* never-painted goes first in the rotation */
+    }
   }
 
   function attach(img, opts) {
@@ -436,6 +447,7 @@
 
   BV.camFeed = {
     REFRESH_MS: CAM_REFRESH_MS,
+    MAX_LOADS: CAM_MAX_LOADS,   /* new plant fetches per beat - the wall's real ceiling */
     NOTE: NOTE,
     url: camLiveUrl,
     attach: attach,
