@@ -197,6 +197,15 @@ it, so they are enumerated rather than left to be rediscovered:
 - **`cvx_tile_yield` starts the reaper if it is not running.** A session can be
   yielded in a run where no tile was ever dialled, and a lease with nothing
   reaping it is a slot held until the app exits.
+- **A driven picture leaves the beat.** `camFeed.detach(img)` on take,
+  `resume(img)` on release. The `<img>` still carried the class the beat
+  selects on, so two seconds after taking control the beat asked for a lease
+  `cvx_tile_adopt` had just removed, python found **our own promoted session**
+  on that camera and answered `CVX_BUSY`, and the box went dark reading *"in
+  use — another terminal holds it"* about a camera the user was driving — with
+  `img.src` reassigned, killing the stream. Every check around this read the
+  instant after the click, which is the one window in which it looked right;
+  `control.survives_the_next_beat` now sleeps past a beat.
 - **Parking never yields control.** Routing off the library drops the MJPEG
   connection (`img.src = ""`) but keeps the session — you come back to the box
   you left, still in control.

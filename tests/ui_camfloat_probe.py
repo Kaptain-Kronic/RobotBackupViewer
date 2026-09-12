@@ -57,6 +57,7 @@ CVX_CAMS = ["192.0.2.%d" % (70 + i) for i in range(2)]     # TEST-NET
 MTX_COUNT = 2
 TOTAL = len(CVX_CAMS) + MTX_COUNT
 CVX_NAME = "CELL-01CVX10"
+CAM_BEAT = 2.0          # BV.camFeed's tick, in seconds - the window this bug hid in
 wait = poller(tries=40)
 
 
@@ -633,8 +634,10 @@ def probe(window, api, mtx_hosts):
         took = wait(window, "BV.camFloats.armed() ? 'y':''")
         check("control.take_promotes_the_session", took == "y",
               "(taking control did not arm the box)")
+        # NOT selected by .cam-live: a driven picture deliberately leaves the
+        # beat's selector, which is the whole point of the fix below
         check("control.streams_while_driving", js(window,
-              "(document.querySelector('#floatlayer img.cam-live').src||'')"
+              "((document.querySelector('#floatlayer .fbox-screen img')||{}).src||'')"
               ".indexOf('/cvx/')>=0"),
               "(a controlling box must hold the live stream, not the 2s still)")
         check("control.no_extra_dial", len(FakeCvxSession.dials) == ctl_dials,
@@ -642,6 +645,37 @@ def probe(window, api, mtx_hosts):
         check("control.the_bar_says_so", js(window,
               "document.querySelector('.fbox .fbox-ctl').textContent") == "driving",
               "(nothing on the box says a controller is being driven)")
+
+        # OUTLIVE A BEAT. Every check above reads the instant after the click,
+        # which is exactly the window in which this was fine: two seconds later
+        # the feed asked for a lease adopt had removed, python answered
+        # CVX_BUSY from our OWN promoted session, and the box went dark saying
+        # another terminal held a camera we were driving - src clobbered too.
+        time.sleep(CAM_BEAT * 2.5)
+        beat = json.loads(js(window, """JSON.stringify((function(){
+            var s=document.querySelector('#floatlayer .fbox-screen');
+            var i=s&&s.querySelector('img');
+            var n=s&&s.querySelector('.fbox-note');
+            return {dark:!!s&&s.classList.contains('dark'),
+              /* the note only MATTERS when it is shown - a stale string behind
+                 a live picture is invisible and harmless */
+              noteShown:!!n&&getComputedStyle(n).display!=='none',
+              note:n?n.textContent:'',
+              streaming:!!i&&(i.src||'').indexOf('/cvx/')>=0};
+        })())""") or "{}")
+        # note == "" is the deterministic half: takeControl clears it, and
+        # nothing may write it again while the box owns its picture. With the
+        # hand-over missing this reads "in use - another terminal holds it",
+        # which is the exact string that was appearing over a driven camera.
+        check("control.survives_the_next_beat",
+              beat.get("dark") is False and beat.get("noteShown") is False
+              and beat.get("note") == "" and beat.get("streaming") is True,
+              "(a controlling box must be left alone by the beat: %r)" % beat)
+        check("control.is_not_fed_while_driving", js(window,
+              "document.querySelectorAll('#floatlayer .fbox-screen img.cam-live')"
+              ".length") == 0,
+              "(the driven picture is still in the beat's selector, so it will "
+              "be re-fetched and the stream lost)")
 
         for s0 in api._cvx.values():
             s0.mouse = []

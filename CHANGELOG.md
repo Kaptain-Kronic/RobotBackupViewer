@@ -1,6 +1,17 @@
 # Changelog
 
 ## unreleased — backups drag in and export out, the statusbar finds the switch, a program plays in 3d, the camera wall lights up all the way down, and a matrox pull brings home its photo history
+- **Taking control of a CV-X box went dark two seconds later**, claiming
+  another terminal held the camera. It was our own session: the driven picture
+  still carried the class the shared beat selects on, so the next tick asked
+  for a lease that taking control had just removed, python found the promoted
+  session sitting on that camera and honestly answered BUSY — and the re-fetch
+  reassigned `img.src`, killing the live stream with it. A picture with an
+  owner is no longer the beat's to touch. Every check around control read the
+  instant after the click, which is precisely the window where this looked
+  fine; the probe now sleeps past a beat and asserts the box is still
+  streaming, still says nothing, and has left the beat's selector.
+
 - **Pick several cameras and pop them all out, into a window of their own if
   you want one.** The wall's tiles gained the same selection checkbox every
   other list in the app has (shift+click ranges included), and a **pop out · N**

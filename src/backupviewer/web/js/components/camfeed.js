@@ -77,6 +77,30 @@
      everything each time hammered the plant network.
 
      opts: { ip, cvx, onNote(text), onState("live"|"dark") } */
+  /* Hand a picture OVER to somebody who owns it, and take it back afterwards.
+
+     Taking control of a floating box promotes its leased session into a full
+     one and points the <img> at the live MJPEG stream - but the img still
+     carried the class the beat selects on, so two seconds later the beat asked
+     for a lease that was no longer there, python found OUR OWN adopted session
+     holding the camera and answered CVX_BUSY, and the box wrote "in use -
+     another terminal holds it" over the camera being driven. Worse, the
+     re-fetch reassigned img.src and killed the stream with it.
+
+     A picture with an owner is simply not the beat's to touch. */
+  function detach(img) {
+    if (!img) return;
+    img.classList.remove("cam-live");
+    img._camOwned = 1;
+  }
+  function resume(img) {
+    if (!img) return;
+    img._camOwned = 0;
+    img.classList.add("cam-live");
+    img._camDue = 0;             /* ask for a picture on the very next beat */
+    img._camShown = 0;           /* never-painted goes first in the rotation */
+  }
+
   function attach(img, opts) {
     var ip = opts.ip;
     var isCvx = !!opts.cvx;
@@ -415,6 +439,8 @@
     NOTE: NOTE,
     url: camLiveUrl,
     attach: attach,
+    detach: detach,
+    resume: resume,
     register: register,
     unregister: unregister,
     release: release,

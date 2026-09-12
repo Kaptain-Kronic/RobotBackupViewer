@@ -240,6 +240,13 @@
         ctl.sid = r.session_id; ctl.lease = lease; ctl.on = true;
         ctl.streamUrl = r.stream_url;
         ctlBtn.disabled = false;
+        /* this picture is OURS now - the beat must not touch it. It still
+           carried the class the beat selects on, so two seconds later it asked
+           for a lease that adopt had just removed, python found our own
+           promoted session on that camera and said CVX_BUSY, and the box went
+           dark reading "another terminal holds it" while we were driving it. */
+        BV.camFeed.detach(img);
+        note.textContent = "";    /* the waiting note is not this box's state any more */
         img.src = ctl.streamUrl + "?t=" + Date.now();
         screen.classList.remove("wait", "dark");
         arm();
@@ -271,7 +278,7 @@
         BV.camWin ? "camwin" : "main").then(function (r) {
         BV.camFeed.give(ip, { sid: r.session_id, shotUrl: r.shot_url,
                               streamUrl: r.stream_url });
-        img._camDue = 0;
+        BV.camFeed.resume(img);   /* back under the beat, on the polled still */
       }).catch(function () {
         /* a session that is neither leased nor owned is reaped by nothing:
            end it rather than strand the controller's slot */
@@ -301,6 +308,8 @@
       mouse.destroy();
       if (!ctl.on) return null;
       if (_armed === slot.id) _armed = null;
+      ctl.on = false;
+      BV.camFeed.resume(img);   /* harmless if the box is going away with it */
       return ctl.sid;
     };
     ctlBtn.addEventListener("click", function () {
