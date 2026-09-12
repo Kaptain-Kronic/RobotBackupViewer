@@ -48,7 +48,7 @@
        settings key: two windows writing one key would race and clobber each
        other, and python is already the thing that knows the window exists */
     if (BV.camWin) {
-      BV.api.call("cam_window_push", slots()).catch(function () {});
+      BV.api.call("cam_window_push", slots(), ownedSid()).catch(function () {});
       return;
     }
     if (BV.state.settings) BV.state.settings[KEY] = slots();
@@ -74,6 +74,24 @@
   document.addEventListener("keydown", function (e) {
     if (_armed && e.key === "Escape") { disarmAll(); e.stopPropagation(); }
   }, true);
+
+  /* which session a box in THIS window has taken control of (one at a time).
+     Pushed to python on every change, undebounced, because if this window is
+     closed while driving, that promoted session has no lease and no reaper -
+     python hanging it up is the only thing between here and a controller whose
+     one remote slot is held until the app exits. */
+  function ownedSid() {
+    var out = null;
+    Object.keys(_boxes).forEach(function (id) {
+      var b = _boxes[id];
+      if (b.ownedSid && b.ownedSid()) out = b.ownedSid();
+    });
+    return out;
+  }
+  function pushOwned() {
+    if (!BV.camWin) return;
+    BV.api.call("cam_window_push", slots(), ownedSid()).catch(function () {});
+  }
 
   function camById(id) {
     for (var i = 0; i < _cams.length; i++) if (_cams[i].id === id) return _cams[i];
@@ -127,7 +145,7 @@
       title: "ask this camera for a fresh picture" }, "⟳");
     var zoomBtn = BV.el("button", { class: "btn fbox-zoom", type: "button",
       title: "view zoom — ctrl+scroll inside the box" }, "100%");
-    if (isCvx(cam)) box.slot.appendChild(ctlBtn);
+    box.slot.appendChild(ctlBtn);   /* both vendors - they just differ in HOW */
     box.slot.appendChild(rlBtn);
     box.slot.appendChild(zoomBtn);
 
@@ -199,7 +217,7 @@
        (the mouse drives). One click inside the picture arms it; that click is
        not forwarded, because cvxMouse asks armed() on mousedown and the arm
        only lands on the click after it. */
-    var ctl = { sid: null, lease: null, streamUrl: "", on: false };
+    var ctl = { sid: null, lease: null, streamUrl: "", on: false, frame: null };
     var mouse = BV.cvxMouse(screen, {
       sid: function () { return ctl.sid; },
       size: function () {
@@ -209,26 +227,77 @@
     });
     function paintCtl() {
       var armed = _armed === slot.id;
-      ctlBtn.textContent = ctl.on ? (armed ? "driving" : "control · on") : "control";
+      var cvx = isCvx(cam);
+      ctlBtn.textContent = ctl.on ? ((cvx && armed) ? "driving" : "control · on")
+                                  : "control";
       ctlBtn.classList.toggle("on", ctl.on);
       ctlBtn.classList.toggle("armed", armed);
-      ctlBtn.title = ctl.on
-        ? "giving up control hands this controller's remote slot back"
-        : "take control of this camera — it has ONE remote slot, so this takes "
-          + "it from whoever is at the HMI";
+      ctlBtn.title = cvx
+        ? (ctl.on
+           ? "giving up control hands this controller's remote slot back"
+           : "take control of this camera — it has ONE remote slot, so this "
+             + "takes it from whoever is at the HMI")
+        : (ctl.on
+           ? "go back to the plain live picture"
+           : "work this camera through its own page, in this box");
       box.el.classList.toggle("armed", armed);
       screen.classList.toggle("drivable", ctl.on);
-      if (ctl.on) {
+      if (ctl.on && cvx) {
         box.setStatus(armed ? "driving · your mouse is on the camera"
                             : "in control — click the picture to drive");
       }
     }
     live.paintCtl = paintCtl;
     live.controlling = function () { return ctl.on; };
+    live.ownedSid = function () { return (ctl.on && isCvx(cam)) ? ctl.sid : null; };
     live.release = function () { return releaseControl(); };
 
+    /* A matrox is not driven by a mouse protocol - it is driven by the web
+       page it already serves, which is what the full remote embeds. So control
+       on a matrox box swaps the polled HMI still for that page, sandboxed by
+       the SAME rule the overlay uses (BV.mtx, mtxremote.js). No arming step:
+       an iframe owns its own input, and a matrox has no single remote slot to
+       take off anybody - the one-at-a-time rule is about CV-X slots. */
+    function takeMtxControl() {
+      ctlBtn.disabled = true;
+      BV.mtx.pages(ip).then(function (r) {
+        ctlBtn.disabled = false;
+        if (!r.embeddable) {
+          BV.toast("this camera's page refuses framing — open it with "
+                   + "remote operation instead");
+          return;
+        }
+        var page = BV.mtx.pick(r);
+        BV.camFeed.detach(img);        /* the page is live; the beat is not needed */
+        ctl.frame = BV.mtx.frame(page);
+        ctl.on = true;
+        note.textContent = "";
+        screen.classList.remove("wait", "dark");
+        screen.classList.add("web");
+        screen.appendChild(ctl.frame);
+        box.setStatus("in control · " + page.label);
+        paintCtl();
+      }).catch(function (e) {
+        ctlBtn.disabled = false;
+        BV.toast("could not open this camera's page: " + e.message);
+      });
+    }
+    function releaseMtxControl() {
+      if (ctl.frame) { ctl.frame.remove(); ctl.frame = null; }
+      screen.classList.remove("web");
+      screen.classList.add("wait");
+      note.textContent = BV.camFeed.NOTE.wait;
+      ctl.on = false;
+      box.setStatus("");
+      BV.camFeed.resume(img);
+      paintCtl();
+      zs.fit();
+      return Promise.resolve();
+    }
+
     function takeControl() {
-      if (ctl.on || !ip || !isCvx(cam)) return;
+      if (ctl.on || !ip) return;
+      if (!isCvx(cam)) { takeMtxControl(); return; }
       var lease = BV.camFeed.take(ip);   /* the beat stops feeding it: we own it now */
       if (!lease || !lease.sid) {
         BV.camFeed.give(ip, lease);
@@ -248,6 +317,7 @@
         BV.camFeed.detach(img);
         note.textContent = "";    /* the waiting note is not this box's state any more */
         img.src = ctl.streamUrl + "?t=" + Date.now();
+        pushOwned();              /* python must know, in case this window closes */
         screen.classList.remove("wait", "dark");
         arm();
         paintCtl();
@@ -265,10 +335,12 @@
        tile behind this box is live the moment it comes back */
     function releaseControl() {
       if (!ctl.on) return Promise.resolve();
+      if (!isCvx(cam)) return releaseMtxControl();
       var sid = ctl.sid;
       mouse.release();                  /* never leave a camera mid-drag */
       if (_armed === slot.id) _armed = null;
       ctl.on = false; ctl.sid = null;
+      pushOwned();                      /* nothing is being driven here now */
       img.src = "";                     /* drop the MJPEG connection */
       screen.classList.add("wait");
       note.textContent = BV.camFeed.NOTE.wait;
@@ -306,7 +378,9 @@
     };
     live.shutdown = function () {
       mouse.destroy();
+      if (ctl.frame) { ctl.frame.remove(); ctl.frame = null; }
       if (!ctl.on) return null;
+      if (!isCvx(cam)) { ctl.on = false; return null; }   /* no session to hand back */
       if (_armed === slot.id) _armed = null;
       ctl.on = false;
       BV.camFeed.resume(img);   /* harmless if the box is going away with it */
@@ -315,7 +389,9 @@
     ctlBtn.addEventListener("click", function () {
       if (ctl.on) releaseControl(); else takeControl();
     });
-    screen.addEventListener("click", function () { if (ctl.on) arm(); });
+    /* arming is a CV-X idea: it decides whether a MOUSE PROTOCOL is live.
+       A matrox page is just a page - it takes its own clicks. */
+    screen.addEventListener("click", function () { if (ctl.on && isCvx(cam)) arm(); });
     paintCtl();
 
     live.box = box; live.img = img; live.note = note; live.zs = zs;
@@ -560,6 +636,34 @@
        window opens already holding it. Both windows then feed cameras happily
        - python counts viewers per tile session, so the wall here can keep
        tiling a camera the box over there is showing. */
+    /* While the camera window is up, watch for it going away and TAKE THE
+       BOXES BACK where they were - closing a window should not lose the wall
+       you built in it. Only runs while that window exists, so the main window
+       is not polling for a thing that is not there. */
+    _watch: null,
+    watchWindow: function () {
+      if (BV.camWin || BV.camFloats._watch) return;
+      BV.camFloats._watch = setInterval(function () {
+        BV.api.call("cam_window_state").then(function (r) {
+          if (!r || r.open) return;
+          clearInterval(BV.camFloats._watch);
+          BV.camFloats._watch = null;
+          var back = (r.slots || []).filter(function (x) { return x && x.camId; });
+          if (!back.length) return;
+          BV.api.call("cam_window_taken").catch(function () {});
+          var list = slots();
+          back.forEach(function (x) {
+            if (list.some(function (y) { return y.camId === x.camId; })) return;
+            x.id = nextId();          /* ids are per-window; the arrangement is not */
+            x.locked = !!x.locked;
+            list.push(x);
+          });
+          mount();
+          changed();
+          BV.toast("the camera window closed — its boxes came back here");
+        }).catch(function () {});
+      }, 2000);
+    },
     toWindow: function () {
       var list = slots().slice();
       if (!list.length) { BV.toast("nothing is floating yet"); return; }
@@ -579,6 +683,7 @@
            end - the other window JOINS them (cvx_tile_start is idempotent per
            ip and counts viewers). */
         list.forEach(function (x) { drop(x.id, true); });
+        BV.camFloats.watchWindow();
         BV.toast(r && r.opened === false
           ? "the camera window already had them"
           : "moved to the camera window");

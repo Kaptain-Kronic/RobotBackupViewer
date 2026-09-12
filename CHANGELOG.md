@@ -1,6 +1,17 @@
 # Changelog
 
 ## unreleased — backups drag in and export out, the statusbar finds the switch, a program plays in 3d, the camera wall lights up all the way down, and a matrox pull brings home its photo history
+- **Closing the camera window gives the boxes back, and a matrox box can be
+  driven too.** Closing that window used to close its cameras with it — the
+  arrangement now comes home to the main window, in the same places, and any
+  session it had taken control of is hung up on the way out (a promoted session
+  has no lease, so nothing else would ever collect it and that controller's one
+  slot would be held until the app exited). And **control** on a Matrox box
+  embeds the page the camera already serves, sandboxed by the same rule the
+  full remote uses — no arming step, because an iframe takes its own clicks and
+  a Matrox has no single remote slot to take off anyone; that rule was only
+  ever about CV-X.
+
 - **Taking control of a CV-X box went dark two seconds later**, claiming
   another terminal held the camera. It was our own session: the driven picture
   still carried the class the shared beat selects on, so the next tick asked

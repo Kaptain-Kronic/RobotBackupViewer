@@ -26,6 +26,39 @@
     return url + (url.indexOf("?") < 0 ? "?" : "&") + "pgx=" + Math.random();
   }
 
+  /* The sandbox a matrox page gets. Popups are only allowed on the HOME tab
+     when no operator pages were captured (then a browser popup beats a dead
+     link); with pages in place everything stays in-app. No allow-top-navigation
+     ever - a legacy frame-buster must not be able to hijack the app window. */
+  function sandboxFor(t, popupsOk) {
+    var sb = "allow-scripts allow-forms allow-same-origin allow-modals allow-downloads";
+    if (!t.home || popupsOk) sb += " allow-popups";
+    return sb;
+  }
+
+  /* Shared with the floating boxes (camfloat.js), which drive a matrox the
+     only way a matrox can be driven: its own web page. Kept here because this
+     file owns the matrox remote - a second implementation of the sandbox rule
+     is exactly the kind of copy that drifts into a security hole. */
+  BV.mtx = {
+    /* the pages this camera serves: {url, embeddable, pages[]} */
+    pages: function (ip) { return BV.api.call("mtx_remote_start", { ip: ip }); },
+    /* which page a tech actually works in: the operator page when there is
+       exactly one, else home */
+    pick: function (r) {
+      var pages = (r && r.pages) || [];
+      return pages.length === 1
+        ? { label: pages[0].label, url: pages[0].url, home: false, only: true }
+        : { label: "home", url: r.url, home: true, only: pages.length === 0 };
+    },
+    frame: function (page) {
+      var f = BV.el("iframe", { title: "MTX camera web UI",
+                                sandbox: sandboxFor(page, !!page.only && page.home) });
+      f.src = daUrl(page.url);
+      return f;
+    },
+  };
+
   BV.openMtxRemote = function (ip, label) {
     ip = (ip || "").trim();
     if (!ip) { BV.toast("this camera has no IP on record"); return; }
@@ -185,15 +218,6 @@
       }).catch(function (e) { BV.toast("could not open window: " + e.message); });
     });
     phBtn.addEventListener("click", function () { BV.openViewfinder(); });
-
-    /* popups are only allowed on the home tab when no operator pages were
-       captured (then a browser popup beats a dead link); with tabs in place
-       everything stays in-app */
-    function sandboxFor(t, popupsOk) {
-      var sb = "allow-scripts allow-forms allow-same-origin allow-modals allow-downloads";
-      if (!t.home || popupsOk) sb += " allow-popups";
-      return sb;
-    }
 
     function select(i) {
       if (!tabs[i]) return;

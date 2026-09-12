@@ -785,6 +785,68 @@ def probe(window, api, mtx_hosts):
         check("close.count_is_honest", st["btn"] == "floating · 0",
               "(button reads %r)" % st["btn"])
 
+        # ---- I2. a matrox box is driven by the camera's own page -------------
+        # mtx_remote_start wants a bare IP and these fakes are 127.0.0.1:PORT,
+        # so it is stubbed for this section. That endpoint has its own coverage
+        # in test_mtx_remote.py; what is on trial HERE is the box - that
+        # control swaps the still for a sandboxed page, leaves the beat, and
+        # gives the picture back. The stub answers the real shape.
+        api.mtx_remote_start = lambda spec: {
+            "ok": True,
+            "data": {"url": "http://%s/" % spec.get("ip", ""),
+                     "embeddable": True, "pages": []},
+        }
+
+        # There is no mouse protocol for a matrox: control means embedding the
+        # page the camera already serves, sandboxed by the SAME rule the full
+        # remote uses. No arming - an iframe takes its own clicks, and a matrox
+        # has no single remote slot to take off anyone.
+        js(window, "BV.camFloats.closeAll()")
+        wait(window, "document.querySelectorAll('.fbox').length===0 ? 'y':''")
+        for _ in range(20):
+            js(window, _OPEN_LINES_JS)
+            if js(window, "document.querySelectorAll('.cam-tile').length===%d ? 'y':''"
+                  % TOTAL) == "y":
+                break
+            time.sleep(0.3)
+        r = js(window, _POPOUT_JS % json.dumps("CELL-01MTX10"))
+        check("mtx.popped_out", r == "ok", "(%s)" % r)
+        wait(window, "document.querySelectorAll('.fbox').length===1 ? 'y':''")
+        check("mtx.offers_control", js(window,
+              "!!document.querySelector('.fbox .fbox-ctl')"),
+              "(a matrox box has no control button - it can be driven, just "
+              "not with a mouse protocol)")
+        js(window, "document.querySelector('.fbox .fbox-ctl').click()")
+        framed = wait(window, "document.querySelector('.fbox-screen.web iframe') ? 'y':''")
+        check("mtx.control_embeds_the_page", framed == "y",
+              "(control on a matrox must swap the still for the camera's own page)")
+        sb = js(window, "(document.querySelector('.fbox-screen.web iframe')"
+                        "||{}).getAttribute ? document.querySelector("
+                        "'.fbox-screen.web iframe').getAttribute('sandbox') : ''")
+        check("mtx.page_is_sandboxed",
+              "allow-scripts" in (sb or "") and "allow-top-navigation" not in (sb or ""),
+              "(sandbox=%r - allow-top-navigation would let a frame-buster "
+              "hijack the app window)" % sb)
+        check("mtx.not_armed", js(window, "BV.camFloats.armed()") in (None, "", False),
+              "(a matrox box armed a mouse protocol it does not have)")
+        check("mtx.leaves_the_beat", js(window,
+              "document.querySelectorAll('#floatlayer img.cam-live').length") == 0,
+              "(the still is still being fetched behind a live page)")
+        js(window, "document.querySelector('.fbox .fbox-ctl').click()")
+        back = wait(window, "(!document.querySelector('.fbox-screen.web iframe') && "
+                            "document.querySelectorAll('#floatlayer img.cam-live')"
+                            ".length===1) ? 'y':''")
+        check("mtx.release_returns_the_picture", back == "y",
+              "(giving control back must drop the page and resume the picture)")
+        js(window, "BV.camFloats.closeAll()")
+        wait(window, "document.querySelectorAll('.fbox').length===0 ? 'y':''")
+        for _ in range(20):
+            js(window, _OPEN_LINES_JS)
+            if js(window, "document.querySelectorAll('.cam-tile img.cam-live')"
+                          ".length===%d ? 'y':''" % TOTAL) == "y":
+                break
+            time.sleep(0.3)
+
         # ---- J. the camera window: the boxes in an OS window of their own ----
         # Pop two out here, then move them across. The point of the whole
         # viewer count is that BOTH windows can then feed cameras: the wall
@@ -878,10 +940,46 @@ def probe(window, api, mtx_hosts):
                 js(window, "document.getElementById('cube-cam').click()")
                 time.sleep(1.0)
 
+            # a box DRIVING when its window closes is the leak that nothing
+            # else can catch: the session was promoted out of its lease, so no
+            # reaper will ever collect it and the controller's one slot is held
+            # until the app exits. The window tells python what it is driving
+            # precisely so closing it can hang that up.
+            js(win2, "document.querySelector('.fbox .fbox-ctl').click()")
+            drove = wait(win2, "BV.camFloats.armed() ? 'y':''")
+            check("camwin.can_take_control", drove == "y",
+                  "(the camera window could not take control of a box)")
+            time.sleep(1.2)
+            owned = api._cam_window_owned
+            check("camwin.tells_python_what_it_drives", bool(owned),
+                  "(python does not know which session that window promoted, so "
+                  "closing the window would strand it)")
+            stops_before_close = len(FakeCvxSession.stops)
+
             win2.destroy()
-            time.sleep(2)
+            time.sleep(3)
             check("camwin.close_forgets_the_window", api._cam_window is None,
                   "(the window closed but python still thinks it is up)")
+            check("camwin.close_hangs_up_what_it_drove",
+                  owned not in api._cvx and
+                  len(FakeCvxSession.stops) > stops_before_close,
+                  "(a promoted session outlived the window driving it - nothing "
+                  "reaps one of those, so that controller is held until exit)")
+
+            # and the arrangement comes HOME: closing a window must not lose
+            # the wall you built in it
+            came_back = wait(window,
+                             "document.querySelectorAll('.fbox').length===2 ? 'y':''")
+            check("camwin.boxes_come_back", came_back == "y",
+                  "(%s boxes returned to the main window, expected 2)" %
+                  js(window, "document.querySelectorAll('.fbox').length"))
+            zones_back = sorted(g["snap"] for g in _geoms(window))
+            check("camwin.they_come_back_arranged", all(zones_back) and
+                  len(set(zones_back)) == len(zones_back),
+                  "(they came home stacked on each other: %r)" % zones_back)
+            check("camwin.python_lets_them_go", not api._cam_window_slots,
+                  "(python still holds an arrangement that now lives in the "
+                  "main window - a re-open would resurrect it twice)")
 
         report()
     except Exception as e:  # noqa: BLE001

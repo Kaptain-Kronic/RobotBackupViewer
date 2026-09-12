@@ -206,6 +206,18 @@ it, so they are enumerated rather than left to be rediscovered:
   `img.src` reassigned, killing the stream. Every check around this read the
   instant after the click, which is the one window in which it looked right;
   `control.survives_the_next_beat` now sleeps past a beat.
+- **Closing the camera window hangs up what it was driving.** A promoted
+  session has no lease, so no reaper collects it — the window pushes the sid it
+  controls to python (`cam_window_push`'s `owned`) precisely so
+  `_close_cam_window_obj` can stop it. Its *arrangement* is kept, though: the
+  main window polls `cam_window_state` while that window is up and takes the
+  boxes back where they were.
+- **A matrox box is driven by the camera's own page**, not a mouse protocol —
+  control embeds the operator page through the shared `BV.mtx` helpers
+  (`mtxremote.js`), so the sandbox rule has exactly one definition. There is no
+  arming step for one: an iframe takes its own clicks, and a matrox has no
+  single remote slot to take off anybody. The one-at-a-time rule is about CV-X
+  slots and applies to CV-X alone.
 - **Parking never yields control.** Routing off the library drops the MJPEG
   connection (`img.src = ""`) but keeps the session — you come back to the box
   you left, still in control.

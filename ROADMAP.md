@@ -268,9 +268,10 @@ one click backs up the robot + all its cameras together.
   lease — without it, a lens flip in one window blacked out a camera the other
   was showing. Eager release is now reserved for what a person asked for (the
   CV-X switch, the picker, closing a box); incidental churn goes to the reaper,
-  because guessing orphans from the DOM is a race that was lost twice. Still
-  owed: closing the camera window closes its boxes rather than handing them
-  back to the main window, and Matrox control in a box is still unbuilt.
+  because guessing orphans from the DOM is a race that was lost twice. Both of the
+  things left owed here have since landed: closing the camera window hands its
+  boxes back (and hangs up anything it was driving), and a Matrox box is driven
+  through the camera's own page via the shared `BV.mtx` helpers.
 
 - ✅ **Floating camera boxes** (`cam-floats`) — a 150 px tile is not big
   enough to read a camera's screen from a step away, and the workaround was

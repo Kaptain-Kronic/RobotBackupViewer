@@ -396,6 +396,7 @@ class Api:
         self._cvx_windows: dict[str, object] = {}
         self._cam_window = None                  # the camera window, if it is up
         self._cam_window_slots: list = []        # the float slots it is showing
+        self._cam_window_owned: str | None = None  # a session it took control of
         # CV-X tile sessions (the cam lens): sid -> last-sync monotonic. A
         # LEASE, not ownership - the grid renews it every tick it is actually
         # watching, and the reaper hangs up anything unsynced past
@@ -3268,9 +3269,24 @@ class Api:
         return {"opened": True}
 
     def _close_cam_window_obj(self, w):
-        if self._cam_window is w:
-            self._cam_window = None
-            self._cam_window_slots = []
+        """The camera window went away. Its arrangement is KEPT so the main
+        window can take the boxes back (cam_window_state reports them once
+        `open` goes false) - closing a window should not lose the wall you
+        built in it.
+
+        A session it had taken CONTROL of is a different matter: it was
+        promoted out of its lease, so nothing reaps it, and leaving it would
+        hold the controller's one remote slot until the app exits."""
+        if self._cam_window is not w:
+            return
+        self._cam_window = None
+        owned, self._cam_window_owned = self._cam_window_owned, None
+        if owned:
+            sess = self._cvx.pop(owned, None)
+            if sess is not None:
+                with self._cvx_tiles_lock:
+                    self._cvx_tiles.pop(owned, None)
+                sess.stop()
 
     @_endpoint
     def cam_window_slots(self):
@@ -3278,11 +3294,26 @@ class Api:
         return {"slots": list(self._cam_window_slots)}
 
     @_endpoint
-    def cam_window_push(self, slots: list | None = None):
+    def cam_window_taken(self):
+        """The main window has taken the boxes back: forget them, so a later
+        re-open starts from whatever it is given rather than resurrecting an
+        arrangement that now lives somewhere else."""
+        self._cam_window_slots = []
+        return True
+
+    @_endpoint
+    def cam_window_push(self, slots: list | None = None, owned: str | None = None):
         """The camera window's arrangement, as it changes. Kept here so a
-        re-open lands on what was there, and so the main window can ask what
-        the other window is holding without reaching into it."""
+        re-open lands on what was there, the main window can ask what the other
+        window is holding without reaching into it, and closing that window can
+        hand the boxes back.
+
+        `owned` names a session that window has taken CONTROL of, if any (one
+        at a time). It is the only way this side can know to hang that session
+        up if the window is closed while driving - a promoted session has no
+        lease, so no reaper will ever collect it."""
         self._cam_window_slots = list(slots or [])
+        self._cam_window_owned = owned or None
         return True
 
     @_endpoint
@@ -3290,6 +3321,7 @@ class Api:
         """Is the camera window up, and which cameras does it hold? The main
         window's wall asks so it can say where a camera went."""
         return {"open": self._cam_window is not None,
+                "slots": list(self._cam_window_slots),
                 "cams": [s.get("camId") for s in self._cam_window_slots
                          if isinstance(s, dict) and s.get("camId")]}
 
