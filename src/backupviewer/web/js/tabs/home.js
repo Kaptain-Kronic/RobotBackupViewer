@@ -1624,14 +1624,23 @@
     }
     /* the quick bulk route into the edit workspace. With several rows ticked
        it takes the WHOLE selection — the label says how many, so the menu can
-       never quietly act on rows you had forgotten were lit. */
-    var into = selectionFor(r, main);
-    items.push({
-      label: into.length > 1
-        ? "add all programs from " + into.length + " selected robots to edit workspace"
-        : "add all programs to edit workspace",
-      onClick: function () { addProgramsToWorkspace(into); },
-    });
+       never quietly act on rows you had forgotten were lit.
+
+       ROBOTS only. A camera has no TP programs, so a ticked camera was being
+       counted into "from 3 selected robots" — which was both a miscount and a
+       lie about what they are — and then handed to a resolver with nothing to
+       find. When that leaves no robot at all (a camera row on its own) the
+       action has nothing to act on, so it is gone entirely rather than greyed:
+       the same rule the rest of this menu follows. */
+    var into = selectionFor(r, main).filter(function (x) { return !isCam(x); });
+    if (into.length) {
+      items.push({
+        label: into.length > 1
+          ? "add all programs from " + into.length + " selected robots to edit workspace"
+          : "add all programs to edit workspace",
+        onClick: function () { addProgramsToWorkspace(into); },
+      });
+    }
     /* A CAMERA row offers the same pop-out the wall's tiles do, at the bottom
        and behind a rule (they are view actions, not row actions). Cameras
        only - a robot has no picture to float. And only from a real library row

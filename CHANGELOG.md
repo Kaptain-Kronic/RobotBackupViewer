@@ -1,6 +1,14 @@
 # Changelog
 
 ## unreleased — backups drag in and export out, the statusbar finds the switch, a program plays in 3d, the camera wall lights up all the way down, and a matrox pull brings home its photo history
+- **"add all programs from N selected robots" stops counting cameras as
+  robots.** A ticked camera was inflating that count and then being handed to
+  a program resolver with nothing to find — a camera has no TP programs. The
+  action now takes the robots out of the selection and says how many robots
+  that is, and when the selection holds no robot at all (a camera row on its
+  own) it is gone from the menu entirely rather than offering to add programs
+  that cannot exist.
+
 - **Camera rows on the backup list pop out too.** Right-click (or ⋯) a camera
   row and the bottom of its menu, behind a rule, carries the same two actions
   the wall's tiles do: *pop out into a floating box*, or *find its floating

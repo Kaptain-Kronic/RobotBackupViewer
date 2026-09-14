@@ -965,14 +965,23 @@ def probe(window, api, mtx_hosts):
         close_menu()
 
         items = open_menu("CELL-01CVX10") or []
-        ws = next((i for i, x in enumerate(items) if "edit workspace" in x), -1)
         sep = items.index("---") if "---" in items else -1
         pop = (items.index("pop out into a floating box")
                if "pop out into a floating box" in items else -1)
         check("rowmenu.camera_offers_pop_out", pop >= 0,
               "(no pop-out on a camera row: %r)" % items)
-        check("rowmenu.at_the_bottom_behind_a_rule", 0 <= ws < sep < pop,
+        # the pop-out group is LAST, behind the rule, and nothing above the rule
+        # is a view action. Anchored on the rule rather than on any particular
+        # row action - which item sits last up there depends on the row.
+        check("rowmenu.at_the_bottom_behind_a_rule",
+              sep > 0 and pop == sep + 1 and pop == len(items) - 1
+              and not any(("pop out" in x or "floating" in x) for x in items[:sep]),
               "(pop-out must sit BELOW the row actions, after a separator: %r)" % items)
+        # a camera has no TP programs: with no robot in scope the edit-workspace
+        # action has nothing to act on and must be gone, not merely mislabelled
+        check("rowmenu.no_workspace_action_on_a_lone_camera",
+              not any("edit workspace" in x for x in items),
+              "(a camera row offers to add programs it does not have: %r)" % items)
         check("rowmenu.no_count_without_a_selection",
               not any(x.startswith("pop out the ") for x in items),
               "(offered a selection count with nothing ticked: %r)" % items)
@@ -1004,6 +1013,14 @@ def probe(window, api, mtx_hosts):
         check("rowmenu.counts_only_cameras", "pop out the 2 selected" in items,
               "(expected 'pop out the 2 selected' - two cameras and a robot are "
               "ticked, and the robot must not count: %r)" % items)
+        # the mirror image, on the same menu: the edit-workspace item counts
+        # ROBOTS, so two cameras and one robot is one robot - it used to read
+        # "from 3 selected robots", counting the cameras as robots
+        ws_item = next((x for x in items if "edit workspace" in x), "")
+        check("rowmenu.workspace_counts_only_robots",
+              ws_item == "add all programs to edit workspace",
+              "(one robot is ticked beside two cameras, so the item must not "
+              "claim a bigger selection: %r)" % ws_item)
         r = click_item("pop out the 2 selected")
         two = wait(window, "document.querySelectorAll('.fbox').length===2 ? 'y':''")
         check("rowmenu.pops_the_selection", r == "ok" and two == "y",
