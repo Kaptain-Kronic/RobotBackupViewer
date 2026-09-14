@@ -1,6 +1,17 @@
 # Changelog
 
 ## unreleased — backups drag in and export out, the statusbar finds the switch, a program plays in 3d, the camera wall lights up all the way down, and a matrox pull brings home its photo history
+- **Camera rows on the backup list pop out too.** Right-click (or ⋯) a camera
+  row and the bottom of its menu, behind a rule, carries the same two actions
+  the wall's tiles do: *pop out into a floating box*, or *find its floating
+  box* if it is already up — and *pop out the N selected* when cameras are
+  ticked. Cameras only: a robot row's menu is unchanged, a ticked robot is never
+  counted or popped, and a camera action unticks only the cameras it popped, so
+  a robot selection lined up for a backup is left exactly as it was. No toolbar
+  controls were added to this lens, and the items are not offered from a
+  backup tab's menu — the float layer is parked everywhere but the library, so
+  a box popped from there would land where nobody could see it.
+
 - **Giving control back no longer blinks, and `tile them` lays out a real
   grid.** Handing a box back to view-only used to blank the picture and wait
   for the next beat — up to two seconds of nothing, which reads as a dropped

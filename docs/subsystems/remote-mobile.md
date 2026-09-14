@@ -177,6 +177,20 @@ is not in this document at all). Both guesses hung up a live camera and made
 something redial it. Churn is left to the reaper, which already knows about
 every window.
 
+### Popping out from the backup list
+
+A camera row's menu (`home.js rowMenuItems`) carries the same pop-out as a
+wall tile, appended below the row actions behind a `{sep:true}` rule. Two
+boundaries keep it honest: it is offered only for **camera** rows, and only
+when the menu was opened from a real library row (`main` set) — a backup tab
+calls the same builder with no row behind it, and the float layer is parked
+off the library, so a box popped from there would be invisible.
+
+That lens's selection is `_cl`, which it shares with robot rows (backups, tidy,
+the edit workspace). `selectedCams()` reads only the cameras out of it, and a
+pop-out unticks only the cameras it popped — a ticked robot is never counted,
+popped, or cleared by a camera action.
+
 ### How many pictures the wall can carry
 
 `CAM_MAX_LOADS` (6) new fetches per `CAM_REFRESH_MS` (2 s) beat is the whole

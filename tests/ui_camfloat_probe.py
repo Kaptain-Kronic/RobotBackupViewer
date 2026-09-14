@@ -904,6 +904,136 @@ def probe(window, api, mtx_hosts):
                 break
             time.sleep(0.3)
 
+        # ---- K. the BACKUP lens: a camera row's menu pops out too ------------
+        # Same two actions the wall's tiles offer, at the bottom of the row menu
+        # behind a rule, for CAMERA rows only - no toolbar controls on this lens.
+        # One robot joins the library here so "cameras only" is tested directly
+        # rather than inferred: a ticked robot must never be counted, popped, or
+        # unticked by a camera action. (ui_batch_probe's exact robot-row menu
+        # list is the other pin that robots gained nothing.)
+        js(window, "BV.camFloats.closeAll()")
+        wait(window, "document.querySelectorAll('.fbox').length===0 ? 'y':''")
+        js(window, """window.__rb=0; BV.api.call('lib_add', {robot:'RB010R01B01',
+            plant:'FakePlant', line:'LINE01', device_type:'robot',
+            ips:['192.0.2.90'], model:'', notes:'', latest_path:'',
+            ftp:{user:'', passive:true}}).then(function(){ window.__rb=1; });""")
+        wait(window, "window.__rb===1 ? 'y':''")
+        js(window, "BV.state.emit('library-dirty')")
+        js(window, "document.getElementById('cube-lib').click()")
+        wait(window, "!document.querySelector('.home-library.cam-mode') ? 'y':''")
+
+        def row_js(name):
+            return ("[...document.querySelectorAll('.lib-robot')].find(function(r){"
+                    "return r.textContent.indexOf(%s)>=0;})" % json.dumps(name))
+
+        for _ in range(24):
+            js(window, _OPEN_LINES_JS)
+            if js(window, "(%s && %s) ? 'y':''" % (row_js("CELL-01CVX10"),
+                                                   row_js("RB010R01B01"))) == "y":
+                break
+            time.sleep(0.3)
+        check("rowmenu.rows_render", js(window, "!!(%s && %s)" % (
+              row_js("CELL-01CVX10"), row_js("RB010R01B01"))),
+              "(the camera or robot row never rendered on the backup lens)")
+
+        def open_menu(name):
+            return json.loads(js(window, """JSON.stringify((function(){
+                var row=%s; if(!row) return null;
+                row.querySelector('.lib-robot-more').click();
+                var m=document.querySelector('.ctx-menu'); if(!m) return null;
+                return [].map.call(m.children, function(n){
+                  return n.classList.contains('ctx-sep') ? '---' : n.textContent; });
+            })())""" % row_js(name)) or "null")
+
+        def close_menu():
+            time.sleep(0.4)   # the menu's outside-click listeners attach deferred
+            js(window, "document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))")
+            time.sleep(0.3)
+
+        def click_item(label):
+            return js(window, """(function(){
+                var b=[...document.querySelectorAll('.ctx-menu .ctx-item')]
+                  .find(function(x){return x.textContent===%s;});
+                if(!b) return 'missing'; b.click(); return 'ok';
+            })()""" % json.dumps(label))
+
+        items = open_menu("RB010R01B01") or []
+        check("rowmenu.robot_row_unchanged",
+              not any("pop out" in i or "floating" in i for i in items)
+              and "---" not in items,
+              "(a ROBOT row grew camera view actions: %r)" % items)
+        close_menu()
+
+        items = open_menu("CELL-01CVX10") or []
+        ws = next((i for i, x in enumerate(items) if "edit workspace" in x), -1)
+        sep = items.index("---") if "---" in items else -1
+        pop = (items.index("pop out into a floating box")
+               if "pop out into a floating box" in items else -1)
+        check("rowmenu.camera_offers_pop_out", pop >= 0,
+              "(no pop-out on a camera row: %r)" % items)
+        check("rowmenu.at_the_bottom_behind_a_rule", 0 <= ws < sep < pop,
+              "(pop-out must sit BELOW the row actions, after a separator: %r)" % items)
+        check("rowmenu.no_count_without_a_selection",
+              not any(x.startswith("pop out the ") for x in items),
+              "(offered a selection count with nothing ticked: %r)" % items)
+        r = click_item("pop out into a floating box")
+        popped = wait(window, "document.querySelectorAll('.fbox').length===1 ? 'y':''")
+        check("rowmenu.pops_a_box_on_this_lens", r == "ok" and popped == "y",
+              "(the box did not appear over the backup lens: %s)" % r)
+        check("rowmenu.no_floating_toolbar_here", js(window,
+              "(function(){var a=document.getElementById('lib-cam-float'),"
+              "b=document.getElementById('lib-cam-popout');"
+              "return (!a||a.classList.contains('hidden')) &&"
+              " (!b||b.classList.contains('hidden'));})()"),
+              "(floating / pop-out toolbar controls showed up on the backup lens)")
+
+        items = open_menu("CELL-01CVX10") or []
+        check("rowmenu.knows_it_is_floating",
+              "find its floating box" in items
+              and "pop out into a floating box" not in items,
+              "(a floating camera's row still offers to pop it out again: %r)" % items)
+        close_menu()
+        js(window, "BV.camFloats.closeAll()")
+        wait(window, "document.querySelectorAll('.fbox').length===0 ? 'y':''")
+
+        # tick TWO cameras and the ROBOT, then ask a camera row
+        js(window, """(function(){
+            [%s, %s, %s].forEach(function(r){ r.querySelector('.lib-check').click(); });
+        })()""" % (row_js("CELL-01CVX10"), row_js("CELL-01MTX10"), row_js("RB010R01B01")))
+        items = open_menu("CELL-01CVX10") or []
+        check("rowmenu.counts_only_cameras", "pop out the 2 selected" in items,
+              "(expected 'pop out the 2 selected' - two cameras and a robot are "
+              "ticked, and the robot must not count: %r)" % items)
+        r = click_item("pop out the 2 selected")
+        two = wait(window, "document.querySelectorAll('.fbox').length===2 ? 'y':''")
+        check("rowmenu.pops_the_selection", r == "ok" and two == "y",
+              "(%s boxes from a two-camera selection)" %
+              js(window, "document.querySelectorAll('.fbox').length"))
+        ticks = json.loads(js(window, """JSON.stringify({
+            robot: %s.querySelector('.lib-check').checked,
+            cvx: %s.querySelector('.lib-check').checked,
+            mtx: %s.querySelector('.lib-check').checked })""" % (
+            row_js("RB010R01B01"), row_js("CELL-01CVX10"), row_js("CELL-01MTX10"))) or "{}")
+        check("rowmenu.robot_stays_ticked", ticks.get("robot") is True,
+              "(a camera action unticked a ROBOT - that selection belongs to "
+              "whatever backup comes next: %r)" % ticks)
+        check("rowmenu.cameras_untick_after", ticks.get("cvx") is False
+              and ticks.get("mtx") is False,
+              "(the popped cameras stayed ticked, so the menu would offer to pop "
+              "them out again: %r)" % ticks)
+
+        js(window, "%s.querySelector('.lib-check').click()" % row_js("RB010R01B01"))
+        js(window, "BV.camFloats.closeAll()")
+        wait(window, "document.querySelectorAll('.fbox').length===0 ? 'y':''")
+        js(window, "document.getElementById('cube-cam').click()")
+        wait(window, "document.querySelector('.home-library.cam-mode') ? 'y':''")
+        for _ in range(24):
+            js(window, _OPEN_LINES_JS)
+            if js(window, "document.querySelectorAll('.cam-tile img.cam-live')"
+                          ".length===%d ? 'y':''" % TOTAL) == "y":
+                break
+            time.sleep(0.3)
+
         # ---- J. the camera window: the boxes in an OS window of their own ----
         # Pop two out here, then move them across. The point of the whole
         # viewer count is that BOTH windows can then feed cameras: the wall

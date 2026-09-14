@@ -227,10 +227,23 @@
   function popOutSelected() {
     var ids = _camCl.selected();
     if (!ids.length) return;
-    ids.forEach(function (id) { BV.camFloats.popOut(id); });
+    popOutCams(ids);
     _camCl.clear(); _camCl.sync();
-    BV.camFloats.tileThem();
     syncPopBtn();
+  }
+  function popOutCams(ids) {
+    ids.forEach(function (id) { BV.camFloats.popOut(id); });
+    BV.camFloats.tileThem();
+  }
+
+  /* the cameras in the BACKUP lens's selection. That checklist is shared with
+     robot rows (backups, tidy, the edit workspace), so this reads only the
+     cameras out of it - a ticked robot is never popped out, never counted, and
+     never unticked by a camera action. Ones with no IP have nothing to show. */
+  function selectedCams() {
+    return selectedRobots().filter(function (x) {
+      return isCam(x) && x.ips && x.ips[0];
+    });
   }
 
   /* the count is the whole point of this control: a camera that left the wall
@@ -1619,6 +1632,37 @@
         : "add all programs to edit workspace",
       onClick: function () { addProgramsToWorkspace(into); },
     });
+    /* A CAMERA row offers the same pop-out the wall's tiles do, at the bottom
+       and behind a rule (they are view actions, not row actions). Cameras
+       only - a robot has no picture to float. And only from a real library row
+       (`main`): a backup tab's menu has no row behind it, and the float layer
+       is parked everywhere but the library, so a box popped from there would
+       land somewhere nobody can see it. */
+    var ip = (r.ips && r.ips[0]) || "";
+    if (main && isCam(r) && ip) {
+      items.push({ sep: true });
+      /* a selection outranks the row under the cursor, exactly as on the
+         wall: if you ticked six cameras, "pop out" means those six */
+      var cams = selectedCams();
+      var others = cams.some(function (c) { return c.id !== r.id; });
+      if (cams.length > 1 || (cams.length === 1 && others)) {
+        items.push({
+          label: "pop out the " + cams.length + " selected",
+          onClick: function () {
+            popOutCams(cams.map(function (c) { return c.id; }));
+            /* untick the CAMERAS that went out, and nothing else: the robots
+               in this selection belong to whatever backup is coming next */
+            cams.forEach(function (c) { _cl.set(c.id, false); });
+            _cl.sync();
+          },
+        });
+      }
+      items.push(BV.camFloats.has(r.id)
+        ? { label: "find its floating box",
+            onClick: function () { BV.camFloats.focusCam(r.id); } }
+        : { label: "pop out into a floating box",
+            onClick: function () { BV.camFloats.popOut(r.id); } });
+    }
     return items;
   }
 
