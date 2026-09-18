@@ -9,9 +9,11 @@ import json
 import logging
 import os
 import shutil
+import socket
 import subprocess
 import sys
 from pathlib import Path
+from wsgiref.simple_server import WSGIServer
 
 from . import __version__, settings
 from .api import Api
@@ -23,6 +25,41 @@ BG_FALLBACK = "#323437"  # pre-CSS window color; avoids white flash
 
 def resource_path(rel: str) -> Path:
     return Path(__file__).resolve().parent / rel
+
+
+# ---- the local page server ------------------------------------------------------
+# pywebview serves web/ from its own http server on 127.0.0.1, a stdlib
+# socketserver whose listen backlog is FIVE. Windows answers a connect that
+# finds the backlog full with a reset, not a wait: the page logs
+# ERR_CONNECTION_REFUSED and that script never runs. index.html pulls ~65
+# scripts at once, and WebView2 runtime 153 (auto-installed 2026-09-17) opens
+# them fast enough to overflow five on nearly every boot - 8-16 scripts
+# refused per boot, router.js then throws on a module that never loaded, and
+# the window sits there with no library and none of the saved settings
+# applied (get_state never runs). Measured: 0/4 boots as shipped, 5/5 with
+# this. The hidden-window probes load gently enough never to see it.
+
+class _DeepBacklogWSGIServer(WSGIServer):
+    request_queue_size = socket.SOMAXCONN    # as deep as the OS allows
+
+
+def _deepen_page_server_backlog() -> bool:
+    """Give pywebview's page server a real listen backlog. Its adapter builds
+    the server class from webview.http's module-global `WSGIServer` each time
+    it runs, so swapping that one name is the whole fix. Call before
+    webview.start(). Returns False (and says so in app.log) when a pywebview
+    upgrade has moved the seam, so a flaky boot leaves a trail."""
+    try:
+        from webview import http as wv_http
+    except ImportError:
+        return False
+    current = getattr(wv_http, "WSGIServer", None)
+    if not (isinstance(current, type) and issubclass(current, WSGIServer)):
+        log.warning("pywebview's page server moved - its listen backlog was NOT deepened")
+        return False
+    if not issubclass(current, _DeepBacklogWSGIServer):
+        wv_http.WSGIServer = _DeepBacklogWSGIServer
+    return True
 
 
 # ---- WebView2 boot resilience ---------------------------------------------------
@@ -173,6 +210,7 @@ def main(argv=None) -> int:
     api.bind(window, initial_backup=args.backup)
     _wire_drop(window, api)
 
+    _deepen_page_server_backlog()
     watch = _WebView2FailureWatch(window)
     logging.getLogger("pywebview").addHandler(watch)
     try:

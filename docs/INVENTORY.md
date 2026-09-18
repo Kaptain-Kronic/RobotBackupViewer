@@ -23,7 +23,7 @@ batch lands, or with `--check` to hear about drift).
 > When per-subsystem docs land, they supersede this file for their own area. This
 > map's remaining job is breadth: what exists, and where.
 
-**Scope.** 298 files / ~100,243 lines. Covers everything in the working tree except: the
+**Scope.** 299 files / ~100,380 lines. Covers everything in the working tree except: the
 **Scope.** 265 files / ~78,187 lines. Covers everything in the working tree except: the
 **Scope.** 270 files / ~81,013 lines. Covers everything in the working tree except: the
 `.git` internals, build outputs (`dist/`, `build/`, `__pycache__/`), the private
@@ -54,7 +54,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `ROADMAP.md` | 553 | lane-claiming roadmap: shipped/building/decided/open items per subsystem, plus the 2.0 editing principles | docs | active |
 | `run.py` | 10 | dev launcher and pyinstaller entry script: puts src on sys.path, calls backupviewer.app.main | build/config | active |
 | `run_libraryimporter.py` | 10 | dev launcher and pyinstaller entry script for the companion libraryimporter app | LibraryImporter | active |
-| `docs/INVENTORY.md` | 669 | this file: dated file-level map of the repo plus the findings from the phase-1 documentation pass, with resolved items marked inline | docs | active |
+| `docs/INVENTORY.md` | 670 | this file: dated file-level map of the repo plus the findings from the phase-1 documentation pass, with resolved items marked inline | docs | active |
 | `docs/proposals/home-split.md` | 284 | investigation of tabs/home.js (2,277 lines) by responsibility, where the real seams are, what must become shared components first, and a phased sequence — no code changed | docs | active |
 | `docs/subsystems/3d-viewer.md` | 773 | subsystem doc #3 (the 3D viewer): the pendant-proven FK solve and its JS twin, the 228-type table's validated-vs-not honesty, flange residuals re-measured on the pins, the zone degradation ladder, and the unprobed-viewport gap said plainly | docs | active |
 | `docs/subsystems/backup-capture.md` | 823 | subsystem doc #2 (the backup/discovery jobs + shared plumbing): transport ground truth tagged live-run-vs-assumed, the gentle-with-equipment invariants, a dedicated failure-modes section, and the batch-flow coverage gap said plainly | docs | active |
@@ -66,7 +66,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/__init__.py` | 1 | package marker holding the single source of the app version string (1.4) | shared/infra | active |
 | `src/backupviewer/__main__.py` | 6 | python -m backupviewer entry point delegating to app.main | shared/infra | active |
 | `src/backupviewer/api.py` | 5280 | the pywebview bridge class: 131 @_endpoint methods returning {ok,data} envelopes across every feature area | shared/infra | active |
-| `src/backupviewer/app.py` | 268 | window boot: arg parsing, resource_path, pywebview window, and the one-shot webview2 failure rescue relaunch | shared/infra | active |
+| `src/backupviewer/app.py` | 306 | window boot: arg parsing, resource_path, pywebview window, the page server's deepened listen backlog, and the one-shot webview2 failure rescue relaunch | shared/infra | active |
 | `src/backupviewer/backuplog.py` | 144 | durable backup-run log in %appdata%: per-run job rows, retry attempt counting, failed-spec list, never a password | backup capture | active |
 | `src/backupviewer/compare.py` | 527 | pure two-backup diff functions: io/registers/frames/payloads/programs rows plus tp-line alignment | compare engine | active |
 | `src/backupviewer/cvx_handshake/chan8502_tx.bin` | *96 KB* | captured cv-x 8502 control-channel client handshake: 13 messages incl. six 16 kb blobs, replayed at connect | remote/mobile | active |
@@ -260,6 +260,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/test_modeldb.py` | 95 | pytest for modeldb import/normalized matching/builtin-vs-imported layering plus a wellformedness sweep of the shipped kinematics BUILTIN table | tests | active |
 | `tests/test_mtx_remote.py` | 244 | pytest for the Matrox web-UI remote: DesignAssistant page scraping and mtx_remote_start/mtx_remote_window endpoints with the HTTP probe faked | tests | active |
 | `tests/test_mtxbackup.py` | 596 | pytest for the Matrox SMB camera pull end-to-end against a temp camera home via an injected mount, incl. MAX_PATH copy/index and camera self-naming | tests | active |
+| `tests/test_page_server.py` | 98 | pytest that pywebview's page server takes every index.html script in one burst (webview2 153 refused past a backlog of five): drives the real adapter, a listening socket that accepts nothing | tests | active |
 | `tests/test_payloads.py` | 43 | pytest for payload schedules out of $PLST_GRP: mass/cg/inertia plus uninit and -9999 sentinel flagging | tests | active |
 | `tests/test_phone_view.py` | 343 | pytest driving PhoneShare over real loopback HTTP with the camera fetch faked, plus address ranking and the phone_view_* endpoints and firewall helper | tests | active |
 | `tests/test_program_path.py` | 297 | pytest for the taught-point resolver: uframe composition, the utool inverse round-tripped against measure_flange, joint-rep forward placement, and every refusal reason | tests | active |
@@ -321,10 +322,10 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 
 | subsystem | files | ~lines |
 |---|---:|---:|
-| tests | 99 | 31,728 |
-| shared/infra | 28 | 10,200 |
+| tests | 100 | 31,826 |
+| shared/infra | 28 | 10,238 |
 | library | 5 | 8,440 |
-| docs | 12 | 7,955 |
+| docs | 12 | 7,956 |
 | theming | 34 | 6,702 |
 | backup parsing | 32 | 6,376 |
 | cameras | 18 | 6,372 |
@@ -337,7 +338,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | compare engine | 5 | 1,355 |
 | tools/scripts | 5 | 1,087 |
 | build/config | 7 | 267 |
-| **total** | **298** | **100,243** |
+| **total** | **299** | **100,380** |
 
 > Counts are by *primary* subsystem only — a file appears once, so these add up to the
 > whole repo. The `tests` row is the largest because every probe and unit suite counts as
