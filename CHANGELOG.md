@@ -1,6 +1,17 @@
 # Changelog
 
 ## unreleased — backups drag in and export out, the statusbar finds the switch, a program plays in 3d, the camera wall lights up all the way down, and a matrox pull brings home its photo history
+- **The app loads on WebView2 153 again.** Since Windows installed WebView2
+  runtime 153 (2026-09-17), most launches hung partway: the window came up,
+  but the library never filled in and saved settings never applied. The page's
+  65 scripts load from pywebview's small built-in server on 127.0.0.1, whose
+  listen backlog was five; 153 asks for them fast enough to overflow that, and
+  Windows refuses a connection past the backlog instead of queueing it, so
+  8–16 scripts never ran. The server now takes as many as the OS allows —
+  measured on 153, 0 boots in 4 before and 5 in 5 from source plus 8 in 8 from
+  the exe after, with no runtime pinning. `test_page_server` guards it; the
+  hidden-window probes load too gently ever to see it.
+
 - **"add all programs from N selected robots" stops counting cameras as
   robots.** A ticked camera was inflating that count and then being handed to
   a program resolver with nothing to find — a camera has no TP programs. The
@@ -106,6 +117,26 @@
   promotions with both remotes converted onto them, not copies, and the
   existing `ui_cvxremote_probe` / `ui_camwall_probe` passing unmodified is what
   proves each extraction faithful.
+
+- **Pick which cameras the wall shows.** A `cameras · all` button beside the
+  CV-X switch drops the wall's own plant → line → camera folders with a
+  checkbox at every level, so "just this line" is one click rather than fifty.
+  The pick is saved as the cameras that are *off*, so a camera discovered
+  tomorrow lands on the wall by itself; taking a CV-X off hands its remote
+  slot back at once instead of waiting out the reaper; and the button carries
+  the count (`cameras · 12 of 60`) while an emptied wall names the control
+  that emptied it — a trimmed wall is never a silent absence.
+
+- **Global-5 robots back up without a password.** R-50iA controllers with user
+  management turned on refuse anonymous FTP (530), which is how every backup
+  was pulled. Their built-in web server still serves the whole `md:` device,
+  so a robot that refuses FTP is now backed up over HTTP instead — the same
+  files, the same crash-safe snapshot with its complete marker written last,
+  chosen per robot automatically (FTP first, HTTP on a 530, detected on the
+  worker thread so an unreachable host never blocks the start). One file that
+  stalls is recorded as a skip rather than sinking the backup; a run of stalls
+  aborts honestly. Checked live against a real R-50iA line: 672 files, 15 MB,
+  reopens in the viewer.
 
 - **Export backups to a stick — the manage-backups modal grows a third tab.**
   Pick robots and/or cameras (grouped plant → line, tri-state select-alls,
