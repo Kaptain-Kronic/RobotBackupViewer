@@ -132,6 +132,11 @@ table.tbl { border-collapse: collapse; width: 100%; font-size: 0.85rem; font-fam
 .tbl tbody tr { transition: background 0.08s ease; }
 .tbl tbody tr:hover { background: color-mix(in srgb, var(--sub-alt) 22%, transparent); }
 .tbl td.num { text-align: right; font-variant-numeric: tabular-nums; }
+/* BV.table opts.fixed: columns take their given widths and the rest shares
+   what is left; a long cell ellipsises instead of widening the table past
+   its card (the positions summary used to drag a scrollbar under the card) */
+table.tbl.tbl-fixed { table-layout: fixed; }
+.tbl-fixed th, .tbl-fixed td { overflow: hidden; text-overflow: ellipsis; }
 .tbl td.dim { color: var(--sub); }
 .tbl td.accent { color: var(--accent); }
 
@@ -1109,6 +1114,42 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
    frames tab and the dcs frames section read the same */
 .frame-card .frame-sub { font-size: 0.88rem; color: var(--text); margin: -0.25rem 0 0.45rem; }
 
+/* ---- expandable rows + the position card (BV.pos.card) ----
+   A VTable row carrying an expanded detail keeps its cells one row tall
+   (vtable.js sets those heights inline, it owns the row arithmetic) and wraps
+   the .vt-detail under them; the static .tbl splices a .tbl-detail row under
+   its row instead. Both host the same card. */
+.vtable .vt-row.expanded {
+  flex-wrap: wrap; align-items: flex-start; align-content: flex-start;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.vtable .vt-row.expanded.selected { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.vt-detail { flex: 0 0 100%; box-sizing: border-box; padding: 0 0.8rem 0.55rem; white-space: normal; cursor: default; }
+.tbl tbody tr.has-detail { cursor: pointer; }
+.tbl tbody tr.open { background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.tbl tbody tr.tbl-detail, .tbl tbody tr.tbl-detail:hover { background: transparent; }
+.tbl tr.tbl-detail > td { padding: 0 0.8rem 0.55rem; white-space: normal; }
+/* the card: a head line (rep pill, uf/ut, config, actions), then every axis
+   of the group as label+value+unit tiles that reflow to the width at hand -
+   six joints on one line where there is room, two where there is not, never
+   an ellipsis - then the ‹ group › pager when the position spans groups */
+.pos-card { display: flex; flex-direction: column; gap: 0.35rem; font-size: 0.82rem; line-height: 1.35; }
+.pos-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem 0.7rem; color: var(--sub); font-size: 0.75rem; min-height: 1.2rem; }
+.pos-head .btn.pos-act { margin-left: auto; padding: 0.05rem 0.5rem; font-size: 0.72rem; }
+/* three per line, the pendant's rhythm: X Y Z / W P R / E1 and J1 J2 J3 /
+   J4 J5 J6 / E1 - columns hug their content so the block stays compact */
+.pos-axes { display: grid; grid-template-columns: repeat(3, minmax(0, max-content)); gap: 0.15rem 1.6rem; }
+.pos-ax { display: flex; align-items: baseline; gap: 0.35rem; white-space: nowrap; }
+.pos-ax .lbl { color: var(--accent); font-weight: 600; font-size: 0.72rem; min-width: 1.6em; }
+.pos-ax .val { font-variant-numeric: tabular-nums; color: var(--text); }
+.pos-ax .unit { color: var(--sub); font-size: 0.68rem; }
+.pos-ax.masked .val { color: var(--sub); }
+.pos-pager { display: flex; align-items: center; justify-content: center; gap: 0.6rem; color: var(--text); font-size: 0.75rem; margin-top: 0.1rem; }
+.pos-pager .btn { padding: 0 0.5rem; font-size: 0.9rem; line-height: 1.3; }
+.pos-pager .btn:disabled { opacity: 0.3; cursor: default; color: var(--text); }
+.pos-untaught { font-size: 0.72rem; text-align: center; }
+.pill.pos-ngrp { vertical-align: middle; }
+
 /* ---- search results ---- */
 .sr-section { margin-bottom: 1.1rem; }
 .sr-section > h3 {
@@ -1375,6 +1416,7 @@ button.btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
 .sr-name, .sr-hit .tx,
 .cmp-name, .cmp-a, .cmp-b, .cmp-summary,
 .frame-card h3, .frame-card .frame-sub, .frame-card .cfg,
+.pos-ax, .pos-meta, .pos-page,
 .sysvar-title,
 .hero .robot-name, .hero-sub, .ov-chip .v {
   /* the app's real data/code text - pinned to monospace so columns and numeric

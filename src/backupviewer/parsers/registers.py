@@ -3,6 +3,10 @@
 NUMREG.VA:  [*NUMREG*]$NUMREG ARRAY[999] OF Numeric Reg ->  [1] = 10  'Spot Count G1'
 POSREG.VA:  [*POSREG*]$POSREG ARRAY[groups,200] OF Position Reg - entries are
             joint, cartesian, or Uninitialized; comment rides on the index line.
+            One entry per [group, index] line, exactly as the dump prints them
+            (a two-group robot lists PR[7] twice) - folding the groups of one
+            register into a single row is the viewer's job, not the parser's.
+            Extended axes (EXT1: 700.000 mm, a rail) ride along as "ext".
 STRREG.VA:  [*STRREG*]$STRREG ARRAY[99] OF String Reg
 """
 from __future__ import annotations

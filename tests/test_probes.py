@@ -63,6 +63,7 @@ PROBES = [
     "ui_jobs_probe.py",
     "ui_logic_probe.py",
     "ui_netstatus_probe.py",
+    "ui_positions_probe.py",
     "ui_sim_export_probe.py",
     "ui_tabs_probe.py",
     "ui_theme_palette_probe.py",

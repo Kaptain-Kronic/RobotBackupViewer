@@ -29,7 +29,7 @@
       ["esc", "clear filter · back to list · close"],
       ["j / k or ↓ / ↑", "move selection"],
       ["h / l or ← / →", "switch pane (split views)"],
-      ["enter", "open selection · search signal"],
+      ["enter", "open selection · expand a position · search signal"],
       ["t / shift+t", "settings / cycle theme"],
       ["?", "this help"],
     ];

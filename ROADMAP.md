@@ -213,7 +213,10 @@ Each of these is deliberately scoped to land on its own. Good places to start.
   robots miss by exactly their carriage travel (pure translation, perfect
   orientation) and some mounts by a constant rotation. Both refuse to pose
   today (honest); modeling the rail axis and mount orientation would bring
-  them in. Needs the aux-axis direction + mount angle from the backup.
+  them in. Needs the aux-axis direction + mount angle from the backup. The
+  carriage *value* is in hand since 2026-09-11 — `E1`/`EXT1` is parsed on
+  every taught point and PR (`ext` on the group) — so the missing piece is
+  purely the axis direction + mount.
 - 📋 **Compare overlay** — ghost the comparison backup's zones into the
   viewport (the "what changed in DCS" killer view).
 - ✅ **Lines-mode zones** — `$MODE=3` ↔ Restricted zone(Lines) and `$MODE=0`

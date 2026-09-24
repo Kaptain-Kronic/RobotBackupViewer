@@ -1,22 +1,38 @@
 /* tabs/registers.js - R / PR / SR sub-tabs, list split into side-by-side
-   columns on wide screens to halve scrolling. Click -> backup-wide search. */
+   columns on wide screens to halve scrolling. R/SR rows click through to the
+   backup-wide search; a PR row expands into its position card (every axis at
+   full precision, extended axes included, ‹ › across its groups) and offers
+   the search from there. */
 (function () {
   "use strict";
 
   var mt = null;
 
-  function posSummary(r) {
-    if (r.kind === "joint") {
-      return '<span class="dim">J:</span> ' + r.joints.map(function (j) {
-        return BV.fmt.num(j, 2);
-      }).join(", ");
-    }
-    if (r.kind === "cartesian") {
-      return ["x", "y", "z", "w", "p", "r"].map(function (ax) {
-        return '<span class="dim">' + ax + "</span> " + BV.fmt.num(r[ax], 1);
-      }).join("  ");
-    }
-    return '<span class="dim">uninitialized</span>';
+  /* POSREG.VA lists one entry per [group, index] line and the parser keeps
+     that shape (files are law). The table shows one row per REGISTER with its
+     groups folded in: a multi-group robot writes PR[7] for all its groups at
+     once, so the groups are pages of the expanded card, never a column. */
+  function foldPos(regs) {
+    var byIndex = {}, rows = [];
+    regs.forEach(function (r) {
+      var row = byIndex[r.index];
+      if (!row) {
+        row = byIndex[r.index] = { index: r.index, comment: "", groups: [] };
+        rows.push(row);
+      }
+      row.groups.push(r);
+      if (!row.comment && r.comment) row.comment = r.comment;
+    });
+    return rows;
+  }
+
+  /* R: non-zero or named; SR: non-empty or named; PR: any group taught or
+     named - the same rule on both robots of a vs page */
+  function keepRow(kind, r) {
+    if (r.comment) return true;
+    if (kind === "num") return r.value !== 0 && r.value !== null;
+    if (kind === "str") return !!r.value;
+    return BV.pos.taught(r.groups);
   }
 
   function render(view, toolbar, params) {
@@ -93,26 +109,42 @@
       return prefix + "[" + r.index + "]";
     }
 
+    /* the PR open set and each card's group page live in the tab's per-backup
+       memory, so the list comes back exactly as you left it */
+    var posExp = ts.posExpanded || (ts.posExpanded = {});
+    var posPage = ts.posPage || (ts.posPage = {});
+    function posDetail(r) {
+      return BV.pos.card(r.groups, {
+        page: posPage[r.index] || 0,
+        onPage: function (i) { posPage[r.index] = i; },
+        actions: [{
+          label: "find uses",
+          title: "search this backup for " + regName(r),
+          onClick: function () {
+            /* on a vs page the right pane (active===1) is the compare robot;
+               in the plain split view both panes are this robot */
+            var side = (vs && mt && mt.active === 1) ? "/b" : "";
+            location.hash = "#search/" + encodeURIComponent(regName(r)) + side;
+          },
+        }],
+      });
+    }
+
     function load() {
       BV.api.call("get_registers", cur).then(function (regs) {
-        var rows = regs;
+        var rows = cur === "pos" ? foldPos(regs) : regs;
         if (hideEmpty && jumpIndex === null) {
-          rows = regs.filter(function (r) {
-            if (r.comment) return true;
-            if (cur === "num") return r.value !== 0 && r.value !== null;
-            if (cur === "str") return !!r.value;
-            return r.kind !== "uninit";
-          });
+          rows = rows.filter(function (r) { return keepRow(cur, r); });
         }
         var columns;
         if (cur === "pos") {
           columns = [
-            { key: "group", label: "grp", width: 55, num: true, dim: true },
             { key: "index", label: "#", width: 95, num: true, accent: true, render: function (r) {
                 return regName(r); } },
             { key: "comment", label: "name", width: 180, render: function (r) {
                 return r.comment ? BV.esc(r.comment) : '<span class="dim">—</span>'; } },
-            { key: "_pos", label: "value", grow: true, sortable: false, render: posSummary },
+            { key: "_pos", label: "value", grow: true, sortable: false, render: function (r) {
+                return BV.pos.summary(r.groups); } },
           ];
         } else {
           columns = [
@@ -130,10 +162,17 @@
         function show(panesOrData) {
           if (mt) mt.destroy();
           panesOrData.stateKey = (vs ? "registers.vs." : "registers.") + cur;
+          if (cur === "pos") {
+            panesOrData.rowKey = function (r) { return r.index; };
+            panesOrData.detail = posDetail;
+            panesOrData.expanded = posExp;
+          }
           mt = new BV.MultiTable(host, panesOrData);
           BV.currentVTable = mt;
           mt.setFilter(sb.value());
           if (jumpIndex !== null) {
+            /* a jump from search lands on the register AND opens it */
+            if (cur === "pos") posExp[jumpIndex] = true;
             mt.selectWhere(function (r) { return r.index === jumpIndex; });
             jumpIndex = null;
           }
@@ -141,20 +180,13 @@
 
         if (vs) {
           BV.api.call("get_registers", cur, null, "b").then(function (rb) {
-            var rowsB = rb;
+            var rowsB = cur === "pos" ? foldPos(rb) : rb;
             if (hideEmpty) {
-              rowsB = rb.filter(function (r) {
-                if (r.comment) return true;
-                if (cur === "num") return r.value !== 0 && r.value !== null;
-                if (cur === "str") return !!r.value;
-                return r.kind !== "uninit";
-              });
+              rowsB = rowsB.filter(function (r) { return keepRow(cur, r); });
             }
             var nameA = BV.state.manifest.robot_name || BV.state.manifest.name;
             var nameB = BV.state.compare.robot_name || BV.state.compare.name;
-            var keyFn = cur === "pos"
-              ? function (r) { return r.group + ":" + r.index; }
-              : function (r) { return r.index; };
+            var keyFn = function (r) { return r.index; };
             show({
               mode: "pair",
               panes: [

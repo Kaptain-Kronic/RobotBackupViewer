@@ -1,6 +1,23 @@
 # Changelog
 
-## unreleased — backups drag in and export out, the statusbar finds the switch, a program plays in 3d, the camera wall lights up all the way down, and a matrox pull brings home its photo history
+## unreleased — backups drag in and export out, the statusbar finds the switch, a program plays in 3d, the camera wall lights up all the way down, a matrox pull brings home its photo history, and a taught position opens up whole
+- **Positions read whole — and the rail finally shows.** The PR table and a
+  program's positions card used to cram every axis into one ellipsised cell
+  and put the motion group in a column of its own, so a two-group robot
+  listed PR[7] twice and nobody could read either line. Now a position is
+  one row (`#` · name · a compact summary) that expands in place into its
+  card: every axis at full precision with its unit, the representation, uf/ut
+  and config on the head line, and — when a point is taught for more than
+  one group — small ‹ › arrows under the data page through the groups
+  (`group 1 · 1/2`). Untaught groups are named once, dimly, never paged.
+  Extended axes are parsed for the first time: a rail robot's `E1=` in a
+  listing (both representations) and `EXT1:` in POSREG.VA now ride on every
+  position and register as `E1 700.000 mm`, and the compare report diffs a
+  moved carriage like any other axis. Enter toggles the selected row, the
+  open set and the chosen page survive leaving the tab, and the row math of
+  the windowed table stays exact around the taller rows. "find uses" moved
+  into the card, so a click reads instead of jumping to search. Verified
+  card-by-card against a real rail robot's files.
 - **Export backups to a stick — the manage-backups modal grows a third tab.**
   Pick robots and/or cameras (grouped plant → line, tri-state select-alls,
   a robots/cameras/both filter), choose how many of each device's newest

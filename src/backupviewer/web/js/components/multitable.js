@@ -1,6 +1,8 @@
 /* multitable.js - two VTables working as one, to halve scrolling on wide screens.
    Duck-types the VTable surface keys.js relies on (container, total, setFilter,
-   moveSelection, openSelected, destroy) plus switchPane for ←/→.
+   moveSelection, openSelected, destroy) plus switchPane for ←/→. VTable's
+   expandable-row options (rowKey/detail/expanded/onToggle) pass straight
+   through, per pane or table-wide.
 
    mode "split": ONE logical list shown as two contiguous halves side by side
                  (rows 1..N/2 | N/2+1..N). Falls back to a single pane when narrow.
@@ -79,6 +81,16 @@
         rowHeight: self.opts.rowHeight,
         rowClass: pane.rowClass || self.opts.rowClass,
         stateKey: self.stateKey ? self.stateKey + ".p" + i : null,
+        /* expandable rows: one shared open set, so in a pair the same key
+           opens on both robots and in a split it just follows its row */
+        rowKey: pane.rowKey || self.opts.rowKey,
+        detail: pane.detail || self.opts.detail,
+        expanded: self.opts.expanded,
+        onToggle: function (row, open) {
+          self.active = i;
+          self._remember();
+          if (self.opts.onToggle) self.opts.onToggle(row, open);
+        },
         onOpen: function (row) {
           self.active = i;
           self._remember();

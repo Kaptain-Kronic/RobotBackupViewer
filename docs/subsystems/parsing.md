@@ -14,7 +14,10 @@ scripts, and the three things that pass could not prove.
 §2 updated 2026-08-20, the program-path slice, with `ls_motion` — the /MN
 motion-instruction reader behind the 3D view's program playback — and with
 `ls_program.mn_stream`, the promoted instruction stream it and `healthscan`
-now share.*
+now share. §4 updated 2026-09-11, the positions slice: extended axes (a
+rail's E1) are read from both `.LS` representations and from POSREG.VA,
+kept as `ext` beside the six joints — the shapes were corpus-measured on the
+real rail robots that day.*
 
 Covers: src/backupviewer/session.py, src/backupviewer/parsers/__init__.py,
 src/backupviewer/parsers/alarms.py, src/backupviewer/parsers/callgraph.py,
@@ -218,6 +221,7 @@ verified* — or an honest **assumed**. The evidence tags:
 |---|---|
 | Body line = 4-wide right-justified number + `:` + separator + text + `' ;'`; separator is 2 spaces EXCEPT motion lines (`J/L/C/A` + space) which butt against the colon; long statements wrap with `    :  ` continuations, `';'` on the last physical line; everything CRLF | **corpus-measured**: 6,478 real programs / 378k body lines, zero counter-examples (`ls_edit.py:7-17`) |
 | Position values print with 3 decimals | **corpus-measured**: unanimous across 30k values (`ls_edit.py:265`) |
+| An extended axis prints as its own `E1=   900.000  mm` line after J6 *or* after R — the same `E1=` in BOTH representations, never `J7=`; a masked one is `E1=  ********  mm` | **corpus-measured 2026-09-11**: 178 `E`-lines across the rail robots, 26 of them in joint representation, zero `J7=` anywhere (`ls_program.py:44-48`); `parse_ls_program` keeps them as `ext`, so `joints` stays six long for the kinematics |
 | `FILE_NAME` in `/ATTR` is vestigial — it disagrees with its own file in the wild | **corpus-measured**: 90 of 400 sampled programs (`ls_edit.py:193-199`); why rename only rewrites `/PROG` |
 | A masked `********` point is *placed logically but never initialized with data*; typing a value initializes it — so the editor treats masked fields as editable | domain call recorded `ls_edit.py:271-273`; ground-truthed during the editor build (pendant behaviour), not re-provable from files alone |
 | `.LS` is a program ⇔ content starts `/PROG`; otherwise a report dump whose first line is `<NAME>.LS  Robot Name <host> <date>` — the name tells you nothing | `session.py:9-11,229-252`; how ERRALL.LS et al. are told apart from TP source |
@@ -229,6 +233,7 @@ verified* — or an honest **assumed**. The evidence tags:
 | Fact | Evidence |
 |---|---|
 | Three body shapes cover every `.VA` we read: scalar arrays, position arrays (cartesian or joint), struct fields | `va.py:1-22`; held across the corpus so far — a fourth shape would land in `record_tree`'s verbatim branch, visible not lost |
+| POSREG.VA prints an extended axis as its own `EXT1:   700.000 mm` line (unit included) after the six joints or after W/P/R; `parse_position_array` keeps it as `ext`, never as a seventh joint. `parse_posreg` stays one entry per `[group, index]` line — a two-group robot lists PR[7] twice, and folding those into one row is the viewer's job | verified 2026-09-11 on the four real rail-robot dumps in the tree (`va.py:48-52`, `registers.py:6-11`); the rendered cards were read back against the files by a scratch probe that day |
 | A trailing quoted string on a scalar-array line is the COMMENT when something precedes it (`[1] = 10 'Spot Count G1'`) but the VALUE when alone (`[4] = 'STYLE04'` — string arrays dump quoted) | `va.py:99-123`; mis-reading this swaps values and comments in string registers |
 | KAREL struct fields dump *plain* field names (no `$`), so the `$` in `Field:` lines must be optional | `va.py:36-39`, `sysvars.py:35-41` — the same lesson threaded through both engines |
 | The `[*SYSTEM*]` section tag — not the filename — is a system variable's identity; the controller scatters them across SY*.VA chunks and odd names (CELLIO, DCSIOC, DCSPOS, TWLOGVAR) | `sysvars.py:1-11`; **live-run 2026-07-31**: on a real MD backup, 190 `.VA` files total, 24 carry `[*SYSTEM*]` records; SYSTEM.VA alone holds 744, the merge yields 978 |

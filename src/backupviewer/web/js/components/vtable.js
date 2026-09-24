@@ -11,9 +11,16 @@
      rowHeight: 27,
      onOpen: fn(row),
      onContext: fn(row, ev),          // right-click a row (selects it first)
-     rowClass: fn(row) -> extra class string
+     rowClass: fn(row) -> extra class string,
+     // expandable rows (sync mode): a click or enter on a row opens its detail
+     // under the cells instead of calling onOpen. Heights are measured from
+     // the DOM, so the window math stays exact. rowKey names a row across
+     // refills (filter, sort, both panes of a MultiTable); expanded is the
+     // caller-owned {key: true} map so the open set can live in BV.tabState.
+     rowKey: fn(row) -> key, detail: fn(row) -> node|html,
+     expanded: {}, onToggle: fn(row, open)
    });
-   vt.setFilter(text); vt.refresh(); vt.destroy();
+   vt.setFilter(text); vt.refresh(); vt.destroy(); vt.toggle(row, force?);
 */
 (function () {
   "use strict";
@@ -49,6 +56,12 @@
        on the header cell; this timestamp lets the sort handler ignore that click
        (mirrors dragReorder's clickGuardMs/isRecentDrag) */
     this._lastResizeEnd = 0;
+
+    this.rowKey = opts.rowKey || null;
+    this.detail = opts.detail || null;
+    this.expanded = opts.expanded || {};
+    this._detailH = {};      /* key -> measured detail height (px) */
+    this._tops = null;       /* row offsets, only while something is expanded */
 
     /* opts.stateKey: persist scroll position + sort across navigating in/out of
        the tab (in-session, via BV.tabState). Restored once on first layout. */
@@ -283,10 +296,114 @@
     return page[i - pi * PAGE] || null;
   };
 
+  /* ---------- expandable rows ---------- */
+
+  VTable.prototype._key = function (row) {
+    return this.rowKey ? this.rowKey(row) : undefined;
+  };
+
+  VTable.prototype._isExpanded = function (row) {
+    if (!this.detail || !row) return false;
+    var k = this._key(row);
+    return k !== undefined && k !== null && !!this.expanded[k];
+  };
+
+  /* row offsets: null (every row is rowHeight tall - the plain arithmetic
+     path every table has always used) until a row is expanded, then a prefix
+     sum over the view. Async tables never expand: their rows arrive by page
+     and the sum needs them all. */
+  VTable.prototype._reindex = function () {
+    this._tops = null;
+    if (!this.detail || this.async) return;
+    var rh = this.rowHeight, tops = null;
+    for (var i = 0; i < this.total; i++) {
+      var row = this.view[i];
+      if (!this._isExpanded(row)) {
+        if (tops) tops[i + 1] = tops[i] + rh;
+        continue;
+      }
+      if (!tops) {
+        tops = new Array(this.total + 1);
+        for (var j = 0; j <= i; j++) tops[j] = j * rh;
+      }
+      var dh = this._detailH[this._key(row)];
+      /* unmeasured: guess three rows; the first render corrects it */
+      tops[i + 1] = tops[i] + rh + (dh === undefined ? rh * 3 : dh);
+    }
+    this._tops = tops;
+  };
+
+  VTable.prototype._rowTop = function (i) { return this._tops ? this._tops[i] : i * this.rowHeight; };
+  VTable.prototype._rowH = function (i) { return this._tops ? this._tops[i + 1] - this._tops[i] : this.rowHeight; };
+  VTable.prototype._totalH = function () { return this._tops ? this._tops[this.total] : this.total * this.rowHeight; };
+
+  /* the row at spacer offset y (a binary search once rows differ in height) */
+  VTable.prototype._indexAt = function (y) {
+    if (!this._tops) return Math.floor(y / this.rowHeight);
+    var lo = 0, hi = this.total - 1;
+    while (lo < hi) {
+      var mid = (lo + hi + 1) >> 1;
+      if (this._tops[mid] <= y) lo = mid; else hi = mid - 1;
+    }
+    return lo;
+  };
+
+  /* keep row i on screen: its top never above the viewport, and as much of
+     its (possibly expanded) height showing as fits - the top wins when the
+     whole thing can't */
+  VTable.prototype._scrollRowIntoView = function (i) {
+    var top = this._rowTop(i), hgt = this._rowH(i);
+    var avail = this.container.clientHeight - this.head.offsetHeight;
+    if (top < this.container.scrollTop) {
+      this.container.scrollTop = top;
+    } else if (top + hgt > this.container.scrollTop + avail) {
+      this.container.scrollTop = Math.min(top, top + hgt - avail);
+    }
+  };
+
+  /* expanded rows are as tall as their content: read that back after a
+     render and, when a guess or a stale height was in play, relayout once
+     with the truth (the guard stops the render->measure->render loop) */
+  VTable.prototype._measureDetails = function () {
+    var self = this, changed = false;
+    Array.prototype.forEach.call(this.spacer.querySelectorAll(".vt-detail"), function (d) {
+      var h = d.offsetHeight;
+      if (h && self._detailH[d._bvKey] !== h) { self._detailH[d._bvKey] = h; changed = true; }
+    });
+    if (changed && !this._measuring) {
+      this._measuring = true;
+      try {
+        this._reindex();
+        this.spacer.style.height = this._totalH() + "px";
+        this._render();
+      } finally {
+        this._measuring = false;
+      }
+    }
+  };
+
+  /* open/close a row's detail; force = true/false sets, undefined toggles */
+  VTable.prototype.toggle = function (row, force) {
+    if (!this.detail) return;
+    var k = this._key(row);
+    if (k === undefined || k === null) return;
+    var open = force === undefined ? !this.expanded[k] : !!force;
+    if (open) this.expanded[k] = true; else delete this.expanded[k];
+    this._reindex();
+    this.spacer.style.height = this._totalH() + "px";
+    this._render();
+    if (open) {
+      var idx = this.view.indexOf(row);
+      if (idx >= 0) this._scrollRowIntoView(idx);
+    }
+    if (this.opts.onToggle) this.opts.onToggle(row, open);
+  };
+
   /* ---------- rendering ---------- */
 
   VTable.prototype._layout = function () {
-    this.spacer.style.height = (this.total * this.rowHeight) + "px";
+    this._reindex();
+    this.spacer.style.height = this._totalH() + "px";
     this.spacer.innerHTML = "";
     this._renderedRows = [];
     this._render();
@@ -311,8 +428,8 @@
   VTable.prototype._render = function () {
     var h = this.container.clientHeight - this.head.offsetHeight;
     var top = this.container.scrollTop;
-    var first = Math.max(0, Math.floor(top / this.rowHeight) - OVERSCAN);
-    var last = Math.min(this.total - 1, Math.ceil((top + h) / this.rowHeight) + OVERSCAN);
+    var first = Math.max(0, this._indexAt(top) - OVERSCAN);
+    var last = Math.min(this.total - 1, this._indexAt(top + h) + OVERSCAN);
 
     var frag = document.createDocumentFragment();
     var self = this;
@@ -320,9 +437,11 @@
 
     for (var i = first; i <= last; i++) {
       var row = this._rowAt(i);
-      var el = BV.el("div", { class: "vt-row" + (this.opts.onOpen ? " clickable" : "") + (i === this.selected ? " selected" : "") });
-      el.style.top = (i * this.rowHeight) + "px";
-      el.style.height = this.rowHeight + "px";
+      var open = this._isExpanded(row);
+      var el = BV.el("div", { class: "vt-row" + (this.opts.onOpen || this.detail ? " clickable" : "") +
+        (i === this.selected ? " selected" : "") + (open ? " expanded" : "") });
+      el.style.top = this._rowTop(i) + "px";
+      el.style.height = this._rowH(i) + "px";
       if (row) {
         if (this.opts.rowClass) {
           var extra = this.opts.rowClass(row);
@@ -336,12 +455,29 @@
           if (cw) cell.style.width = cw;
           var v = col.render ? col.render(row) : BV.esc(row[col.key]);
           cell.innerHTML = (v === null || v === undefined || v === "") ? "" : v;
+          if (open) {
+            /* the cell line stays one row tall; the detail wraps under it */
+            cell.style.height = self.rowHeight + "px";
+            cell.style.lineHeight = self.rowHeight + "px";
+          }
           el.appendChild(cell);
         });
+        if (open) {
+          var det = BV.el("div", { class: "vt-detail" });
+          var content = this.detail(row);
+          if (typeof content === "string") det.innerHTML = content;
+          else if (content) det.appendChild(content);
+          det._bvKey = this._key(row);
+          el.appendChild(det);
+        }
         (function (idx, r) {
-          el.addEventListener("click", function () {
+          el.addEventListener("click", function (ev) {
+            /* clicks inside an open detail (its pager, its buttons, selecting
+               its text) belong to the detail, never to the row */
+            if (ev.target.closest && ev.target.closest(".vt-detail")) return;
             self.select(idx);
-            if (self.opts.onOpen) self.opts.onOpen(r);
+            if (self.detail) self.toggle(r);
+            else if (self.opts.onOpen) self.opts.onOpen(r);
           });
           /* right-click = row actions. select() first, so the menu and the
              highlight can never point at different rows; preventDefault lives
@@ -361,6 +497,7 @@
       frag.appendChild(el);
     }
     this.spacer.appendChild(frag);
+    if (this.detail) this._measureDetails();
   };
 
   /* ---------- public ---------- */
@@ -387,17 +524,13 @@
   VTable.prototype.select = function (i, center) {
     if (i < 0 || i >= this.total) return;
     this.selected = i;
-    var viewTop = i * this.rowHeight;
-    var headH = this.head.offsetHeight;
     if (center) {
       /* jump flows (search results, config jump) land the row mid-window,
          not one pixel inside the bottom edge */
-      var avail = this.container.clientHeight - headH;
-      this.container.scrollTop = Math.max(0, viewTop - avail / 2 + this.rowHeight / 2);
-    } else if (viewTop < this.container.scrollTop) {
-      this.container.scrollTop = viewTop;
-    } else if (viewTop + this.rowHeight > this.container.scrollTop + this.container.clientHeight - headH) {
-      this.container.scrollTop = viewTop - this.container.clientHeight + this.rowHeight + headH;
+      var avail = this.container.clientHeight - this.head.offsetHeight;
+      this.container.scrollTop = Math.max(0, this._rowTop(i) - avail / 2 + this._rowH(i) / 2);
+    } else {
+      this._scrollRowIntoView(i);
     }
     this._render();
   };
@@ -408,9 +541,11 @@
   };
 
   VTable.prototype.openSelected = function () {
-    if (this.selected < 0 || !this.opts.onOpen) return;
+    if (this.selected < 0) return;
     var row = this._rowAt(this.selected);
-    if (row) this.opts.onOpen(row);
+    if (!row) return;
+    if (this.detail) this.toggle(row);
+    else if (this.opts.onOpen) this.opts.onOpen(row);
   };
 
   VTable.prototype.destroy = function () {

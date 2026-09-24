@@ -15,6 +15,10 @@ SYSMACRO/DIOCFGSV):
                        Group: 1   Config: N U T, 0, 0, 0
                        X: ..  Y: ..  Z: ..   /   W: ..  P: ..  R: ..
                      or joint lines:  J1 =    -5.999 deg   J2 = ...
+                     either rep may end with extended-axis lines, one per
+                     axis, printed with their unit:  EXT1:   700.000 mm
+                     (a rail robot's 7th axis - kept as "ext", never folded
+                     into the six joints)
   struct fields      Field: SETUP_DATA[1,1,1].$COMMENT Access: RW: STRING[29] = 'PH02 PIN'
                      (only scalar-valued fields are captured; POSITION-valued
                      and nested-array fields are skipped - nothing we render
@@ -41,6 +45,11 @@ _FIELD = re.compile(
 _GROUP_CONFIG = re.compile(r"^\s*Group:\s*(\d+)\s*(?:Config:\s*(.*?)\s*)?$")
 _AXIS_LINE = re.compile(r"([XYZWPR]):\s*(-?[\d.]+)")
 _JOINT_LINE = re.compile(r"J(\d+)\s*=\s*(-?[\d.]+)\s*deg")
+# extended axes (a rail, a positioner riding in the robot's own group) print
+# on their own line after the six joints OR after W/P/R: "EXT1:   700.000 mm".
+# Verified on real rail-robot POSREG.VA dumps; the unit is captured as printed
+# because a linear axis is mm where a rotary one is deg.
+_EXT_LINE = re.compile(r"EXT(\d+):\s*(-?[\d.]+)\s*(mm|deg)?")
 
 
 @dataclass
@@ -128,7 +137,9 @@ def parse_position_array(rec: VaRecord) -> dict[tuple[int, ...], dict | None]:
 
     Entry value is None for Uninitialized, else:
       {"comment": str?, "group": int?, "config": str?,
-       "kind": "cartesian"|"joint", "x".."r": float?  |  "joints": [floats]}
+       "kind": "cartesian"|"joint", "x".."r": float?  |  "joints": [floats],
+       "ext": [{"n": 1, "value": float, "unit": "mm"|"deg"|""}]?}
+    "ext" is present only when the dump prints extended-axis lines.
     """
     out: dict[tuple[int, ...], dict | None] = {}
     cur: dict | None = None
@@ -163,6 +174,12 @@ def parse_position_array(rec: VaRecord) -> dict[tuple[int, ...], dict | None]:
             cur.setdefault("joints", {})
             for jn, val in joints:
                 cur["joints"][int(jn)] = float(val)
+            continue
+        ext = _EXT_LINE.findall(line)
+        if ext and line.lstrip().startswith("EXT"):
+            cur.setdefault("ext", [])
+            for en, val, unit in ext:
+                cur["ext"].append({"n": int(en), "value": float(val), "unit": unit})
             continue
         axes = _AXIS_LINE.findall(line)
         if axes and re.match(r"^\s*[XW]:", line):

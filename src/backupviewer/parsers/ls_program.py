@@ -14,7 +14,8 @@
        GP1:
         UF : 0, UT : 1,		CONFIG : 'N U T, 0, 0, 0',
         X =  1115.514  mm, ...          <- or J1=  .000 deg, or ******** (masked)
-    };
+        E1=   900.000  mm               <- extended axis (a rail): the same
+    };                                     "E1=" line in BOTH representations
     /END
 
 parse_ls_header() is cheap (stops at /MN) and powers the program list view;
@@ -41,6 +42,10 @@ _UF_UT = re.compile(r"UF\s*:\s*(\S+?),\s*UT\s*:\s*(\S+?),")
 _CONFIG = re.compile(r"CONFIG\s*:\s*'([^']*)'")
 _AXIS = re.compile(r"([XYZWPR])\s*=\s*(\S+)\s*(?:mm|deg)")
 _JOINT = re.compile(r"J(\d+)\s*=\s*(\S+)\s*deg")
+# extended axes print as "E1=   900.000  mm" after the six joints or after
+# W/P/R - never as J7. Verified on real rail-robot listings (178 E-lines, 26
+# of them in joint representation). Unit kept as printed (rail = mm).
+_EXT = re.compile(r"\bE(\d)\s*=\s*(\S+)\s*(mm|deg)")
 
 _INT_ATTRS = {"PROG_SIZE", "LINE_COUNT", "MEMORY_SIZE", "VERSION"}
 
@@ -227,6 +232,11 @@ def parse_ls_program(text: str) -> dict:
             m = _CONFIG.search(line)
             if m:
                 grp["config"] = m.group(1)
+            for en, v, unit in _EXT.findall(line):
+                grp.setdefault("ext", []).append(
+                    {"n": int(en), "value": _pos_value(v), "unit": unit})
+                if v == MASKED:
+                    grp["masked"] = True
             joints = _JOINT.findall(line)
             if joints:
                 grp.setdefault("joints", {})

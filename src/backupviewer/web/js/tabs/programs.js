@@ -810,35 +810,37 @@
           });
           pc.querySelector("h3").appendChild(see);
         }
-        /* one row per group; the P[] cell shows only on a position's first group */
-        var posRows = [];
-        p.positions.forEach(function (pos) {
-          pos.groups.forEach(function (g, gi) { posRows.push({ pos: pos, g: g, gi: gi }); });
-        });
-        function posVal(g) {
-          if (g.masked) return '<span class="dim">masked ********</span>';
-          if (g.kind === "joint") {
-            return '<span class="dim">J</span> ' + g.joints.map(function (j) {
-              return j === null ? "—" : BV.fmt.num(j, 2);
-            }).join(", ");
-          }
-          if (g.kind === "cartesian") {
-            return ["x", "y", "z", "w", "p", "r"].map(function (ax) {
-              return '<span class="dim">' + ax + "</span>" + BV.fmt.num(g[ax], 1);
-            }).join(" ");
-          }
-          return '<span class="dim">—</span>';
-        }
+        /* one row per taught point. A multi-group point is ONE point taught
+           for several groups, so its groups are pages of the expanded card
+           (BV.pos.card), never extra rows - the heading's count and the rows
+           agree. Click a row for every axis at full precision, extended axes
+           included; the open set and each card's page are remembered per
+           program like the rest of this tab. */
+        var posOpen = pst.posOpen || (pst.posOpen = {});
+        var posPage = pst.posPage || (pst.posPage = {});
+        function posKey(pos) { return file + "#" + pos.id; }
         pc.appendChild(BV.table([
-          { key: "p", label: "p", num: true, render: function (r) {
-              return r.gi !== 0 ? "" : "P[" + r.pos.id + "]" +
-                (r.pos.comment ? ' <span class="dim">' + BV.esc(r.pos.comment) + "</span>" : "");
+          { key: "p", label: "p", num: true, width: "10rem", render: function (pos) {
+              return "P[" + pos.id + "]" +
+                (pos.comment ? ' <span class="dim">' + BV.esc(pos.comment) + "</span>" : "");
             } },
-          { key: "gp", label: "gp", num: true, dim: true, render: function (r) { return r.g.gp; } },
-          { key: "uft", label: "uf/ut", dim: true, render: function (r) {
-              return BV.esc((r.g.uf || "") + "/" + (r.g.ut || "")); } },
-          { key: "value", label: "value", render: function (r) { return posVal(r.g); } },
-        ], posRows, { maxHeight: "380px" }));
+          { key: "uft", label: "uf/ut", dim: true, width: "4.5rem", render: function (pos) {
+              var g = pos.groups[0] || {};
+              return BV.esc((g.uf || "") + "/" + (g.ut || "")); } },
+          { key: "value", label: "value", render: function (pos) {
+              return BV.pos.summary(pos.groups); } },
+        ], p.positions, {
+          fixed: true,
+          maxHeight: "26rem",
+          rowKey: posKey,
+          expanded: posOpen,
+          detail: function (pos) {
+            return BV.pos.card(pos.groups, {
+              page: posPage[posKey(pos)] || 0,
+              onPage: function (i) { posPage[posKey(pos)] = i; },
+            });
+          },
+        }));
         side.appendChild(pc);
       }
 

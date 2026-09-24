@@ -60,12 +60,20 @@
     return cmt || asg;
   }
 
+  /* one position group's comparable content: representation, every axis
+     the file printed (extended axes included - a rail moved is a diff) */
+  function posSig(g) {
+    return [g.group, g.kind, g.joints, g.x, g.y, g.z, g.w, g.p, g.r, g.ext];
+  }
+
   function regDiffers(a, b, mode) {
     var cmt = (a.comment || "") !== (b.comment || "");
     var val;
-    if (a.kind || b.kind) { /* position registers */
-      val = JSON.stringify([a.kind, a.joints, a.x, a.y, a.z, a.w, a.p, a.r]) !==
-        JSON.stringify([b.kind, b.joints, b.x, b.y, b.z, b.w, b.p, b.r]);
+    if (a.groups || b.groups) { /* position registers, folded: every group counts */
+      val = JSON.stringify((a.groups || []).map(posSig)) !==
+        JSON.stringify((b.groups || []).map(posSig));
+    } else if (a.kind || b.kind) { /* one position group */
+      val = JSON.stringify(posSig(a)) !== JSON.stringify(posSig(b));
     } else {
       val = String(a.value) !== String(b.value);
     }

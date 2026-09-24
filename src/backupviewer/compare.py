@@ -253,12 +253,36 @@ def diff_scalar_registers(a: list[dict], b: list[dict], prefix: str,
     return finish(rows)
 
 
+def _ext_desc(r) -> str:
+    """The extended axes (a rail's E1) as ' e1700.000', or '' when none."""
+    return "".join(
+        f" e{e['n']}{e['value']:.3f}" if e.get("value") is not None else f" e{e['n']}—"
+        for e in r.get("ext") or [])
+
+
 def _pos_desc(r) -> str:
     if r.get("kind") == "joint":
-        return "J " + " ".join(f"{j:.3f}" if j is not None else "—" for j in r["joints"])
+        return ("J " + " ".join(f"{j:.3f}" if j is not None else "—" for j in r["joints"])
+                + _ext_desc(r))
     if r.get("kind") == "cartesian":
-        return " ".join(f"{ax}{r.get(ax, 0):.3f}" for ax in _AXES)
+        return " ".join(f"{ax}{r.get(ax, 0):.3f}" for ax in _AXES) + _ext_desc(r)
     return "uninit"
+
+
+def _ext_equal(ra, rb) -> bool:
+    """A rail moved is a point moved: extended axes diff like any other axis."""
+    ea, eb = ra.get("ext") or [], rb.get("ext") or []
+    if len(ea) != len(eb):
+        return False
+    for x, y in zip(ea, eb):
+        if x.get("n") != y.get("n"):
+            return False
+        vx, vy = x.get("value"), y.get("value")
+        if (vx is None) != (vy is None):
+            return False
+        if vx is not None and abs(vx - vy) >= 0.0005:
+            return False
+    return True
 
 
 def _pos_equal(ra, rb) -> bool:
@@ -270,9 +294,10 @@ def _pos_equal(ra, rb) -> bool:
             (x is None and y is None) or
             (x is not None and y is not None and abs(x - y) < 0.0005)
             for x, y in zip(ja, jb)
-        )
+        ) and _ext_equal(ra, rb)
     if ra.get("kind") == "cartesian":
-        return all(abs(ra.get(ax, 0) - rb.get(ax, 0)) < 0.0005 for ax in _AXES)
+        return (all(abs(ra.get(ax, 0) - rb.get(ax, 0)) < 0.0005 for ax in _AXES)
+                and _ext_equal(ra, rb))
     return True
 
 
