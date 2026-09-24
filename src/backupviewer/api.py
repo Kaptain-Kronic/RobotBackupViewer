@@ -436,6 +436,67 @@ class Api:
             window.events.closed += self._destroy_popouts
         except Exception:  # noqa: BLE001 - a GUI backend without the event still gets a working app
             log.exception("could not attach the close-confirmation handler")
+        self._lock_browser_zoom(window)
+
+    # -- browser zoom lock -------------------------------------------------------
+    # WebView2 boots with its own page zoom ON: pywebview 6.2 hardcodes
+    # IsZoomControlEnabled = True and never reads create_window(zoomable=...).
+    # That zoom is WINDOW-wide. A ctrl+wheel or trackpad pinch that landed
+    # anywhere the app was not listening (the top bar, a main screen, a
+    # cross-origin Matrox iframe) scaled the whole app - chrome included - on
+    # top of the text/toolbar size settings, stayed that way after the remote
+    # was parked, and nothing in the app could read it, undo it, or tell it had
+    # happened (the remotes' % button never moved: it was never that zoom).
+    # Content scale is the settings' job (font_size / chrome_scale in
+    # settings_ui.js) and the remotes' view zoom is local by design
+    # (cvxremote.js / mtxremote.js), so every app window locks the browser's
+    # own zoom the moment its page has loaded: both user controls off, the
+    # factor pinned at 1. keys.js cancels ctrl+wheel on the page as the belt to
+    # this brace. The bare MTX camera-page window (mtx_remote_window) is left
+    # alone on purpose: it is a browser showing the camera's page, and should
+    # zoom like one.
+
+    def _lock_browser_zoom(self, window):
+        """Attach the lock to a pywebview window this Api owns (main, backup
+        pop-out, CV-X pop-out). Runs once the page has loaded, on the UI thread
+        the WebView2 control is affine to. A window that cannot be locked keeps
+        working - the lock logs and stands down, it never costs the window."""
+        if window is None:                    # unit tests bind without a window
+            return
+
+        def lock():
+            form = window.native              # the winforms BrowserForm
+            wv = getattr(getattr(form, "browser", None), "webview", None)   # WebView2 control
+            core = getattr(wv, "CoreWebView2", None)
+            if core is None:
+                return                        # never initialised (the rescue path)
+            core.Settings.IsZoomControlEnabled = False     # ctrl+wheel, ctrl+plus/minus, trackpad pinch
+            try:
+                core.Settings.IsPinchZoomEnabled = False   # touch-screen pinch (page-scale zoom)
+            except AttributeError:
+                pass                                       # older WebView2 SDK: no such knob
+            wv.ZoomFactor = 1.0                            # undo anything that landed before the lock
+            log.debug("browser zoom locked on window %s", window.uid)
+
+        def on_loaded():
+            # pywebview fires `loaded` on a worker thread; the control is
+            # UI-thread affine, so hop over when we are not already there
+            try:
+                form = window.native
+                if form is None:
+                    return
+                if getattr(form, "InvokeRequired", False):
+                    from System import Action              # pythonnet - the winforms backend loaded it
+                    form.Invoke(Action(lock))
+                else:
+                    lock()
+            except Exception:  # noqa: BLE001 - an unlocked zoom must never cost the window
+                log.warning("could not lock the browser zoom on window %s", window.uid, exc_info=True)
+
+        try:
+            window.events.loaded += on_loaded
+        except Exception:  # noqa: BLE001 - a GUI backend without the event still gets a working app
+            log.warning("could not attach the browser zoom lock", exc_info=True)
 
     # -- library watcher -------------------------------------------------------
     # Polls a cheap tree signature so folders copied in / deleted via Explorer
@@ -770,6 +831,7 @@ class Api:
         w = webview.create_window(
             "backupviewer · " + label, url, js_api=self,
             width=1150, height=800, min_size=(800, 560))
+        self._lock_browser_zoom(w)
         with self._sessions_lock:
             e["owner"] = "popout"
             e["window"] = w
@@ -2981,6 +3043,7 @@ class Api:
                + "&label=" + urllib.parse.quote(label, safe=""))
         w = webview.create_window(title, url, js_api=self,
                                   width=1100, height=880, min_size=(640, 520))
+        self._lock_browser_zoom(w)
         self._cvx_windows[sid] = w
         # closing the window is what really ends the remote session. The hook
         # resolves the sid by REVERSE lookup at close time, not by capture: a

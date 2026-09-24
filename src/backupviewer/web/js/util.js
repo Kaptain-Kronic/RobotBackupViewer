@@ -115,6 +115,21 @@ window.BV = {};
     };
   })();
 
+  /* The zoom step a ctrl+wheel asks for, as a factor. One mouse notch (100 px)
+     is x1.25 in, x0.8 out. A trackpad pinch reaches the page as a BURST of
+     small ctrl+wheel events (Chromium's synthetic pinch), so the step is
+     proportional to the delta: a gesture glides instead of slamming the view to
+     its clamp at 1.25 per event. A single event is capped at one notch, so a
+     fling or a high-resolution wheel cannot jump either. Shared by both remote
+     views (cvxremote.js, mtxremote.js). */
+  BV.wheelZoomFactor = function (e) {
+    var d = e.deltaY;
+    if (e.deltaMode === 1) d *= 33;         /* lines -> px */
+    else if (e.deltaMode === 2) d *= 300;   /* pages -> px */
+    d = Math.max(-100, Math.min(100, d));
+    return Math.pow(1.25, -d / 100);
+  };
+
   /* clipboard with the WebView2-safe fallback; every report/copy button in the
      app (scan report, backup log, future exports) shares this one path */
   BV.copyText = function (text, okMsg) {

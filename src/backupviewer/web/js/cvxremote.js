@@ -127,9 +127,12 @@
     /* keep the 4:3 screen box as large as fits, so mouse coords map linearly.
        `zoom` is a VIEW multiplier on the fitted size (the stage scrolls, the
        mouse math reads the live rect so it never needs to know): ctrl+wheel /
-       ctrl+= / ctrl+- / the % button. View-local on purpose - WebView2's own
-       page zoom is disabled app-wide, and nothing here reaches the camera.
-       It lives with this overlay: a fresh open starts back at 100%. */
+       ctrl+= / ctrl+- / the % button. View-local on purpose - the browser's
+       own page zoom is locked per window (api._lock_browser_zoom; it used to
+       be live, and scaled the whole app under this one), and nothing here
+       reaches the camera. It lives with this overlay: a fresh open starts
+       back at 100%. Held unrounded: a slow pinch is sub-percent ticks, and
+       rounding each one away left the view stuck. The label rounds. */
     var zoom = 1;
     function fit() {
       if (overlay.style.display === "none") return;   /* re-fit happens on show() */
@@ -148,7 +151,7 @@
     show();   /* opens showing: placed, fitted, keys attached (chip case and takeover alike) */
 
     function setZoom(z, ev) {
-      z = Math.round(Math.max(1, Math.min(4, z)) * 100) / 100;
+      z = Math.max(1, Math.min(4, z));
       if (z === zoom) return;
       /* hold the point under the cursor (no cursor: the view center) still
          while the box resizes around it */
@@ -175,7 +178,7 @@
     overlay.addEventListener("wheel", function (e) {
       if (!e.ctrlKey) return;
       e.preventDefault();
-      setZoom(zoom * (e.deltaY < 0 ? 1.25 : 0.8), e);
+      setZoom(zoom * BV.wheelZoomFactor(e), e);
     }, { passive: false });
 
     /* --- teardown ------------------------------------------------------- */

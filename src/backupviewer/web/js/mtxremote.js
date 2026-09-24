@@ -112,8 +112,13 @@
        slack, and below 1 MORE of an oversized operator page fits. The frames
        also swallow wheel/key events while focused (cross-origin again), so
        the reliable paths are the % button and ctrl+= / ctrl+- with the app
-       chrome focused; ctrl+scroll works over the bar. Nothing here reaches
-       the camera. Lives with this overlay: a fresh open starts at 100%. */
+       chrome focused; ctrl+scroll works over the bar. A ctrl+wheel or pinch
+       the page swallows now does nothing at all: the browser's own zoom is
+       locked per window (api._lock_browser_zoom) - it used to page-zoom the
+       whole app while this label sat at 100%. Nothing here reaches the
+       camera. Lives with this overlay: a fresh open starts at 100%. Held
+       unrounded for the same reason as the CV-X view: a slow pinch is
+       sub-percent ticks. The label rounds. */
     var zoom = 1;
     function applyZoom(f) {
       f.style.transform = zoom === 1 ? "" : "scale(" + zoom + ")";
@@ -122,7 +127,7 @@
       f.style.height = (100 / zoom) + "%";
     }
     function setZoom(z) {
-      z = Math.round(Math.max(0.5, Math.min(3, z)) * 100) / 100;
+      z = Math.max(0.5, Math.min(3, z));
       if (z === zoom) return;
       zoom = z;
       tabs.forEach(function (t) { if (t.frame) applyZoom(t.frame); });
@@ -137,7 +142,7 @@
     overlay.addEventListener("wheel", function (e) {
       if (!e.ctrlKey) return;
       e.preventDefault();
-      setZoom(zoom * (e.deltaY < 0 ? 1.25 : 0.8));
+      setZoom(zoom * BV.wheelZoomFactor(e));
     }, { passive: false });
 
     function close() {

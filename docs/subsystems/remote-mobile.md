@@ -23,6 +23,13 @@ zoom** (never forwarded to the device); and the MJPEG server's framing was
 fixed to close every part **eagerly** (§4a, §7 — the frozen-until-input bug).
 The NAV_KEYS fullscreen tab-guard is retired (closing section).*
 
+*Updated 2026-09-24 (that update's commit is the anchor): the "browser zoom is
+disabled app-wide" premise under the local view zoom was **false** — pywebview
+never switches WebView2's page zoom off — so every app window now locks it on
+load (`api._lock_browser_zoom`), the page cancels ctrl+wheel (`keys.js`), and a
+wheel step is proportional to its delta (`BV.wheelZoomFactor`: a pinch glides).
+§5 invariant 10, §6 item 12, §7 the unlocked-zoom trap, closing section.*
+
 Covers: src/backupviewer/cvx_remote.py, src/backupviewer/phoneview.py,
 src/backupviewer/qr.py, src/backupviewer/screengrab.py,
 src/backupviewer/cvx_handshake/chan8502_tx.bin,
@@ -430,6 +437,21 @@ What must stay true, what enforces it, what breaks if it doesn't.
    *only* pause mechanism: a paused wall has nothing to detach, so skipping the
    pass IS the pause (`detachCvxStreams` is gone). Test-enforced
    (`test_cvx_tiles.py`; the adopt/redial choreography in `ui_batch_probe.py`).
+10. **An app window never browser-zooms; only the two size settings scale
+    it.** WebView2 boots with its own page zoom ON — pywebview 6.2 hardcodes
+    `IsZoomControlEnabled = True` and never reads `create_window(zoomable=)` —
+    and that zoom is window-wide, invisible to the app, and outlived a parked
+    remote. `api._lock_browser_zoom` runs on every window the Api owns (main,
+    backup pop-out, CV-X pop-out) once its page has loaded:
+    `IsZoomControlEnabled` and `IsPinchZoomEnabled` off, `ZoomFactor` pinned
+    at 1, on the UI thread via `form.Invoke`. `keys.js` cancels ctrl+wheel on
+    the page as the belt (Chromium offers a trackpad pinch to the page as
+    ctrl+wheel first). The bare MTX camera-page window is exempt on purpose —
+    it is a browser showing the camera's page. Text and toolbar size
+    (`settings_ui.js`) are the only scale the app has; the remotes' view zoom
+    is local and per-overlay by ruling. Probe-enforced on the REAL
+    `CoreWebView2.Settings` (`zoomlock.*` in `ui_cvxremote_probe.py`, main
+    window and pop-out).
 
 ## 6. Failure modes
 
@@ -486,9 +508,12 @@ code does about it. "Test-enforced" = a unit test or the probe pins it;
     WebView2 with `CvxRemoteSession` faked (nothing dials a camera); the bar
     shape, the reload-keeps-the-id rule, fullscreen-through-the-window, the
     pop-out adopt, the session-bar chip (park on esc / restore on click /
-    route parks / ✕ disconnects), and the local zoom (ctrl+wheel grows the box
-    and forwards nothing; a plain wheel does reach the camera) are all
-    asserted on real DOM (`ui_cvxremote_probe.py`).
+    route parks / ✕ disconnects), the local zoom (ctrl+wheel grows the box
+    and forwards nothing; a plain wheel does reach the camera; a pinch-sized
+    tick steps in proportion and no single event exceeds a notch) and the
+    window's locked browser zoom (read from the real `CoreWebView2.Settings`,
+    main window and pop-out) are all asserted on real DOM
+    (`ui_cvxremote_probe.py`).
 13. **A cam-lens tile can't get its camera** → a failed dial backs off
     exponentially (4/8/16 s → capped 30 s) and the tile says WHICH dark it is:
     `CVX_BUSY` reads "in use — another terminal holds it", a session that is
@@ -691,6 +716,22 @@ code does about it. "Test-enforced" = a unit test or the probe pins it;
   wildcard listener shadows a closed loopback bind, so a stopped test server would
   otherwise look alive (`test_phone_view.py:18-23`).
 
+- **"Browser zoom is disabled app-wide" — it never was** (found 2026-09-11,
+  fixed 2026-09-24). The local view zoom shipped on the belief that
+  `create_window(zoomable=False)` (the default) switched WebView2's page zoom
+  off. pywebview's edgechromium backend hardcodes `IsZoomControlEnabled = True`
+  and never reads the flag, so the native, window-wide zoom stayed live under
+  the app: ctrl+wheel over the top bar or a Matrox iframe, or a trackpad pinch,
+  scaled the whole app — chrome included — the % button never moved (it was
+  never that zoom), and the scale outlived the remote because it belonged to
+  the window. In the field it read as "three or four zooms, and no telling
+  which one you get". The fix is a lock on the real setting (§5 invariant 10),
+  proven by a hidden-window read of `CoreWebView2.Settings` rather than by any
+  JS mirror. The pinch half was separate: Chromium delivers a trackpad pinch as
+  a burst of small ctrl+wheel events, and a handler that stepped x1.25 per
+  EVENT sent one gesture straight to the 400% clamp — hence
+  `BV.wheelZoomFactor`, a step proportional to the delta and capped at a notch.
+
 ## 8. Coverage
 
 Counted 2026-08-03; re-run 2026-08-14 by the stream-flush pass, again
@@ -860,3 +901,11 @@ recorded-and-consistent, not re-proven.
   clean `handshake replayed` for every camera whose tile read "no image". The
   exact per-origin limit WebView2 enforces was inferred from Chromium's
   documented default, not read out of the browser.
+- **The trackpad-pinch path is reasoned, not measured.** This pass had no
+  touchpad gesture to drive the hidden window with; the probe's pinch is a
+  synthetic `WheelEvent` with a tenth-notch delta. That Chromium presents a
+  pinch to the page as ctrl+wheel events (so the proportional step and the
+  document-level cancel apply), and that `IsZoomControlEnabled = False` also
+  refuses the pinch's zoom, are documented Chromium/WebView2 behaviour — the
+  settings themselves were read back off the live control. A real pinch on a
+  laptop is the owner's check.

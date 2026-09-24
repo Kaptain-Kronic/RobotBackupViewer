@@ -7,7 +7,11 @@ On real DOM:
      phone, zoom, fullscreen, close - and reload redials under the SAME
      session id (the controller has one remote slot);
   B1. view zoom is LOCAL: ctrl+wheel grows the screen box and forwards
-     nothing to the camera (a plain wheel does reach it), ctrl+0 resets;
+     nothing to the camera (a plain wheel does reach it), a pinch-sized tick
+     steps in proportion and no single event exceeds a notch, ctrl+0 resets;
+  D. the WINDOW's own browser zoom is locked - IsZoomControlEnabled and
+     IsPinchZoomEnabled off, ZoomFactor pinned at 1 - read from the real
+     CoreWebView2 settings, in the main window (before A) and the pop-out (C);
   B2/B3. the remote rides a SESSION-BAR CHIP: the panel sits below the top
      chrome, esc parks it (hidden, session alive, chip stays), the chip
      click brings it back, a route parks it, re-opening the same ip focuses
@@ -81,9 +85,35 @@ def bar_buttons(window):
     })()""") or "[]")
 
 
+def browser_zoom_state(window):
+    """The window's REAL WebView2 zoom knobs (not a JS mirror of them), read on
+    the UI thread the control is affine to. None for a knob the SDK lacks."""
+    from System import Action     # pythonnet - loaded by pywebview's winforms backend
+    out = {}
+
+    def read():
+        wv = window.native.browser.webview
+        s = wv.CoreWebView2.Settings
+        out["control"] = bool(s.IsZoomControlEnabled)
+        out["pinch"] = getattr(s, "IsPinchZoomEnabled", None)
+        out["factor"] = float(wv.ZoomFactor)
+    window.native.Invoke(Action(read))
+    return out
+
+
 def probe(window, api):
     try:
         time.sleep(4)  # boot
+
+        # ---- D. the window's own browser zoom is locked (api._lock_browser_zoom) ----
+        # WebView2 boots with page zoom ON (pywebview never reads `zoomable`);
+        # the app turns it off once the page loads, or a ctrl+wheel over the
+        # top bar scales the whole app under the remote's local zoom. Read
+        # from the real CoreWebView2 settings, not from anything the page says.
+        z = browser_zoom_state(window)
+        check("zoomlock.control_off", z.get("control") is False, f"({z})")
+        check("zoomlock.pinch_off", z.get("pinch") in (False, None), f"({z})")
+        check("zoomlock.factor_is_1", z.get("factor") == 1.0, f"({z})")
 
         # ---- A. the top bar's phone button ----
         check("topbar.phone_present", js(window, "!!document.getElementById('btn-phone')"))
@@ -147,6 +177,22 @@ def probe(window, api):
               f"({w0} -> {w1})")
         check("zoom.button_reads_125",
               js(window, "document.querySelector('.cvx-bar .cvx-zoom').textContent") == "125%")
+        # a trackpad pinch is a burst of small ctrl+wheels: each steps in
+        # proportion to its delta (a tenth of a notch = a tenth of the step),
+        # and no single event - a fling, a high-res wheel - exceeds one notch
+        js(window, """document.querySelector('.cvx-screen').dispatchEvent(
+            new WheelEvent('wheel', {ctrlKey: true, deltaY: -10, bubbles: true, cancelable: true}))""")
+        time.sleep(0.4)
+        tick = 1.25 * 1.25 ** 0.1
+        check("zoom.pinch_tick_is_proportional",
+              js(window, "document.querySelector('.cvx-bar .cvx-zoom').textContent")
+              == f"{round(tick * 100)}%", f"(expected {round(tick * 100)}%)")
+        js(window, """document.querySelector('.cvx-screen').dispatchEvent(
+            new WheelEvent('wheel', {ctrlKey: true, deltaY: -5000, bubbles: true, cancelable: true}))""")
+        time.sleep(0.4)
+        check("zoom.one_event_caps_at_a_notch",
+              js(window, "document.querySelector('.cvx-bar .cvx-zoom').textContent")
+              == f"{round(tick * 1.25 * 100)}%", f"(expected {round(tick * 1.25 * 100)}%)")
         check("zoom.nothing_forwarded", api._cvx[sid].mouse == [],
               f"({api._cvx[sid].mouse})")
         # a PLAIN wheel is camera input and does go through (async bridge - poll)
@@ -261,6 +307,10 @@ def probe(window, api):
         check("popout.window_key_is_the_session", js(win2, "BV.windowKey()") == sid)
         check("popout.streams_that_session",
               f"/cvx/{sid}" in (js(win2, "document.querySelector('.cvx-remote img').src") or ""))
+        # a pop-out is an app window too: locked the same way (D)
+        z2 = browser_zoom_state(win2)
+        check("zoomlock.popout_control_off", z2.get("control") is False, f"({z2})")
+        check("zoomlock.popout_factor_is_1", z2.get("factor") == 1.0, f"({z2})")
 
         # its ✕ closes the WINDOW, which is what stops the session
         js(win2, "document.querySelector('.cvx-bar .btn:last-child').click()")

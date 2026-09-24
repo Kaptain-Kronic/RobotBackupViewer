@@ -1,6 +1,23 @@
 # Changelog
 
-## unreleased — backups drag in and export out, the statusbar finds the switch, a program plays in 3d, the camera wall lights up all the way down, a matrox pull brings home its photo history, and a taught position opens up whole
+## unreleased — backups drag in and export out, the statusbar finds the switch, a program plays in 3d, the camera wall lights up all the way down, a matrox pull brings home its photo history, a taught position opens up whole, and the remote views stop zooming the whole app
+- **Ctrl+scroll in a remote view zooms the view — and only the view.** v1.6
+  said browser zoom was disabled app-wide; it never was. pywebview leaves
+  WebView2's own page zoom switched on, and that zoom is window-wide: a
+  ctrl+scroll or trackpad pinch that landed anywhere the app was not
+  listening — the top bar, a main screen, the Matrox page itself — scaled the
+  whole app, chrome included, on top of the text and toolbar size settings,
+  stayed that way after the remote was parked, and nothing could read or
+  undo it (the remote's % never moved, because it was never that zoom).
+  Every app window now locks the browser's zoom the moment it loads — both
+  user controls off, factor pinned at 100% — and cancels ctrl+wheel on the
+  page as the belt to that brace; the two size settings are once again the
+  only thing that scales the app. The remotes' own view zoom also stops
+  slamming: a trackpad pinch arrives as a burst of tiny ctrl+wheel events
+  and each used to count as a whole 25% step, so one gesture hit 400%; a
+  step is now proportional to the wheel delta, a pinch glides, and no single
+  event moves more than one notch. Probe-pinned on the real WebView2
+  settings, main window and pop-out alike.
 - **Positions read whole — and the rail finally shows.** The PR table and a
   program's positions card used to cram every axis into one ellipsised cell
   and put the motion group in a column of its own, so a two-group robot

@@ -1,4 +1,5 @@
-/* keys.js - global keyboard map. Tab-local list navigation goes through BV.currentVTable. */
+/* keys.js - global keyboard map, plus the page's one wheel rule (no browser
+   zoom). Tab-local list navigation goes through BV.currentVTable. */
 (function () {
   "use strict";
 
@@ -152,4 +153,16 @@
         break;
     }
   });
+
+  /* The app never browser-zooms. Python locks WebView2's own zoom control on
+     every app window (api._lock_browser_zoom); this is the page's half of the
+     same rule. Chromium hands a trackpad pinch to the page as a burst of
+     ctrl+wheel events before it would zoom, and cancelling those keeps the
+     offer inert even in a window where the lock has not landed yet. The remote
+     overlays' own ctrl+wheel handlers run first (they sit on the overlay, this
+     one on the document) and still get their view zoom. Only the first wheel
+     of a sequence is cancelable in Chromium, so plain scrolling pays nothing. */
+  document.addEventListener("wheel", function (e) {
+    if (e.ctrlKey) e.preventDefault();
+  }, { passive: false });
 })();
