@@ -380,6 +380,17 @@
   no service on the device — strictly gentler than opening a camera's FTP or
   SMB port — and it refreshes the very table the panel already reads, so there
   is no second set of answers to disagree with the first.
+- **The plant-link pill tells a stale pin from an unplugged dongle, and looks
+  like the rest of the statusbar.** A pin to an adapter that is no longer in
+  the table — the dongle out, or a pin left over from another dock, PC or VM —
+  read "dongle unplugged?" forever over an empty panel, printed `pinned-missing`
+  raw in the *chosen* row, and kept the only way out folded shut at the
+  bottom. It now names the pinned adapter and both causes, shows the ghost as
+  the choice in force in the adapter picker, and offers *use automatic* right
+  in the panel. The pill is now the same plain chip as the update and credit
+  pills beside it (no dot, no button chrome, one shared size), *check now*
+  only appears when there is something to check, the segment list only when
+  there is a segment, and the panel's paragraphs shrank to one-liners.
 - **A Matrox backup now brings home the last 25 photos, not the last one.**
   The pull used to take the newest `SavedImages/<date>/` folder, which on a
   real shop-floor camera is usually a single inspection — a 367-file backup

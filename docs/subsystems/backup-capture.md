@@ -21,6 +21,11 @@ src/backupviewer/netlink.py, src/backupviewer/backuplog.py
 *§10 (the plant-link watch) was added 2026-08-14 against `main` @ `b1ef1c9` and
 brought `netlink.py` under this doc; the rest of the pass is unchanged.*
 
+*Amended 2026-09-05 (§10 only): a pin that matches no adapter is named and
+told apart from a dongle that fell out, the reasons `LinkWatch` can give are
+an enumerated list (`LINK_WHYS`) the panel is held to, and `net_status` returns
+the pin itself so the panel can show a pin to an adapter that is not there.*
+
 *It also describes the job plumbing those five share — `api.py`'s device
 registry and backup/scan endpoints, `web/js/jobs.js`, the launch and retry flows
 in `tabs/home.js` and `manage_ui.js`, and `library.py`'s registration half — but
@@ -721,15 +726,26 @@ segment — recorded, not re-provable from a clean clone):
 4. **`absent` is not `down`.** A library device with no neighbour entry renders
    as a hollow ring. A camera nobody has talked to since the cable went in has
    no ARP entry while running perfectly.
-5. **The adapter that went away reads as `no link`, not `no plant adapter`.**
-   USB dongles usually vanish from the table when unplugged rather than
-   reporting down, so `LinkWatch` remembers its last choice — otherwise the
-   commonest real event shows the most confusing words.
+5. **The adapter that went away reads as `no link`, not `no plant adapter`,
+   and is named.** USB dongles usually vanish from the table when unplugged
+   rather than reporting down, so `LinkWatch` remembers its last choice —
+   otherwise the commonest real event shows the most confusing words. A
+   *pinned* adapter that matches nothing is the same rung with a different
+   sentence: the tables cannot tell a dongle that fell out from a pin left
+   over from another dock, PC or VM (on the dev machine, a VirtualBox
+   host-only adapter pinned and later removed — the pill read "dongle
+   unplugged?" for weeks), so the detail names the pin and both causes, the
+   picker shows the ghost as the choice in force, and the panel offers
+   `use automatic`. A pin never silently re-picks; it must never trap either.
 6. **`check now` introduces no second source of truth.** It sends one ARP per
    listed address, which *populates the very table the panel already reads*, so
    the next poll shows the answer. It refuses off-segment addresses, because
    those would resolve the gateway's MAC and read as a confident answer about a
    device never reached. Its cap is reported, never silent.
+7. **Every reason has words.** `LINK_WHYS` enumerates what `choose_adapter` /
+   `LinkWatch` may put in `why`; `test_discover` proves the code emits exactly
+   that set, and the probe proves `netstatus.js` has a sentence for each, so
+   a new reason cannot reach the panel's "chosen" row as a raw slug.
 
 **Gentleness.** Default posture is zero added packets — adapter and neighbour
 tables are pure OS reads. The one probe is an ARP request: layer 2, touching no

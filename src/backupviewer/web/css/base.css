@@ -455,24 +455,23 @@ body.chrome-fused #chrome-top::after { opacity: 0; }
 #statusbar .sep { margin: 0 0.5em; opacity: 0.45; }
 #statusbar .accent { color: var(--accent); }
 #statusbar .credit { font-size: 0.88em; color: var(--sub-alt); margin-left: 0.6em; }
+/* every pill in the statusbar is the same chip - the credit, the update notice
+   and the plant link share one size rule so none of them can drift */
+#statusbar .pill { font-size: 0.72em; }
 /* the credit pill: reads as a quiet chip at rest, lights up accent on hover so
    it's discoverably clickable without competing with the status line */
 #statusbar .credit-pill {
-  margin-left: 0.6em; cursor: pointer; font-size: 0.72em;
+  margin-left: 0.6em; cursor: pointer;
   transition: color var(--trans), border-color var(--trans), background var(--trans);
 }
 #statusbar .credit-pill:hover {
   color: var(--accent); border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
-/* the plant-link pill: same quiet-chip-until-hover treatment as the credit pill,
-   plus the button reset every pill-shaped button in the app uses */
-#statusbar .net-pill {
-  appearance: none; font: inherit; font-size: 0.72em; cursor: pointer;
-  display: inline-flex; align-items: center; gap: 0.45em;
-  transition: color var(--trans), border-color var(--trans), background var(--trans);
-}
-#statusbar .net-pill:hover { border-color: var(--accent); }
+/* the plant-link pill is that same chip, in the app's own state colours (full
+   red / hollow green / ghost); all it adds is that it opens the panel */
+#statusbar .net-pill { cursor: pointer; transition: filter var(--trans); }
+#statusbar .net-pill:hover { filter: brightness(1.15); }
 /* an unverified reading (the OS tables wouldn't read) must not look like a
    verdict - dim the whole chip rather than picking a colour we can't justify */
 #statusbar .net-pill.unread { opacity: 0.55; }

@@ -13,7 +13,11 @@ What it pins down:
       is NEVER painted as a fault - a camera nobody has talked to since the
       cable went in is not down;
     * a device that is not in the library is flagged as such rather than hidden;
-    * a failed read dims the chip instead of inventing a verdict.
+    * a failed read dims the chip instead of inventing a verdict;
+    * a pin to an adapter that is not in the table names itself, shows as the
+      choice in force, and offers the way out - it never traps;
+- the pill is the app's own chip (no dot, no button chrome, the credit pill's
+  size) and every reason the watch can give has words, never a raw slug.
 
 Fully synthetic and identifier-clean: the bridge endpoint is stubbed with canned
 TEST-NET payloads, so nothing here reads a real adapter or touches a network.
@@ -28,6 +32,7 @@ _TMP = isolate("bv_net_probe_")
 
 import webview  # noqa: E402
 
+from backupviewer import discover  # noqa: E402
 from backupviewer import settings as bv_settings  # noqa: E402
 from backupviewer.api import Api  # noqa: E402
 from backupviewer.app import resource_path  # noqa: E402
@@ -65,7 +70,7 @@ def payload(**over):
         "probe_ok": True, "why": "library", "adapter": ADAPTER,
         "cidr": "192.0.2.0/24", "gateway": "192.0.2.1",
         "states": ["unknown", "no-adapter", "no-link", "no-ip", "no-gateway", "ok"],
-        "seen": 4, "checking": False, "devices": DEVICES,
+        "seen": 4, "checking": False, "devices": DEVICES, "pin": None,
         "adapters": [
             {"name": "Ethernet 3", "mac": "AA:BB:CC:DD:EE:01", "kind": "ethernet",
              "up": True, "ip": "192.0.2.37", "cidr": "192.0.2.0/24",
@@ -126,6 +131,34 @@ def probe(window):
         check("look.variants_are_known_pills",
               all(v.split()[1] in ("ok-soft", "warn", "err", "off", "ghost", "acc", "on")
                   for v in variants.values()), f"({variants})")
+
+        # the pill is the statusbar's own chip: nothing inside it (the dot is
+        # gone), and the credit pill's size, radius and padding - a chip that
+        # draws differently from its siblings is the thing this replaced
+        same = json.loads(js(window, """(function () {
+            var n = document.querySelector('#status-net .net-pill');
+            var c = document.querySelector('#statusbar .credit-pill');
+            if (!n || !c) return 'null';
+            var a = getComputedStyle(n), b = getComputedStyle(c);
+            return JSON.stringify({ kids: n.children.length,
+                fs: a.fontSize === b.fontSize, radius: a.borderRadius === b.borderRadius,
+                pad: a.paddingTop === b.paddingTop && a.paddingLeft === b.paddingLeft });
+        })()""") or "null")
+        check("look.pill_has_nothing_inside", bool(same) and same.get("kids") == 0, f"({same})")
+        check("look.pill_draws_like_its_siblings",
+              bool(same) and same.get("fs") and same.get("radius") and same.get("pad"),
+              f"({same})")
+
+        # every reason the watch can give has words: the two tables are held
+        # equal at the seam, so a new `why` in python cannot reach the "chosen"
+        # row as a raw slug (pinned-missing did, for weeks)
+        whys = json.loads(js(window, "JSON.stringify(BV.netstatus.WHYS)") or "[]")
+        check("why.tables_match_at_the_seam", set(whys) == set(discover.LINK_WHYS),
+              f"(js {sorted(whys)} vs py {sorted(discover.LINK_WHYS)})")
+        words = json.loads(js(window, """JSON.stringify(BV.netstatus.WHYS.map(
+            function (w) { return BV.netstatus._why(w); }))""") or "[]")
+        check("why.no_raw_slugs", bool(words) and all(t and t != w for w, t in zip(whys, words)),
+              f"({dict(zip(whys, words))})")
 
         # an unverified reading is dimmed, not recoloured into a verdict
         js(window, """BV.netstatus._render({ state: 'ok', detail: '', since_ms: 0,
@@ -293,7 +326,13 @@ def probe(window):
 
         check("panel.scope_is_stated", js(window, """(function () {
             var f = document.querySelector('.bv-drop .net-foot');
-            return !!f && f.textContent.indexOf('other subnets') >= 0;
+            return !!f && f.textContent.indexOf('this subnet only') >= 0;
+        })()"""))
+        # something to check -> the button is there
+        check("panel.check_now_offered", js(window, """(function () {
+            var b = [...document.querySelectorAll('.bv-drop .net-sub .btn')]
+                .find(function (x) { return x.textContent === 'check now'; });
+            return !!b && !b.classList.contains('hidden');
         })()"""))
 
         # every colour must come from the theme variables, never a literal - the
@@ -323,6 +362,72 @@ def probe(window):
         # has started looking like a verdict
         check("theme.absent_dot_is_transparent",
               "rgba(0, 0, 0, 0)" == themed.get("absent_bg"), f"({themed})")
+
+        # ---- a stale pin ----
+        # A pin to an adapter that is not in the table - the dongle out, or a pin
+        # left over from another dock/PC/VM - used to leave an empty panel with
+        # a raw slug for a reason and the only way out folded shut at the bottom.
+        # The sentence comes from the real classifier: this is the seam.
+        stale = discover.classify_state(None, "pinned-missing", [], missing="Ethernet 9")[1]
+        stub(window, payload(state="no-link", why="pinned-missing", adapter=None,
+                             cidr="", gateway="", detail=stale, devices=[], seen=0,
+                             pin={"mac": "AA:BB:CC:DD:EE:09", "name": "Ethernet 9"}))
+        js(window, "BV.netstatus._render(window.__probe_payload)")
+        time.sleep(0.3)
+        facts = json.loads(js(window, """(function () {
+            var o = {};
+            document.querySelectorAll('.bv-drop .net-fact').forEach(function (r) {
+                o[r.children[0].textContent] = r.children[1].textContent;
+            });
+            return JSON.stringify(o);
+        })()""") or "{}")
+        check("stale.reason_is_words_not_a_slug",
+              facts.get("chosen") not in ("", "pinned-missing", "—")
+              and "pinned" in (facts.get("chosen") or ""), f"({facts.get('chosen')!r})")
+        check("stale.no_adapter_facts_are_blank",
+              facts.get("gateway") == "—" and facts.get("address") == "—", f"({facts})")
+        check("stale.detail_names_the_pin", js(window, """(function () {
+            var d = document.querySelector('.bv-drop .net-head-detail');
+            return !!d && d.textContent.indexOf('Ethernet 9') >= 0
+                && d.textContent.indexOf('pinned') >= 0;
+        })()"""))
+        btns = json.loads(js(window, """JSON.stringify(
+            [...document.querySelectorAll('.bv-drop .net-sub .btn')].map(function (b) {
+                return { t: b.textContent, hidden: b.classList.contains('hidden') }; }))""")
+            or "[]")
+        by_t = {b["t"]: b for b in btns}
+        check("stale.way_out_is_offered",
+              by_t.get("use automatic", {}).get("hidden") is False, f"({btns})")
+        check("stale.nothing_to_check_so_no_button",
+              by_t.get("check now", {}).get("hidden") is True, f"({btns})")
+        check("stale.no_segment_no_list", js(window, """(function () {
+            var s = [...document.querySelectorAll('.bv-drop .net-sec')].find(function (x) {
+                return x.textContent.indexOf('on this switch') >= 0; });
+            return !!s && s.classList.contains('hidden');
+        })()"""))
+        # the picker shows the ghost as the choice in force, not "automatic"
+        picks = json.loads(js(window, """JSON.stringify(
+            [...document.querySelectorAll('.bv-drop .net-pick-row')].map(function (b) {
+                return { t: b.textContent, on: b.classList.contains('on'),
+                         dot: (b.querySelector('.net-dot') || {}).className || '' }; }))""")
+            or "[]")
+        ghost = next((r for r in picks if "Ethernet 9" in r["t"]), None)
+        auto = next((r for r in picks if r["t"].startswith("automatic")), None)
+        check("stale.picker_lists_the_ghost", ghost is not None, f"({picks})")
+        check("stale.ghost_is_the_choice_in_force",
+              bool(ghost) and ghost["on"] and "not present" in ghost["t"]
+              and "absent" in ghost["dot"], f"({ghost})")
+        check("stale.automatic_is_not_claimed", bool(auto) and not auto["on"], f"({auto})")
+        # and the way out actually clears the setting
+        js(window, """window.__set = null;
+            window.pywebview.api.set_setting = function (k, v) {
+                window.__set = [k, v]; return Promise.resolve({ ok: true, data: true });
+            };
+            [...document.querySelectorAll('.bv-drop .net-sub .btn')]
+                .find(function (b) { return b.textContent === 'use automatic'; }).click();""")
+        cleared = poll(window, "window.__set ? JSON.stringify(window.__set) : ''")
+        check("stale.use_automatic_clears_the_pin",
+              cleared == '["net_adapter",null]', f"(got {cleared!r})")
 
         # esc closes it (wireDismiss listens on window, so this reaches it)
         js(window, "window.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))")

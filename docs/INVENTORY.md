@@ -57,7 +57,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `docs/INVENTORY.md` | 662 | this file: dated file-level map of the repo plus the findings from the phase-1 documentation pass, with resolved items marked inline | docs | active |
 | `docs/proposals/home-split.md` | 284 | investigation of tabs/home.js (2,277 lines) by responsibility, where the real seams are, what must become shared components first, and a phased sequence — no code changed | docs | active |
 | `docs/subsystems/3d-viewer.md` | 773 | subsystem doc #3 (the 3D viewer): the pendant-proven FK solve and its JS twin, the 228-type table's validated-vs-not honesty, flange residuals re-measured on the pins, the zone degradation ladder, and the unprobed-viewport gap said plainly | docs | active |
-| `docs/subsystems/backup-capture.md` | 783 | subsystem doc #2 (the backup/discovery jobs + shared plumbing): transport ground truth tagged live-run-vs-assumed, the gentle-with-equipment invariants, a dedicated failure-modes section, and the batch-flow coverage gap said plainly | docs | active |
+| `docs/subsystems/backup-capture.md` | 799 | subsystem doc #2 (the backup/discovery jobs + shared plumbing): transport ground truth tagged live-run-vs-assumed, the gentle-with-equipment invariants, a dedicated failure-modes section, and the batch-flow coverage gap said plainly | docs | active |
 | `docs/subsystems/parsing.md` | 645 | subsystem doc #1 (parsers/ + session.py): ground truth marked verified-vs-assumed per fact, cross-file invariants, paid-for traps, honest coverage gaps — and the template later subsystem docs follow | docs | active |
 | `docs/subsystems/remote-mobile.md` | 862 | subsystem doc #4 (CV-X/Matrox remotes + phone view): the reverse-engineered CV-X wire protocol whose reference client is gone, the vendor-reflected mouse enum, the only listening socket's trust posture, and the app's one UAC elevation | docs | active |
 | `packaging/backupviewer.ico` | *75 KB* | multi-resolution app icon embedded in the exe and inherited by the pywebview window | build/config | active |
@@ -73,7 +73,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/cvx_handshake/chan8503_tx.bin` | *0.2 KB* | captured cv-x 8503 aux-channel handshake: a single channel-open message replayed to open the aux socket | remote/mobile | active |
 | `src/backupviewer/cvx_handshake/chan8504_tx.bin` | *0.2 KB* | captured cv-x 8504 video-channel handshake: channel-open, video-service open and the frame-ack prime message | remote/mobile | active |
 | `src/backupviewer/cvx_remote.py` | 612 | cv-x remote-desktop client: handshake replay on 3 sockets, jpeg frame harvest, mouse events, mjpeg server | remote/mobile | active |
-| `src/backupviewer/discover.py` | 997 | subnet scan job finding fanuc/keyence over ftp and matrox via ethernet/ip, plus adapter list and live name probe | backup capture | active |
+| `src/backupviewer/discover.py` | 1014 | subnet scan job finding fanuc/keyence over ftp and matrox via ethernet/ip, plus adapter list and live name probe | backup capture | active |
 | `src/backupviewer/ftpbackup.py` | 656 | ftp backup engine: gentle md: pull, dated+latest tree, .part/complete-marker crash safety, shared job base | backup capture | active |
 | `src/backupviewer/healthscan.py` | 1230 | fleet health-scan engine: 17-check registry, lazy per-robot parse context, threaded job, fleet-wide verdict passes | flag scanning | active |
 | `src/backupviewer/keyence_workspace.py` | 374 | cv-x simulator workspace.xml writer/reader plus flat-folder export guarded by a we-created-this ledger | cameras | active |
@@ -123,7 +123,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/session.py` | 491 | BackupSession: recursive case-insensitive file index, lazy parse cache, ls/karel classify, backup-type sniff | backup parsing | active |
 | `src/backupviewer/settings.py` | 103 | settings.json under %appdata% with atomic locked writes, plus app_dir, library_root, sim_root and logging setup | shared/infra | active |
 | `src/backupviewer/updatecheck.py` | 109 | github releases/latest check with version compare and a policy that only lets the frozen exe auto-check | shared/infra | active |
-| `src/backupviewer/web/css/base.css` | 570 | root css: theme variable contract (--bg/--accent/--edge/--panel), app shell layout, chrome bars, bgfx layers | theming | active |
+| `src/backupviewer/web/css/base.css` | 569 | root css: theme variable contract (--bg/--accent/--edge/--panel), app shell layout, chrome bars, bgfx layers | theming | active |
 | `src/backupviewer/web/css/components.css` | 2689 | the app's single component stylesheet: cards, tables, pills, modals, plus per-tab styles for every subsystem | theming | active |
 | `src/backupviewer/web/fonts/Orbitron-VariableFont_wght.ttf` | *38 KB* | bundled orbitron variable font, loaded by base.css @font-face and offered as the 'rog' ui font in settings | theming | vendored |
 | `src/backupviewer/web/index.html` | 153 | the single page: the two chrome rows (topbar with the screens button, per-screen toolbar), #view, jobstrip, statusbar, and the ordered script list | shared/infra | active |
@@ -183,7 +183,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/web/js/tabs/sysvars.js` | 193 | system vars tab: lazy collapsible $-variable tree with source-file tags; exports treeNode for other tabs | backup parsing | active |
 | `src/backupviewer/web/js/tabs/view3d.js` | 1719 | 3d view tab: svg-projected dcs zones, orbit/pan/zoom + snap cube, posed fk arm, per-check side panel | 3D viewer | active |
 | `src/backupviewer/web/js/theme.js` | 441 | theme data + apply layer: maps 9 theme colors onto css vars, hex/contrast math, the custom-theme color editor | theming | active |
-| `src/backupviewer/web/js/netstatus.js` | 419 | plant-link pill + drop panel: 4-state link chip, segment device list merged with the library, gentle arp recheck | backup capture | active |
+| `src/backupviewer/web/js/netstatus.js` | 458 | plant-link pill + drop panel: the link ladder as a statusbar pill, segment device list merged with the library, adapter pin / unpin, gentle arp recheck | backup capture | active |
 | `src/backupviewer/web/js/theme_ui.js` | 269 | the theme picker row + drop panel: categories, credits, filter, hover-preview, edit/delete of custom themes | theming | active |
 | `src/backupviewer/web/js/update.js` | 135 | release-check UI: boot autocheck toast, statusbar update pill, about-box updates row with skip-version | shared/infra | active |
 | `src/backupviewer/web/js/util.js` | 451 | boots window.BV: esc/el/fmt/toast/copy, host-window fullscreen, modal+dirtyGuard, menu/dropPanel, collapsible | shared/infra | active |
@@ -223,7 +223,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/test_cvx_window.py` | 273 | pytest for cv-x remote session lifecycle at the api: adopt, reload, pop-out window, host-window fullscreen | tests | active |
 | `tests/test_dcs.py` | 173 | pytest for parse_dcs_report over real DCSVRFY/DCSCHGD dumps: sections, signatures, frames, user models *(untracked, local-only)* | tests | active |
 | `tests/test_dcszones.py` | 395 | pytest for dcszones: DCSPOS.VA geometry, DCSVRFY.DG merge, user models, and disabled/uninit honesty | tests | active |
-| `tests/test_discover.py` | 670 | pytest for backup-folder detection and the offline network scan: fanuc ftp, matrox ethernet/ip, adapters | tests | active |
+| `tests/test_discover.py` | 712 | pytest for backup-folder detection and the offline network scan: fanuc ftp, matrox ethernet/ip, adapters | tests | active |
 | `tests/test_export_endpoint.py` | 299 | pytest for the path-addressed ws_* workspace endpoints: listing, reading, diffing, all-or-nothing export | tests | active |
 | `tests/test_netlink.py` | 71 | pytest for the ip-helper bindings: oui/iftype/mac helpers, the full neighbour-state vocabulary, degrade-don't-raise | tests | active |
 | `tests/test_files_extract.py` | 153 | pytest for the files-tab USB extract endpoint: byte-exact copies, .part → rename landing, per-robot folder nesting, mtime preservation, never-into-a-backup refusal | tests | active |
@@ -290,7 +290,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/ui_import_probe.py` | 204 | hidden-window probe of the drop-import flow: simulated native drop, pre-ticked results, plant/line step, summary toast, landed tree byte-checked; --drop-probe keeps a visible window for a real drag | tests | active |
 | `tests/ui_jobs_probe.py` | 265 | hidden-window probe of scans as background jobs: Esc detaches instead of cancelling, the strip row (open re-attaches, ✕ cancels), detached finishes persist to the saved report, discover survives backdrop clicks | tests | active |
 | `tests/ui_logic_probe.py` | 227 | hidden-window probe of the camera logic tab: tab lights only on a script-bearing backup, calculation units lead the rail, the show-other toggle, script text renders whole | tests | active |
-| `tests/ui_netstatus_probe.py` | 381 | hidden-window probe of the plant-link pill: state→word table, panel open/close, and the honesty locks (absent is hollow, strangers are flagged, an unread probe dims) | tests | active |
+| `tests/ui_netstatus_probe.py` | 486 | hidden-window probe of the plant-link pill: state→word table, the why seam, panel open/close, a stale pin, and the honesty locks (absent is hollow, strangers are flagged, an unread probe dims) | tests | active |
 | `tests/ui_probe.py` | 2108 | the original full-app probe: boots a real local backup and walks every tab, primitive and compare view *(untracked, local-only)* | tests | active |
 | `tests/ui_sim_export_probe.py` | 313 | hidden-window probe of the cv-x simulator-folder settings row and the load-cameras picker guard | tests | active |
 | `tests/ui_tabs_probe.py` | 451 | hidden-window probe of backup tabs: strip, per-backup memory, tear-off, and the solo pop-out window | tests | active |

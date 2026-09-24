@@ -2646,7 +2646,8 @@ text.v3-ax-z { fill: var(--accent); }
 .net-fact-v { color: var(--sub); overflow-wrap: break-word; }
 .net-sub { display: flex; align-items: center; gap: 0.5rem;
   padding: 0.35rem 0.35rem 0.2rem; color: var(--sub); font-size: 0.82em; }
-.net-sub .btn { margin-left: auto; padding: 0.1em 0.6em; font-size: 0.95em; }
+.net-actions { margin-left: auto; display: flex; gap: 0.4rem; }
+.net-sub .btn { padding: 0.1em 0.6em; font-size: 0.95em; }
 .net-sec { margin-top: 0.5rem; }
 .net-sec-head { display: flex; align-items: center; gap: 0.4rem;
   color: var(--sub-alt); font-size: 0.78em; letter-spacing: 0.04em;

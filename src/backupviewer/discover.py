@@ -232,6 +232,12 @@ DOWNGRADE_SAMPLES = 2
 #: the gateway is normally in the neighbour table already; when it isn't, resolve
 #: it at most this often - an unanswered ARP blocks for about a second.
 GATEWAY_ARP_EVERY = 5.0
+#: every reason `choose_adapter` / `LinkWatch` can give for its choice. The
+#: panel's "chosen" row turns each into words, and the probe holds the two lists
+#: equal - a reason added here without words there used to reach the screen as
+#: a raw slug (`pinned-missing` did, for weeks).
+LINK_WHYS = ("pinned", "pinned-missing", "library", "neighbours", "remembered",
+             "gone", "none", "unread")
 
 
 def _in_network(ip: str, cidr: str) -> bool:
@@ -358,24 +364,29 @@ def choose_adapter(adapters: list[dict], neighbours: list[dict], *,
 
 
 def classify_state(adapter: dict | None, why: str, neighbours: list[dict], *,
-                   arp_fn=None) -> tuple[str, str]:
+                   arp_fn=None, missing: str = "") -> tuple[str, str]:
     """The link ladder -> (state, detail). Pure apart from the optional gateway
     ARP, which is injectable so tests never touch a network.
 
     `detail` is the whole point: each rung names the next thing to check, and
     two different faults that share a rung get two different sentences.
+    `missing` names the adapter that should have been there (the pin, or the
+    one remembered from a moment ago) when `adapter` is None.
     """
     if adapter is None:
-        if why in ("pinned-missing", "gone"):
-            return "no-link", "the plant adapter is gone — dongle unplugged?"
-        return ("no-adapter",
-                "nothing here looks like a plant link — pick the adapter "
-                "you plug into the switch")
+        if why == "pinned-missing":
+            # The tables cannot tell a dongle that fell out from a pin left over
+            # from another dock, PC or VM - both simply match nothing. Naming the
+            # pin and both causes is what lets someone stop waiting on a ghost.
+            who = missing or "the pinned adapter"
+            return ("no-link",
+                    f"{who} is pinned but not present — unplugged, or pinned on another PC")
+        if why == "gone":
+            return "no-link", f"{missing or 'the plant adapter'} is gone — dongle unplugged?"
+        return "no-adapter", "no adapter looks like the plant link — pick one"
     name = adapter.get("name") or "?"
     if not adapter.get("up"):
-        return ("no-link",
-                f"{name}: the OS reports no link — cable, dongle, or the "
-                "switch port. This is the laptop's view; the switch is not asked.")
+        return "no-link", f"{name}: no link — cable, dongle, or switch port"
     ip = adapter.get("ip") or ""
     if not ip or is_apipa(ip):
         return ("no-ip", f"{name}: link is up but DHCP never answered")
@@ -467,6 +478,9 @@ class LinkWatch:
         neighbours = neighbours_fn()
         adapter, why = choose_adapter(adapters, neighbours, pin=pin,
                                       library_ips=library_ips)
+        missing = ""      # the adapter that should have been there, by name
+        if adapter is None and why == "pinned-missing":
+            missing = (pin or {}).get("name") or (pin or {}).get("mac") or ""
         if adapter is None and why == "none" and self._known:
             # We knew which adapter was the plant link a moment ago. Losing its
             # address (unplugged, or DHCP gone) must not read as "nothing here
@@ -478,13 +492,16 @@ class LinkWatch:
                          if (mac and (a.get("mac") or "").upper() == mac)
                          or (name and a.get("name") == name)), None)
             adapter, why = (prev, "remembered") if prev else (None, "gone")
+            if prev is None:
+                missing = name or mac
         if adapter is not None:
             self._known = ((adapter.get("mac") or "").upper(), adapter.get("name") or "")
         gate = None
         if arp_fn is not None and now - self._last_arp >= GATEWAY_ARP_EVERY:
             gate = arp_fn
             self._last_arp = now
-        state, detail = classify_state(adapter, why, neighbours, arp_fn=gate)
+        state, detail = classify_state(adapter, why, neighbours, arp_fn=gate,
+                                       missing=missing)
         return self._publish(state, detail, now, adapter=adapter, why=why,
                              neighbours=neighbours, probe_ok=True)
 

@@ -7,10 +7,10 @@
    segment, merged with the library.
 
    Two contracts worth knowing before editing:
-   - The pill button is built ONCE and mutated in place. BV.dropPanel's dismiss
-     logic holds the anchor by reference, so replacing the element (or its
-     parent's innerHTML) silently breaks the open/close toggle. That is also why
-     the pill lives in its own #status-net span rather than inside the two the
+   - The pill is built ONCE and mutated in place. BV.dropPanel's dismiss logic
+     holds the anchor by reference, so replacing the element (or its parent's
+     innerHTML) silently breaks the open/close toggle. That is also why the
+     pill lives in its own #status-net span rather than inside the two the
      router rebuilds constantly.
    - BV.dropPanel returns null when a click is the swallowed half of a toggle;
      that is a close, not a failure. */
@@ -20,22 +20,39 @@
   var TICK_MS = 2000;          /* same beat as the camera tiles (home.js) */
   var HIT_MS = 600;            /* how long a "just answered" mark stays up */
 
-  /* state -> [pill text, pill variant]. `unknown` deliberately gets the neutral
-     ghost chip: when the READ fails we have no verdict, and a tool that turns
-     red when it itself breaks teaches people to ignore it. */
+  /* state -> [pill text, pill variant]. The variants are the app's own chips:
+     full red for "this end is the problem", the update pill's hollow green for
+     connected, the credit pill's ghost when there is nothing to say. `unknown`
+     deliberately gets the ghost: when the READ fails we have no verdict, and a
+     tool that turns red when it itself breaks teaches people to ignore it. */
   var LOOK = {
     ok: ["connected", "ok-soft"],
     "no-gateway": ["no gateway", "warn"],
     "no-ip": ["no ip", "err"],
     "no-link": ["no link", "err"],
-    "no-adapter": ["no plant adapter", "off"],
+    "no-adapter": ["no plant adapter", "ghost"],
     unknown: ["link ?", "ghost"],
   };
   /* the states worth interrupting for; a gateway that ARPs intermittently would
      otherwise toast on every flap */
   var LOUD = { "no-link": 1, "no-ip": 1 };
 
-  var btn = null, dot = null, label = null;
+  /* why -> words: one entry per reason in discover.LINK_WHYS. The probe holds
+     the two lists equal, so a new reason cannot reach the "chosen" row as a raw
+     slug the way `pinned-missing` once did. A heuristic that shows its
+     reasoning can be corrected; one that just asserts has to be trusted. */
+  var WHY = {
+    pinned: "you pinned it",
+    "pinned-missing": "pinned — not present",
+    library: "library devices on its subnet",
+    neighbours: "busiest wired segment",
+    remembered: "was the plant link a moment ago",
+    gone: "was the plant link — now gone",
+    none: "nothing qualifies",
+    unread: "couldn't read the adapter tables",
+  };
+
+  var pill = null;
   var ui = null;               /* the panel's nodes, built once, updated in place */
   var timer = null, inFlight = false, panel = null, panelBody = null;
   var last = null, lastState = null, booted = false;
@@ -44,6 +61,7 @@
   var skipped = 0;             /* addresses a capped sweep did not reach */
 
   function look(state) { return LOOK[state] || LOOK.unknown; }
+  function why(w) { return WHY[w] || (w || "—"); }
 
   function ago(ms) {
     var s = Math.round((ms || 0) / 1000);
@@ -59,47 +77,36 @@
     return Math.round(bps / 1e3) + " Kbps";
   }
 
-  /* say WHY this adapter was picked - a heuristic that shows its reasoning can
-     be corrected; one that just asserts has to be trusted blindly */
-  function why(w) {
-    return {
-      pinned: "you pinned it",
-      library: "most library devices are on its subnet",
-      neighbours: "the busiest wired segment",
-      remembered: "it was the plant link a moment ago",
-    }[w] || (w || "—");
-  }
-
   /* ---- the pill ------------------------------------------------------------ */
 
-  function ensureBtn() {
-    if (btn) return btn;
+  function ensurePill() {
+    if (pill) return pill;
     var slot = document.getElementById("status-net");
     if (!slot) return null;
-    btn = BV.el("button", { class: "pill ghost net-pill", title: "plant link" });
-    dot = BV.el("span", { class: "net-dot" });
-    label = BV.el("span", {}, "");
-    btn.appendChild(dot);
-    btn.appendChild(label);
-    btn.addEventListener("click", toggle);
-    slot.appendChild(btn);
-    return btn;
+    /* a plain .pill span, exactly like the update and credit pills beside it -
+       no dot, no button chrome, nothing this chip draws that its siblings do not */
+    pill = BV.el("span", { class: "pill ghost net-pill", role: "button", tabindex: "0",
+                           title: "plant link" });
+    pill.addEventListener("click", toggle);
+    pill.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+    });
+    slot.appendChild(pill);
+    return pill;
   }
 
   function render(p) {
-    if (!ensureBtn()) return;
+    if (!ensurePill()) return;
     last = p;
     var l = look(p.state);
     var text = l[0];
     /* how long a fault has held is the actionable half of "no ip" - it tells
        you whether to wait for DHCP or go move the cable */
     if (p.state === "no-ip" || p.state === "no-link") text += " · " + ago(p.since_ms);
-    label.textContent = text;
-    btn.className = "pill " + l[1] + " net-pill" + (p.probe_ok ? "" : " unread");
-    dot.className = "net-dot " + (p.state === "ok" ? "live"
-      : p.state === "unknown" ? "unknown" : "gone");
+    pill.textContent = text;
+    pill.className = "pill " + l[1] + " net-pill" + (p.probe_ok ? "" : " unread");
     var a = p.adapter || {};
-    btn.title = (p.detail || text)
+    pill.title = (p.detail || text)
       + (a.name ? "\n" + a.name + (a.ip ? " · " + a.ip : "") : "")
       + (p.probe_ok ? "" : "\n(could not read the adapter tables just now)");
     if (panel) paintPanel(p);
@@ -181,11 +188,10 @@
     el.children[2].textContent = d.gateway ? d.ip : "";
     el.children[3].innerHTML = tag;
     el.title = d.ip + (d.mac ? " · " + d.mac : "")
-      + (d.dot === "absent"
-        ? "\nno neighbour entry — the laptop hasn't talked to it since the cable went in"
-        : d.dot === "gone" ? "\nARP was attempted and got no answer"
+      + (d.dot === "absent" ? "\nnot heard from since the cable went in"
+        : d.dot === "gone" ? "\nno answer"
         : d.dot === "live" ? "\nanswered just now"
-        : "\nknown, not confirmed recently (normal on a quiet network)");
+        : "\nknown · quiet");
   }
 
   function paintList(host, rows) {
@@ -203,9 +209,7 @@
     });
   }
 
-  var FOOT = "this segment only — devices on other subnets are reached through "
-    + "the gateway and cannot be seen from here. A blink means this laptop's "
-    + "neighbour cache just confirmed that device; it is not the switch's port LED.";
+  var FOOT = "this subnet only — devices behind the gateway can't be seen from here";
   var FACTS = ["adapter", "address", "gateway", "mac", "link", "holding", "chosen"];
 
   /* The panel is built ONCE here and updated in place by paintPanel. It used to
@@ -238,22 +242,30 @@
 
     var sub = BV.el("div", { class: "net-sub" });
     ui.count = BV.el("span", {}, "");
-    ui.check = BV.el("button", { class: "btn", title:
-      "send one ARP request to each listed address — layer 2 only, no service is touched" },
+    var actions = BV.el("span", { class: "net-actions" });
+    /* the way out of a stale pin, shown only while one is in force: without it
+       the pill waits on a ghost adapter forever, and the picker that could fix
+       it sits folded shut at the bottom */
+    ui.unpin = BV.el("button", { class: "btn hidden",
+      title: "drop the pin and choose automatically" }, "use automatic");
+    ui.unpin.addEventListener("click", function () { pick(null, null); });
+    ui.check = BV.el("button", { class: "btn", title: "one arp request per listed device" },
       "check now");
     ui.check.addEventListener("click", checkNow);
+    actions.appendChild(ui.unpin);
+    actions.appendChild(ui.check);
     sub.appendChild(ui.count);
-    sub.appendChild(ui.check);
+    sub.appendChild(actions);
     head.appendChild(sub);
     ui.skipNote = BV.el("div", { class: "net-sec-note hidden" }, "");
     head.appendChild(ui.skipNote);
     panelBody.appendChild(head);
 
-    var s1 = BV.el("div", { class: "net-sec" });
-    s1.appendChild(BV.el("div", { class: "net-sec-head" }, "on this switch"));
+    ui.hereSec = BV.el("div", { class: "net-sec" });
+    ui.hereSec.appendChild(BV.el("div", { class: "net-sec-head" }, "on this switch"));
     ui.hereList = BV.el("div", {});
-    s1.appendChild(ui.hereList);
-    panelBody.appendChild(s1);
+    ui.hereSec.appendChild(ui.hereList);
+    panelBody.appendChild(ui.hereSec);
 
     ui.quietSec = BV.el("div", { class: "net-sec" });
     var qh = BV.el("div", { class: "net-sec-head" }, "");
@@ -300,29 +312,38 @@
     var here = devices.filter(function (d) { return d.dot !== "absent"; });
     var quiet = devices.filter(function (d) { return d.dot === "absent"; });
     var a = p.adapter || {};
+    var noAdapter = !p.adapter;
 
     ui.state.textContent = look(p.state)[0];
     ui.where.textContent = (a.name || "") + (p.cidr ? " · " + p.cidr : "");
     ui.detail.textContent = p.detail || "";
 
     /* the full connection picture, so nobody has to go hunting in ipconfig:
-       everything the OS told us about this link, and nothing inferred */
+       everything the OS told us about this link, and nothing inferred - with no
+       adapter there is nothing to report, not "none configured" */
     ui.facts.adapter.textContent = a.name || "—";
-    ui.facts.address.textContent = a.ip ? a.ip + (a.prefix ? "/" + a.prefix : "") : "none";
-    ui.facts.gateway.textContent = p.gateway || "none configured";
+    ui.facts.address.textContent = noAdapter ? "—"
+      : a.ip ? a.ip + (a.prefix ? "/" + a.prefix : "") : "none";
+    ui.facts.gateway.textContent = noAdapter ? "—" : (p.gateway || "none configured");
     ui.facts.mac.textContent = a.mac || "—";
     ui.facts.link.textContent = speed(a.speed);
-    ui.facts.holding.textContent = ago(p.since_ms) + " in this state";
+    ui.facts.holding.textContent = ago(p.since_ms);
     ui.facts.chosen.textContent = why(p.why);
 
     ui.count.textContent = here.length + " answering · " + quiet.length + " quiet";
     var busy = !!p.checking;
     ui.check.textContent = busy ? "checking…" : "check now";
     ui.check.disabled = busy;
-    ui.skipNote.textContent = skipped
-      ? skipped + " more were not checked (the sweep is capped)" : "";
+    /* nothing to check -> no button (an action with nothing to act on is gone,
+       not greyed); a stale pin -> the one action that clears it */
+    ui.check.classList.toggle("hidden", !devices.length);
+    ui.unpin.classList.toggle("hidden", p.why !== "pinned-missing");
+    ui.skipNote.textContent = skipped ? skipped + " not checked (the sweep is capped)" : "";
     ui.skipNote.classList.toggle("hidden", !skipped);
 
+    /* no adapter -> no segment to list; an adapter with nobody answering yet
+       keeps its heading, because "nobody answering" is the finding */
+    ui.hereSec.classList.toggle("hidden", noAdapter);
     paintList(ui.hereList, here);
     ui.quietSec.classList.toggle("hidden", !quiet.length);
     ui.quietLabel.textContent = "not heard from (" + quiet.length + ")";
@@ -335,26 +356,42 @@
   }
 
   function paintPicker(p) {
-    var chosen = (p.adapter || {}).mac || "";
-    var pinned = p.why === "pinned";
+    var pin = p.pin || null;
+    var pinned = p.why === "pinned" || p.why === "pinned-missing";
+    var cur = (pinned && p.adapter && p.adapter.mac) || "";
     ui.pickAuto.classList.toggle("on", !pinned);
-    ui.pickAutoWhy.textContent = pinned ? "" : "chosen by " + (p.why || "");
+    ui.pickAutoWhy.textContent = pinned ? "" : why(p.why);
+
+    var list = (p.adapters || []).slice();
+    /* a pin the table no longer holds is still the setting in force, so it
+       gets a row - hollow, marked, saying so - rather than the picker reading
+       "automatic" while the pill waits on a ghost */
+    if (p.why === "pinned-missing" && pin) {
+      cur = "missing:" + (pin.mac || pin.name || "");
+      list.push({ name: pin.name || pin.mac || "?", mac: cur, up: false, ip: "",
+                  missing: true });
+    }
 
     var seen = {};
-    (p.adapters || []).forEach(function (ad) {
+    list.forEach(function (ad) {
       var b = ui.picks[ad.mac];
       if (!b) {
         b = ui.picks[ad.mac] = BV.el("button", { class: "net-pick-row" }, "");
         b.appendChild(BV.el("span", { class: "net-dot" }));
         b.appendChild(BV.el("span", { class: "net-name" }, ""));
         b.appendChild(BV.el("span", { class: "net-pick-why" }, ""));
-        b.addEventListener("click", function () { pick(ad.mac, ad.name); });
+        b.addEventListener("click", function () {
+          /* read the latest entry, not the one the row was built from; and
+             re-pinning a ghost would change nothing */
+          if (!b._ad.missing) pick(b._ad.mac, b._ad.name);
+        });
       }
+      b._ad = ad;
       b.children[0].className = "net-dot " + (ad.up ? "live" : "absent");
       b.children[1].textContent = ad.name + (ad.ip ? " · " + ad.ip : "");
-      b.children[2].textContent = ad.library
-        ? ad.library + " library" : ad.neighbours + " seen";
-      b.classList.toggle("on", pinned && ad.mac === chosen);
+      b.children[2].textContent = ad.missing ? "not present"
+        : ad.library ? ad.library + " library" : ad.neighbours + " seen";
+      b.classList.toggle("on", pinned && ad.mac === cur);
       if (b.parentNode !== ui.pickBody) ui.pickBody.appendChild(b);
       seen[ad.mac] = 1;
     });
@@ -389,7 +426,7 @@
        you work. */
     var content = buildPanel();
     if (last) paintPanel(last);
-    var p = BV.dropPanel(btn, content, {
+    var p = BV.dropPanel(pill, content, {
       className: "net-drop",
       mount: document.getElementById("chrome-bottom"),
       onClose: function () {
@@ -403,10 +440,12 @@
 
   BV.netstatus = {
     STATES: Object.keys(LOOK),
+    WHYS: Object.keys(WHY),
     tick: tick,
     _render: render,
     _shouldTick: shouldTick,
     _look: look,
+    _why: why,
   };
 
   BV.api.ready.then(function (ok) {

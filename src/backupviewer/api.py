@@ -4826,6 +4826,10 @@ class Api:
         out["states"] = list(discover.LINK_STATES)
         out["seen"] = len(sample.get("neighbours") or [])
         out["checking"] = self._net_checking
+        # the pin itself rides along: when it matches no adapter the panel must
+        # still show WHAT is pinned, or the picker reads "automatic" while the
+        # pill waits on a ghost
+        out["pin"] = pin
         if detail:
             out["devices"] = self._link_devices(sample, by_ip)
             out["adapters"] = discover.link_adapter_choices(packed)

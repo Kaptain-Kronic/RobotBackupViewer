@@ -563,11 +563,52 @@ def test_choose_adapter_honours_a_pin_even_when_the_adapter_is_down():
 def test_pinned_adapter_that_vanished_reads_as_no_link():
     """USB adapters usually disappear from the table when unplugged rather than
     reporting down - the commonest real event must not show the most confusing
-    words."""
+    words. But the tables cannot tell a dongle that fell out from a pin left
+    over from another dock, PC or VM, so the sentence names the pin and both
+    causes - and it is not the sentence an automatic choice that vanished gets."""
     a, why = discover.choose_adapter([WIFI], [], pin={"mac": DONGLE["mac"]})
     assert a is None and why == "pinned-missing"
-    state, detail = discover.classify_state(a, why, [])
-    assert state == "no-link" and "unplugged" in detail
+    state, detail = discover.classify_state(a, why, [], missing="Ethernet 3")
+    assert state == "no-link"
+    assert "Ethernet 3" in detail and "pinned" in detail and "unplugged" in detail
+    gone = discover.classify_state(None, "gone", [], missing="Ethernet 3")
+    assert gone[0] == "no-link" and "Ethernet 3" in gone[1] and gone[1] != detail
+
+
+def test_a_stale_pin_is_named_by_the_watch():
+    """The watch carries the pin's own name into the sentence, so the panel can
+    say WHICH adapter it is waiting on (on the dev machine: a VirtualBox
+    host-only adapter pinned months earlier, long since removed)."""
+    w = discover.LinkWatch()
+    out = w.sample(pin={"mac": DONGLE["mac"], "name": "Ethernet 3"}, library_ips=LIB,
+                   now=0, adapters_fn=lambda: [WIFI], neighbours_fn=lambda: [])
+    assert out["state"] == "no-link" and out["why"] == "pinned-missing"
+    assert "Ethernet 3" in out["detail"] and out["adapter"] is None
+
+
+def test_every_reason_the_watch_can_give_is_declared():
+    """The panel turns each `why` into words and the probe holds its table to
+    LINK_WHYS - so LINK_WHYS must be exactly the set the code emits, no more
+    (dead words) and no less (a raw slug on screen)."""
+    busy = [_nb("192.0.2.%d" % n, "stale") for n in range(10, 16)]
+    seen = {
+        discover.choose_adapter([WIFI, DONGLE], [], pin={"mac": DONGLE["mac"]})[1],
+        discover.choose_adapter([WIFI], [], pin={"mac": DONGLE["mac"]})[1],
+        discover.choose_adapter([WIFI, DONGLE], [], library_ips=LIB)[1],
+        discover.choose_adapter([WIFI, DONGLE], busy, library_ips=())[1],
+        discover.choose_adapter([WIFI], [], library_ips=())[1],
+    }
+    w = discover.LinkWatch()
+    w.sample(library_ips=LIB, now=0, adapters_fn=lambda: [DONGLE], neighbours_fn=lambda: [])
+    # the library evidence goes away but the adapter is still there: remembered
+    seen.add(w.sample(library_ips=(), now=2, adapters_fn=lambda: [DONGLE],
+                      neighbours_fn=lambda: [])["why"])
+    # ...and then the adapter itself: gone
+    seen.add(w.sample(library_ips=(), now=4, adapters_fn=lambda: [WIFI],
+                      neighbours_fn=lambda: [])["why"])
+    # ...and then the tables won't read at all: unread
+    seen.add(w.sample(library_ips=(), now=6, adapters_fn=lambda: [])["why"])
+    assert seen == set(discover.LINK_WHYS)
 
 
 def test_classify_state_ladder():
@@ -654,6 +695,7 @@ def test_losing_the_chosen_adapter_reads_as_no_link_without_a_pin():
         out = w.sample(library_ips=LIB, now=t, adapters_fn=lambda: [WIFI],
                        neighbours_fn=lambda: [])
     assert out["state"] == "no-link" and out["why"] == "gone"
+    assert DONGLE["name"] in out["detail"]      # named, not "the plant adapter"
 
 
 def test_pack_ips_skips_junk():
