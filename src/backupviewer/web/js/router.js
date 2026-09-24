@@ -269,6 +269,12 @@
     /* a live remote view is an overlay on a chip, not a route: ANY navigation
        returns to the app and parks the remote (session stays connected) */
     if (BV.remotes) BV.remotes.hideVisible();
+    /* the floating camera boxes park on the same rule, one step softer: they
+       belong to the library screen, so leaving it HIDES the layer (which is
+       also what stops camfeed feeding the pictures inside) and coming back
+       restores the same boxes in the same places. Nothing is disconnected and
+       nothing is rearranged. */
+    if (BV.camFloats) BV.camFloats.syncRoute();
 
     var hash = location.hash.slice(1);
     var parts = hash.split("/");
@@ -526,6 +532,24 @@
         BV.state.settings = settings || {};
         BV.uiPrefs.apply(BV.state.settings);
         BV.openCvxRemote("", BV.cvxWin.label, { adopt: BV.cvxWin.sid, owned: true });
+      });
+      return;
+    }
+    /* the camera window is nothing but the float layer: no library, no tabs,
+       no routing. It needs the settings (theme, text size) and the library's
+       cameras, and then camfloat fills it from the slots that came across. */
+    if (BV.camWin) {
+      document.title = "backupviewer · cameras";
+      BV.theme.load().catch(function () {}).then(function () {
+        return BV.api.call("get_settings").catch(function () { return null; });
+      }).then(function (settings) {
+        BV.state.settings = settings || {};
+        BV.uiPrefs.apply(BV.state.settings);
+        return BV.camFloats.bootWindow();
+      }).catch(function (e) {
+        document.getElementById("view").innerHTML =
+          '<div class="empty-lib">could not open the camera window: ' +
+          BV.esc(e && e.message) + "</div>";
       });
       return;
     }

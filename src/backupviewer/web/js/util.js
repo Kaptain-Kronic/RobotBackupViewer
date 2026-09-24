@@ -130,6 +130,93 @@ window.BV = {};
     return Math.pow(1.25, -d / 100);
   };
 
+  /* Where the content region actually starts and ends, in viewport px: below
+     the TOPBAR (so navigation and the session chips stay reachable) and above
+     the STATUSBAR. Both camera remotes measured this for themselves and the
+     float layer wants the same answer, so it lives here once.
+
+     Fullscreen covers the chrome too, and so does a missing slab (a solo
+     pop-out has no statusbar) - both answer 0 for that edge. */
+  BV.chromeInset = function () {
+    var fs = BV.fullscreen.active();
+    /* the camera window hides the app's chrome and puts its own slim bar in
+       its place - measure whichever one this window actually has, or the
+       float layer covers the bar it is supposed to sit under */
+    var tb = document.querySelector(".camwin-bar") ||
+             document.getElementById("topbar");
+    var sb = document.getElementById("statusbar");
+    var sbShown = sb && sb.offsetParent !== null;
+    return {
+      top: (fs || !tb) ? 0 : tb.getBoundingClientRect().bottom,
+      bottom: (fs || !sbShown) ? 0 : sb.offsetHeight,
+    };
+  };
+
+  /* A fixed-aspect picture fitted into a scrolling stage, with a view zoom.
+
+     The picture is SIZED, never transformed: `screen` is given px dimensions
+     of (fitted size x zoom) and the stage scrolls, so the mouse math anywhere
+     downstream can read the live rect and never has to know a zoom exists.
+     (A body/page transform is also the thing that breaks every
+     getBoundingClientRect popup in this app - see CLAUDE.md.)
+
+     opts: { size() -> {w,h} of the source picture, min, max, onZoom(z) }
+     Returns { fit, setZoom, zoom, wheel }: `wheel` is a ctrl+wheel handler the
+     caller binds wherever it wants the gesture to answer (the step is
+     BV.wheelZoomFactor's - proportional to the delta, capped at a notch, so
+     a pinch glides), and nothing here ever forwards anything to a camera -
+     the zoom is local to this view. */
+  BV.zoomStage = function (stage, screen, opts) {
+    opts = opts || {};
+    var min = opts.min || 1, max = opts.max || 4;
+    var zoom = 1;
+
+    function fit() {
+      /* a hidden stage measures 0 and would collapse the picture; the caller
+         re-fits on show (that is what parking a remote on its chip does) */
+      if (!stage.clientWidth || !stage.clientHeight) return;
+      var src = opts.size ? opts.size() : { w: 4, h: 3 };
+      var cs = getComputedStyle(stage);
+      var sw = stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      var sh = stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+      var ar = (src.w || 4) / (src.h || 3);
+      var w = sw, h = sw / ar;
+      if (h > sh) { h = sh; w = sh * ar; }
+      /* floor, not round: a 0.5px overshoot at 100% grows a phantom scrollbar */
+      screen.style.width = Math.floor(w * zoom) + "px";
+      screen.style.height = Math.floor(h * zoom) + "px";
+    }
+    function setZoom(z, ev) {
+      /* held UNROUNDED: a slow pinch is sub-percent ticks, and rounding each
+         one away left the view stuck (the label rounds, see onZoom) */
+      z = Math.max(min, Math.min(max, z));
+      if (z === zoom) return;
+      /* hold the point under the cursor (no cursor: the view center) still
+         while the box resizes around it */
+      var r = screen.getBoundingClientRect();
+      var sr = stage.getBoundingClientRect();
+      var ax = ev ? ev.clientX : sr.left + sr.width / 2;
+      var ay = ev ? ev.clientY : sr.top + sr.height / 2;
+      var fx = (ax - r.left) / r.width, fy = (ay - r.top) / r.height;
+      zoom = z;
+      fit();
+      var r2 = screen.getBoundingClientRect();   /* forces layout, post-fit */
+      stage.scrollLeft += (r2.left + fx * r2.width) - ax;
+      stage.scrollTop += (r2.top + fy * r2.height) - ay;
+      if (opts.onZoom) opts.onZoom(zoom);
+    }
+    return {
+      fit: fit,
+      setZoom: setZoom,
+      zoom: function () { return zoom; },
+      wheel: function (e) {
+        if (!e.ctrlKey) return;
+        e.preventDefault();
+        setZoom(zoom * BV.wheelZoomFactor(e), e);
+      },
+    };
+  };
+
   /* clipboard with the WebView2-safe fallback; every report/copy button in the
      app (scan report, backup log, future exports) shares this one path */
   BV.copyText = function (text, okMsg) {
@@ -303,7 +390,14 @@ window.BV = {};
          a live diagnostic you are reading while you scroll the library is
          exactly the case that made this worth splitting. */
       if (!opts.pinned) {
-        window.addEventListener("scroll", onScroll, true);
+        /* anchorFixed: floating coords, but measured off an anchor in the
+           CHROME — which no page scroll can move, so scrolling cannot make
+           them stale and closing on it would only be rude. A resize still
+           can, so that half stays. (The cam wall's picker: every box it
+           ticks repaints the wall underneath, and a repaint restores the
+           view's scroll position — which used to shut the panel on the
+           first click.) */
+        if (!opts.anchorFixed) window.addEventListener("scroll", onScroll, true);
         window.addEventListener("resize", close);
       }
     }, 0);
@@ -383,7 +477,13 @@ window.BV = {};
      bottom bar — and content height stops mattering at all. A mounted panel is
      also `pinned`: its coords cannot go stale, so page scroll and window resize
      no longer close it.
-     opts: {align: "right", className, mount, onKey(e)->bool, onClose}. */
+
+     opts.anchorFixed is the middle ground, for a panel hanging off a CHROME
+     control (the toolbar, the topbar): it still floats and is still measured,
+     but no page scroll can move that anchor, so scrolling stops closing it.
+     Reach for it when the panel's own controls repaint the screen underneath.
+     opts: {align: "right", className, mount, anchorFixed,
+            onKey(e)->bool, onClose}. */
   BV.dropPanel = function (anchorEl, contentEl, opts) {
     opts = opts || {};
     var anchorNode = anchorEl && anchorEl.nodeType === 1 ? anchorEl : null;
@@ -401,6 +501,7 @@ window.BV = {};
       anchorNode: anchorNode,
       escOnWindow: true,
       pinned: !!opts.mount,
+      anchorFixed: !!opts.anchorFixed,
       onKey: opts.onKey,
       onClose: opts.onClose,
     });

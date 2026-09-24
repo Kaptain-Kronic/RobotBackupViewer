@@ -26,6 +26,39 @@
     return url + (url.indexOf("?") < 0 ? "?" : "&") + "pgx=" + Math.random();
   }
 
+  /* The sandbox a matrox page gets. Popups are only allowed on the HOME tab
+     when no operator pages were captured (then a browser popup beats a dead
+     link); with pages in place everything stays in-app. No allow-top-navigation
+     ever - a legacy frame-buster must not be able to hijack the app window. */
+  function sandboxFor(t, popupsOk) {
+    var sb = "allow-scripts allow-forms allow-same-origin allow-modals allow-downloads";
+    if (!t.home || popupsOk) sb += " allow-popups";
+    return sb;
+  }
+
+  /* Shared with the floating boxes (camfloat.js), which drive a matrox the
+     only way a matrox can be driven: its own web page. Kept here because this
+     file owns the matrox remote - a second implementation of the sandbox rule
+     is exactly the kind of copy that drifts into a security hole. */
+  BV.mtx = {
+    /* the pages this camera serves: {url, embeddable, pages[]} */
+    pages: function (ip) { return BV.api.call("mtx_remote_start", { ip: ip }); },
+    /* which page a tech actually works in: the operator page when there is
+       exactly one, else home */
+    pick: function (r) {
+      var pages = (r && r.pages) || [];
+      return pages.length === 1
+        ? { label: pages[0].label, url: pages[0].url, home: false, only: true }
+        : { label: "home", url: r.url, home: true, only: pages.length === 0 };
+    },
+    frame: function (page) {
+      var f = BV.el("iframe", { title: "MTX camera web UI",
+                                sandbox: sandboxFor(page, !!page.only && page.home) });
+      f.src = daUrl(page.url);
+      return f;
+    },
+  };
+
   BV.openMtxRemote = function (ip, label) {
     ip = (ip || "").trim();
     if (!ip) { BV.toast("this camera has no IP on record"); return; }
@@ -35,6 +68,9 @@
     var rkey = "mtx:" + ip;
     /* re-opening a camera that already has a chip brings its view back up */
     if (!chipless && BV.remotes.focus(rkey)) return;
+    /* ...and a camera already up in a FLOATING box is the same story: point at
+       that box rather than opening a second view of one camera */
+    if (BV.camFloats && BV.camFloats.focusIp(ip)) return;
     /* per-invocation flag: a slow probe that resolves after THIS panel closed
        (and another opened) must check its OWN teardown, or it dead-ends the
        newer one */
@@ -77,13 +113,13 @@
     /* --- chip lifecycle (same shape as the CV-X remote) ------------------ */
     function place() {
       if (chipless) return;               /* the whole window is the remote */
-      var fs = BV.fullscreen.active();    /* fullscreen: cover the chrome too */
       /* below the TOPBAR (navigation + chips stay reachable), over the
-         toolbar row - that row is context for the screen this panel covers */
-      var tb = document.getElementById("topbar");
-      var sb = document.getElementById("statusbar");
-      overlay.style.top = (fs || !tb) ? "0" : tb.getBoundingClientRect().bottom + "px";
-      overlay.style.bottom = (fs || !sb) ? "0" : sb.offsetHeight + "px";
+         toolbar row - that row is context for the screen this panel covers.
+         BV.chromeInset is the shared measurement (the float layer uses it
+         too); it handles fullscreen and a missing slab. */
+      var ci = BV.chromeInset();
+      overlay.style.top = ci.top + "px";
+      overlay.style.bottom = ci.bottom + "px";
     }
     function show() {
       overlay.style.display = "";
@@ -187,15 +223,6 @@
       }).catch(function (e) { BV.toast("could not open window: " + e.message); });
     });
     phBtn.addEventListener("click", function () { BV.openViewfinder(); });
-
-    /* popups are only allowed on the home tab when no operator pages were
-       captured (then a browser popup beats a dead link); with tabs in place
-       everything stays in-app */
-    function sandboxFor(t, popupsOk) {
-      var sb = "allow-scripts allow-forms allow-same-origin allow-modals allow-downloads";
-      if (!t.home || popupsOk) sb += " allow-popups";
-      return sb;
-    }
 
     function select(i) {
       if (!tabs[i]) return;

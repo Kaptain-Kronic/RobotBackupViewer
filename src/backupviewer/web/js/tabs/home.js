@@ -22,6 +22,14 @@
   var _showHidden = false;      /* reveal hidden robots in the list */
   var _showHiddenBtn = null;    /* the header toggle (shown only when some are hidden) */
   var _cvxLiveBtn = null;       /* the cam lens's CV-X on/off switch (cam lens only) */
+  var _camPickBtn = null;       /* the cam lens's wall picker button (cam lens only) */
+  var _camPickPanel = null;     /* the picker's open drop panel, for the toggle */
+  var _floatBtn = null;         /* the cam lens's floating-boxes control (cam lens only) */
+  var _popBtn = null;           /* "pop out · n" — shown while cameras are ticked */
+  /* the cam lens's own selection. A second checklist rather than the robot one
+     (_cl): the two lenses select different KINDS of thing, and a stale robot
+     tick must never turn into a camera about to be popped out. */
+  var _camCl = BV.checklist({ onChange: syncPopBtn });
   var _warnedTruncated = false; /* the scan-cap warning toast fires once per session */
   var _visibleRobots = [];      /* the currently-rendered robots — the sticky toolbar's scope */
   var _sortMode = "";           /* name | ip | date; lazily read from settings (lib_sort) */
@@ -32,7 +40,6 @@
   var _camCounts = {};          /* robot id -> linked-camera count, built once per tree paint */
   var _shownList = [];          /* the tree paint's post-hidden-filter list — repaintFavorite feeds it back to favSection */
   var _viewMode = "";           /* backup | multicam; set by a user flip, else home_view is read live */
-  var _camTimer = null;         /* multi-cam live-image refresher (self-stops off-screen) */
   var _camRobotNames = {};      /* robot id -> name, for the tiles' "↳ robot" note */
 
   var SORT_LABELS = { name: "name", ip: "IP", date: "last backup",
@@ -45,34 +52,6 @@
                            saved: "desc", cams: "desc", status: "desc",
                            vendor: "asc" };
   var _sortDir = "";            /* asc | desc; lazily read from settings (lib_sort_dir) */
-  var CAM_REFRESH_MS = 2000;    /* live tile refresh — a beat gentler than the HMI's 1s */
-  /* how many NEW picture fetches one beat may start. The cap is a courtesy to
-     the plant network (a wall of 250 KB frames adds up fast), never a limit on
-     which cameras are allowed to be live: the tick rotates it, so the cost of
-     a big wall is a slower lap, never a tile that stays black forever. */
-  var CAM_MAX_LOADS = 6;
-  /* how far off-screen still counts as worth fetching, in viewports. Kept
-     small on purpose: every tile inside this margin competes for the same
-     budget, so a generous look-ahead spends the beat on tiles nobody is
-     looking at. A tile scrolled into view is served on the next beat anyway —
-     never-painted outranks refresh — which is what the look-ahead was for. */
-  var CAM_NEAR_SCREEN = 0.5;
-  var _camCursor = 0;           /* whose turn it is: the budget rotates, never restarts */
-  /* what a dark tile says. Three different darks, and a tech reads them very
-     differently: a held slot is not a dead camera, and a controller that has
-     simply not pushed a picture yet is neither. */
-  var CAM_NOTE_DARK = "no image — not answering";
-  var CAM_NOTE_BUSY = "in use — another terminal holds it";
-  var CAM_NOTE_QUIET = "connected — no picture yet";
-  var CAM_NOTE_NO_HMI = "no HMI image published";
-  /* not a verdict — the honest thing to say BEFORE a tile's first picture */
-  var CAM_NOTE_WAIT = "waiting for its first frame…";
-  /* live CV-X tile sessions, keyed by ip -> {sid, shotUrl, streamUrl}.
-     Module-scoped so a re-render (filter keystroke, library refresh) reuses
-     the live session instead of redialing the controller's single remote
-     slot; after a page reload it rebuilds from nothing and python's lease
-     reaper collects the orphaned sessions on its own. */
-  var _cvxTiles = {};
 
   function sortMode() {
     if (!_sortMode) {
@@ -151,7 +130,7 @@
     /* hand the controllers their slots back NOW - waiting out CVX_TILE_TTL
        would leave a terminal locked for another eight seconds after a user
        has explicitly said "stop mirroring these" */
-    if (!on) releaseCvxTiles();
+    if (!on) BV.camFeed.release();
     syncCvxLiveBtn();
     rerenderFromCache();   /* a display filter: repaint the cached listing */
   }
@@ -211,6 +190,74 @@
       _cvxLiveBtn.classList.toggle("hidden", !cam);
       syncCvxLiveBtn();
     }
+    /* same rule for the wall picker: it picks TILES, so it exists only where
+       there are tiles - and its panel cannot outlive the lens it belongs to */
+    if (_camPickBtn) {
+      _camPickBtn.classList.toggle("hidden", !cam);
+      syncCamPickBtn();
+      if (!cam && _camPickPanel) _camPickPanel.close();
+    }
+    /* the floating boxes belong to the wall too. They do NOT close when the
+       lens flips - a box you parked somewhere is still what you wanted to be
+       watching - so only the control hides, never the boxes. */
+    if (_floatBtn) {
+      _floatBtn.classList.toggle("hidden", !cam);
+      syncFloatBtn();
+    }
+    /* leaving the cam lens drops the camera selection outright: a tick left
+       behind would be a camera the next visit pops out without being asked */
+    if (!cam && _camCl.size()) { _camCl.clear(); _camCl.sync(); }
+    syncPopBtn();
+  }
+
+  /* "pop out · n", shown only while something is ticked - an action with
+     nothing to act on is gone entirely, not greyed */
+  function syncPopBtn() {
+    if (!_popBtn) return;
+    var n = _camCl.size();
+    var cam = viewMode() === "multicam";
+    _popBtn.classList.toggle("hidden", !cam || !n);
+    _popBtn.textContent = "pop out · " + n;
+    _popBtn.title = "put the " + n + " selected camera" + (n === 1 ? "" : "s") +
+      " into floating boxes";
+  }
+
+  /* every ticked camera into a box, then arrange them - popping four out one
+     at a time and leaving them stacked is not what "pop these out" means */
+  function popOutSelected() {
+    var ids = _camCl.selected();
+    if (!ids.length) return;
+    popOutCams(ids);
+    _camCl.clear(); _camCl.sync();
+    syncPopBtn();
+  }
+  function popOutCams(ids) {
+    ids.forEach(function (id) { BV.camFloats.popOut(id); });
+    BV.camFloats.tileThem();
+  }
+
+  /* the cameras in the BACKUP lens's selection. That checklist is shared with
+     robot rows (backups, tidy, the edit workspace), so this reads only the
+     cameras out of it - a ticked robot is never popped out, never counted, and
+     never unticked by a camera action. Ones with no IP have nothing to show. */
+  function selectedCams() {
+    return selectedRobots().filter(function (x) {
+      return isCam(x) && x.ips && x.ips[0];
+    });
+  }
+
+  /* the count is the whole point of this control: a camera that left the wall
+     for a floating box has to be findable from the wall it left. Asserted
+     against the layer's own box count, never a remembered number. */
+  function syncFloatBtn() {
+    if (!_floatBtn) return;
+    var n = BV.camFloats.count();
+    _floatBtn.textContent = "floating · " + n;
+    _floatBtn.classList.toggle("is-picked", n > 0);
+    _floatBtn.disabled = !n;
+    _floatBtn.title = n
+      ? "arrange or close the " + n + " floating camera box" + (n === 1 ? "" : "es")
+      : "right-click a camera tile to pop it out into a floating box";
   }
 
   function nameCmp(a, b) { return (a.robot || "").localeCompare(b.robot || ""); }
@@ -365,6 +412,188 @@
     },
     row: function (c) { return camTile(c); },
   });
+
+  /* ---- which cameras this wall shows: the picker ----
+
+     The CV-X switch above decides what the wall may DIAL; this decides what it
+     SHOWS. A tech watching one line does not want the plant's other fifty
+     tiles on the screen (or spending the refresh budget), so the toolbar's
+     "cameras" button drops a PLANT -> LINE -> CAMERA tree of checkboxes — the
+     same folders the wall itself is grouped by, with a box at every level so
+     "just this line" is one click, not fifty.
+
+     Stored as the cameras that are OFF the wall, never the ones that are on:
+     a camera discovered tomorrow is not in that list, so it lands on the wall
+     by itself. An "on" list would have made every newly-added camera
+     invisible until somebody thought to come back here — the same silence
+     the show-hidden toggle exists to prevent. */
+  var _camOff = null;           /* camera id -> true (off the wall); null = not hydrated */
+
+  function camOff() {
+    if (_camOff === null) {
+      var saved = (BV.state.settings || {}).lib_cam_off;
+      _camOff = (saved && typeof saved === "object") ? Object.assign({}, saved) : {};
+    }
+    return _camOff;
+  }
+
+  var _saveCamOff = BV.debounce(function () {
+    if (BV.state.settings) BV.state.settings.lib_cam_off = camOff();
+    BV.api.call("set_setting", "lib_cam_off", camOff()).catch(function () {});
+  }, 500);
+
+  function onWall(c) { return !camOff()[c.id]; }
+
+  /* the cameras this wall COULD show — the picker's universe and the "n of m"
+     denominator. Hidden entries follow the grid's own rule: behind the
+     show-hidden toggle, never silently gone. */
+  function wallCams() {
+    return (_robots || []).filter(function (r) {
+      return isCam(r) && (!r.hidden || _showHidden);
+    });
+  }
+
+  /* commit a pick. A CV-X leaving the wall hands its controller's single
+     remote slot back NOW rather than waiting out the tile reaper's 8 s — the
+     same courtesy the CV-X switch pays, for the same reason: somebody is
+     standing at that HMI. */
+  function applyWall(on, off) {
+    var freed = [];
+    on.forEach(function (c) { delete camOff()[c.id]; });
+    off.forEach(function (c) {
+      camOff()[c.id] = true;
+      var ip = (c.ips && c.ips[0]) || "";
+      if (isCvxCam(c) && ip) freed.push(ip);
+    });
+    _saveCamOff();
+    if (freed.length) BV.camFeed.release(freed);
+    syncCamPickBtn();
+    rerenderFromCache();
+  }
+
+  function syncCamPickBtn() {
+    if (!_camPickBtn) return;
+    var cams = wallCams();
+    var on = cams.filter(onWall).length;
+    var trimmed = on < cams.length;
+    _camPickBtn.textContent = trimmed ? "cameras · " + on + " of " + cams.length
+                                      : "cameras · all";
+    _camPickBtn.classList.toggle("is-picked", trimmed);
+    _camPickBtn.title = trimmed
+      ? on + " of " + cams.length + " cameras are on the wall. Click to " +
+        "choose — by plant, by line, or one at a time."
+      : "choose which cameras tile — by plant, by line, or one at a time.";
+  }
+
+  /* the boxes are the truth after any click: everything the panel lists and
+     does not have ticked is off the wall. Seeding them (open, "all", "none")
+     must not run this, or opening the panel would repaint the wall — and a
+     repaint restarts every tile's picture. */
+  var _pickSeeding = false;
+  var _pickCl = BV.checklist({
+    onChange: function () {
+      if (_pickSeeding) return;
+      var on = [], off = [];
+      wallCams().forEach(function (c) { (_pickCl.has(c.id) ? on : off).push(c); });
+      applyWall(on, off);
+    },
+  });
+
+  /* the panel's tree: the wall's folders again, rows replaced by checkboxes.
+     Deliberately NOT filtered by the head's search box — the filter is a
+     transient "where is it", the pick is a standing choice, and a picker that
+     listed only what a filter left would hide the box you came to untick. */
+  var _pickTree = BV.libTree({
+    counts: true,
+    noun: "cameras",
+    persistKey: "lib_campick_folds",
+    startOpen: function (key, kind) { return kind === "plant"; },
+    row: function (c) {
+      var row = BV.el("label", { class: "campick-row" });
+      var cb = BV.el("input", { type: "checkbox", class: "lf-check",
+        title: "show this camera on the wall (shift+click for a range)" });
+      row.appendChild(_pickCl.bind(cb, c.id));
+      row.appendChild(BV.el("span", { class: "campick-name" }, BV.esc(c.robot || "")));
+      var ip = (c.ips && c.ips[0]) || "";
+      if (ip) row.appendChild(BV.el("span", { class: "campick-ip dim" }, BV.esc(ip)));
+      return row;
+    },
+    /* one box per folder, the library's own select-all idiom (tri-state: any
+       ticked -> a click clears, none ticked -> a click takes the lot) */
+    lineExtras: function (ln, lineCams, key) {
+      return pickGroupBox(lineCams, key, "show this whole line on the wall");
+    },
+    plantExtras: function (pl, plantCams, key) {
+      return pickGroupBox(plantCams, "plant|" + key, "show this whole plant on the wall");
+    },
+  });
+
+  function pickGroupBox(cams, gkey, title) {
+    var wrap = BV.el("div", { class: "lib-line-controls" });
+    /* the folder head's own click toggles the fold — a box inside it must not */
+    wrap.addEventListener("click", function (e) { e.stopPropagation(); });
+    var cb = BV.el("input", { type: "checkbox", class: "lf-check", title: title });
+    _pickCl.group(cb, function () {
+      return cams.map(function (c) { return c.id; });
+    }, gkey);
+    wrap.appendChild(cb);
+    return wrap;
+  }
+
+  function setPickBoxes(cams, on) {
+    _pickSeeding = true;
+    cams.forEach(function (c) { _pickCl.set(c.id, on); });
+    _pickCl.sync();          /* repaints every bound box, folder boxes included */
+    _pickSeeding = false;
+  }
+
+  function openCamPick() {
+    if (_camPickPanel) { _camPickPanel.close(); return; }
+    var cams = wallCams();
+    var content = BV.el("div", { class: "campick" });
+    var head = BV.el("div", { class: "campick-head" });
+    head.appendChild(BV.el("span", { class: "dim" }, "cameras on the wall"));
+    var allBtn = BV.el("button", { class: "btn campick-all" }, "all");
+    var noneBtn = BV.el("button", { class: "btn campick-none" }, "none");
+    allBtn.addEventListener("click", function () {
+      setPickBoxes(cams, true);
+      applyWall(cams, []);
+    });
+    noneBtn.addEventListener("click", function () {
+      setPickBoxes(cams, false);
+      applyWall([], cams);
+    });
+    head.appendChild(allBtn);
+    head.appendChild(noneBtn);
+    var tree = BV.el("div", { class: "campick-tree" });
+    content.appendChild(head);
+    content.appendChild(tree);
+    /* seed from the saved pick, then paint the tree that binds to it */
+    _pickSeeding = true;
+    _pickCl.clear();
+    cams.forEach(function (c) { if (onWall(c)) _pickCl.set(c.id, true); });
+    _pickTree.render(tree, { robots: cams }, { cmp: robotComparator() });
+    _pickCl.sync();
+    _pickSeeding = false;
+    if (!cams.length) {
+      tree.innerHTML = '<div class="dim campick-empty">no cameras in the library ' +
+        "yet — add them with “+ add robot → discover on network”.</div>";
+    }
+    /* it FLOATS (measured off the button) rather than mounting into the chrome
+       slab: html.frosted gives #chrome-top a backdrop-filter, and a panel
+       inside that stacking context paints under the view it hangs over.
+       anchorFixed is what makes floating safe here — every box repaints the
+       wall, and the repaint's scroll restore would otherwise shut the panel
+       on the first click. */
+    var p = BV.dropPanel(_camPickBtn, content, {
+      className: "campick-drop",
+      align: "right",
+      anchorFixed: true,
+      onClose: function () { _camPickPanel = null; },
+    });
+    if (!p) return;          /* the swallowed half of a toggle */
+    _camPickPanel = p;
+  }
 
   /* ---- screen ---- */
 
@@ -644,6 +873,40 @@
       id: "lib-cvx-live", role: "switch" }, "CV-X live · on");
     _cvxLiveBtn.addEventListener("click", function () { setCvxLive(!cvxLive()); });
     syncCvxLiveBtn();
+    /* and beside it, for the same reason: which cameras the wall shows is not
+       a library action either. A panel left over from a previous mount is
+       anchored to a button that no longer exists - close it now. */
+    if (_camPickPanel) _camPickPanel.close();
+    _camPickBtn = BV.el("button", { class: "btn lib-cam-pick hidden",
+      id: "lib-cam-pick", "aria-haspopup": "true" }, "cameras · all");
+    _camPickBtn.addEventListener("click", openCamPick);
+    syncCamPickBtn();
+    /* the floating boxes are popped out by right-clicking a tile, never from
+       here: this carries the COUNT (a wall that changed is never a silent
+       change - the same promise the picker's count makes) and the two things
+       you cannot do to one box at a time. */
+    _floatBtn = BV.el("button", { class: "btn lib-cam-float hidden",
+      id: "lib-cam-float", "aria-haspopup": "true" }, "floating · 0");
+    _floatBtn.addEventListener("click", function () {
+      BV.menu(_floatBtn, [
+        { label: "move them to their own window",
+          title: "the boxes move into a camera window of their own, leaving "
+                 + "this one free for the backup work",
+          onClick: function () { BV.camFloats.toWindow(); } },
+        { sep: true },
+        { label: "tile them across the screen",
+          onClick: function () { BV.camFloats.tileThem(); } },
+        { label: "close every floating box",
+          onClick: function () { BV.camFloats.closeAll(); } },
+      ]);
+    });
+    syncFloatBtn();
+    /* select tiles, then press this - "pop out the ones I ticked", which is
+       the whole reason the tiles gained a checkbox */
+    _popBtn = BV.el("button", { class: "btn lib-cam-popout hidden",
+      id: "lib-cam-popout" }, "pop out · 0");
+    _popBtn.addEventListener("click", popOutSelected);
+    syncPopBtn();
     headActs.appendChild(fnBtn);
     headActs.appendChild(sortBtn);
     headActs.appendChild(cancelAll);
@@ -652,6 +915,9 @@
     headActs.appendChild(addBtn);
     head.appendChild(headActs);
     head.appendChild(selActs);
+    head.appendChild(_popBtn);
+    head.appendChild(_floatBtn);
+    head.appendChild(_camPickBtn);
     head.appendChild(_cvxLiveBtn);
     syncHeadMode();   /* a remount lands in the persisted lens, head included */
     return head;
@@ -674,6 +940,16 @@
 
   BV.state.on("library-dirty", function () {
     if (refreshWelcome()) refresh();
+  });
+
+  /* a box opened, closed or swapped: the wall's placeholders and the toolbar
+     count both follow from the layer, so repaint from the cache rather than
+     refetching the library for a change that never touched it */
+  BV.state.on("camfloats", function () {
+    syncFloatBtn();
+    if (_libWrap && document.body.contains(_libWrap) && viewMode() === "multicam") {
+      rerenderFromCache();
+    }
   });
 
   /* the background rescan settled: the cache is fresh and this refetch is a
@@ -961,6 +1237,11 @@
 
   function renderTree(body, data) {
     var robots = (data && data.robots) || [];
+    /* the floating boxes need the library's cameras: this is where a saved
+       arrangement is first rebuildable, and where a camera that has LEFT the
+       library stops being findable (its box keeps its place and says so).
+       Both lenses feed it - a box parked on the backup lens is still a box. */
+    BV.camFloats.sync(robots.filter(isCam));
     /* one snapshot of who is mid-backup for this whole paint (not per row) */
     _liveTargets = (BV.jobs && BV.jobs.activeTargets)
       ? BV.jobs.activeTargets() : { ids: {}, hosts: {} };
@@ -1343,14 +1624,54 @@
     }
     /* the quick bulk route into the edit workspace. With several rows ticked
        it takes the WHOLE selection — the label says how many, so the menu can
-       never quietly act on rows you had forgotten were lit. */
-    var into = selectionFor(r, main);
-    items.push({
-      label: into.length > 1
-        ? "add all programs from " + into.length + " selected robots to edit workspace"
-        : "add all programs to edit workspace",
-      onClick: function () { addProgramsToWorkspace(into); },
-    });
+       never quietly act on rows you had forgotten were lit.
+
+       ROBOTS only. A camera has no TP programs, so a ticked camera was being
+       counted into "from 3 selected robots" — which was both a miscount and a
+       lie about what they are — and then handed to a resolver with nothing to
+       find. When that leaves no robot at all (a camera row on its own) the
+       action has nothing to act on, so it is gone entirely rather than greyed:
+       the same rule the rest of this menu follows. */
+    var into = selectionFor(r, main).filter(function (x) { return !isCam(x); });
+    if (into.length) {
+      items.push({
+        label: into.length > 1
+          ? "add all programs from " + into.length + " selected robots to edit workspace"
+          : "add all programs to edit workspace",
+        onClick: function () { addProgramsToWorkspace(into); },
+      });
+    }
+    /* A CAMERA row offers the same pop-out the wall's tiles do, at the bottom
+       and behind a rule (they are view actions, not row actions). Cameras
+       only - a robot has no picture to float. And only from a real library row
+       (`main`): a backup tab's menu has no row behind it, and the float layer
+       is parked everywhere but the library, so a box popped from there would
+       land somewhere nobody can see it. */
+    var ip = (r.ips && r.ips[0]) || "";
+    if (main && isCam(r) && ip) {
+      items.push({ sep: true });
+      /* a selection outranks the row under the cursor, exactly as on the
+         wall: if you ticked six cameras, "pop out" means those six */
+      var cams = selectedCams();
+      var others = cams.some(function (c) { return c.id !== r.id; });
+      if (cams.length > 1 || (cams.length === 1 && others)) {
+        items.push({
+          label: "pop out the " + cams.length + " selected",
+          onClick: function () {
+            popOutCams(cams.map(function (c) { return c.id; }));
+            /* untick the CAMERAS that went out, and nothing else: the robots
+               in this selection belong to whatever backup is coming next */
+            cams.forEach(function (c) { _cl.set(c.id, false); });
+            _cl.sync();
+          },
+        });
+      }
+      items.push(BV.camFloats.has(r.id)
+        ? { label: "find its floating box",
+            onClick: function () { BV.camFloats.focusCam(r.id); } }
+        : { label: "pop out into a floating box",
+            onClick: function () { BV.camFloats.popOut(r.id); } });
+    }
     return items;
   }
 
@@ -1549,13 +1870,6 @@
 
   /* ---- multi-cam (live camera tiles) ---- */
 
-  /* the Matrox web server's live HMI frame — the same image the wall-monitor
-     page shows. Cache-busting belongs to fetchFrame, which is the one place
-     either vendor's picture is actually asked for. */
-  function camLiveUrl(ip) {
-    return "http://" + ip + "/SavedImages/HMIImage.jpg";
-  }
-
   function isCam(r) { return (r.device_type || "").indexOf("camera") === 0; }
   function isCvxCam(r) { return r.device_type === "camera-keyence"; }
 
@@ -1579,6 +1893,14 @@
     var cvxOff = cams.length && !cvxLive();
     var cvxHeld = cvxOff ? cams.filter(isCvxCam).length : 0;
     if (cvxOff) cams = cams.filter(function (r) { return !isCvxCam(r); });
+    /* the picker is the second display filter with teeth: the cameras a tech
+       took off this wall leave the grid (and a CV-X's slot was handed back
+       when they did). The toolbar button carries the count, so the trim is
+       never silent. */
+    var picked = cams.filter(onWall);
+    var pickHeld = cams.length - picked.length;
+    cams = picked;
+    syncCamPickBtn();          /* the library may have grown or shrunk */
     if (!cams.length) {
       /* an empty grid must not deny cameras that are merely hidden — hidden
          things are listed behind the toggle, never silently absent. The CV-X
@@ -1587,7 +1909,11 @@
       var hiddenCams = (_robots || []).filter(function (r) {
         return isCam(r) && r.hidden;
       }).length;
-      body.innerHTML = cvxHeld
+      body.innerHTML = pickHeld
+        ? '<div class="empty-lib">' + pickHeld + " camera" +
+          (pickHeld === 1 ? " is" : "s are") + " off the wall — use “cameras” " +
+          "above to put " + (pickHeld === 1 ? "it" : "them") + " back.</div>"
+        : cvxHeld
         ? '<div class="empty-lib">' + cvxHeld + " CV-X camera" +
           (cvxHeld === 1 ? " is" : "s are") + " switched off — use “CV-X live” " +
           "above to tile " + (cvxHeld === 1 ? "it" : "them") + " again.</div>"
@@ -1612,7 +1938,7 @@
     };
     var res = _camTree.render(body, { robots: cams }, { q: _filter, cmp: cmp });
     if (_filterBox) _filterBox.setCount(_filter ? res.shown : undefined, res.total);
-    startCamRefresh();
+    mountCamFeed();
   }
 
   /* one live tile: the camera's current picture — a matrox HMI frame polled
@@ -1628,129 +1954,39 @@
       tabindex: "0", role: "button" });
     tile.setAttribute("data-robot-id", c.id);
     var box = BV.el("div", { class: "cam-tile-box" });
-    if (ip) {
-      var img = BV.el("img", { class: "cam-live", alt: "" });
-      img.dataset.ip = ip;
-      if (isCvx) img.dataset.cvx = "1";
-      var note = BV.el("div", { class: "cam-tile-note dim" }, CAM_NOTE_WAIT);
-      /* the tile owns its own load lifecycle; the shared tick decides WHEN by
-         calling img._camLoad(), never by touching src (reassigning src aborts
-         an in-flight transfer and restarts it from byte 0 — a camera needing
-         >2s per frame could never complete a single load). No load happens at
-         creation: renders fire on every filter keystroke / library refresh,
-         and fetching every tile each time hammered the plant network.
-
-         BOTH vendors poll a still picture: a matrox serves its HMI jpeg, a
-         CV-X its mirrored screen through the bridge (dial once for the lease,
-         then ask that lease for a frame each beat). A tile deliberately does
-         NOT hold a stream open — a wall of never-ending responses starves on
-         the browser's six-connections-per-origin cap, and every tile past the
-         sixth then sits dark forever; cvx_remote.SHOT_PATH has the long form. */
-      var pending = 0;       /* Date.now() when the in-flight load started */
-      var fails = 0;         /* consecutive failures, for retry backoff */
-      var slowTimer = null;
-      img._camDue = 0;       /* earliest next load; the tick reads this */
-      img._camNote = CAM_NOTE_DARK;   /* WHICH dark this tile is, if it goes dark */
-      img._camShown = 0;     /* has this tile ever painted? first picture beats a refresh */
-      /* until the first picture lands the tile SAYS so. A blank black box that
-         explains nothing is the one thing a wall must never show: it is
-         indistinguishable from a dead camera, and that is exactly how a
-         starved tile used to read. Every tile now carries a note in every
-         state — waiting, dark, or busy — so silence can never come back. */
+    /* this camera is up in a floating box. The tile HOLDS ITS PLACE (a wall
+       that reflows under you loses the tech's bearings) but carries no <img>
+       at all — which is what makes "a floating camera is fetched exactly
+       once" true by construction rather than by a guard. */
+    var floated = BV.camFloats.has(c.id);
+    /* the same checkbox every other list in the app uses, so shift+click
+       ranges and selection-surviving-a-repaint come from BV.checklist rather
+       than a second implementation. Only on tiles there is something to do
+       with: a camera with no IP, or one already in a box, is not poppable. */
+    if (ip && !floated) {
+      var selBox = BV.el("input", { type: "checkbox", class: "lf-check cam-check",
+        title: "select (shift+click selects a range) — then “pop out”" });
+      _camCl.bind(selBox, c.id);
+      box.appendChild(selBox);
+    }
+    if (floated) {
+      tile.classList.add("floating");
+      box.appendChild(BV.el("div", { class: "cam-tile-note" }, "floating ↗"));
+    } else if (ip) {
+      var img = BV.el("img", { alt: "" });
+      var note = BV.el("div", { class: "cam-tile-note dim" }, BV.camFeed.NOTE.wait);
+      /* the shared beat owns the load lifecycle, the retry backoff and the
+         CV-X lease (components/camfeed.js) — the tile only dresses the states
+         it reports. That shared lease is what lets a floating box show the
+         same camera without dialling a controller that has one remote slot. */
       tile.classList.add("cam-wait");
-
-      /* one place decides what a dark tile says, so the 8s timer, the error
-         handler and the tick cannot disagree — and a verdict can be revised,
-         because python knows whether a live session has pushed a picture. */
-      img._camSay = function (text) {
-        img._camNote = text;
-        if (tile.classList.contains("cam-off")) note.textContent = text;
-      };
-      function dark() {
-        note.textContent = img._camNote;
-        tile.classList.remove("cam-wait");   /* a verdict outranks "waiting" */
-        tile.classList.add("cam-off");
-        if (!isCvx) probeMtxDark();
-      }
-      /* WHY a matrox tile is dark. The img's error event cannot tell us: a 404
-         and an unplugged camera look identical from here. One python probe
-         separates them — a camera that answers at all is up, and a Design
-         Assistant project either publishes SavedImages/HMIImage.jpg or it
-         never will — so the answer is stable and worth asking for at most
-         once a minute, and only for a tile that has already gone dark. */
-      function probeMtxDark() {
-        if (img._camProbeAt && Date.now() - img._camProbeAt < 60000) return;
-        img._camProbeAt = Date.now();
-        BV.api.call("mtx_tile_probe", { ip: ip }).then(function (r) {
-          if (r && r.state === "no_image") img._camSay(CAM_NOTE_NO_HMI);
-          else if (r && r.state === "down") img._camSay(CAM_NOTE_DARK);
-        }).catch(function () { /* the tile keeps whatever it already said */ });
-      }
-      /* ask for ONE picture, and arm the honesty timer around it: an ABORTED
-         or hung load fires no error event, so still nothing after 8s -> say
-         so (a frame that lands later clears it). Armed around the fetch and
-         never around the dial — the 8s has to measure the picture, not the
-         handshake in front of it. */
-      function fetchFrame(url) {
-        pending = Date.now();
-        clearTimeout(slowTimer);
-        slowTimer = setTimeout(dark, 8000);
-        img.src = url + "?t=" + Date.now();
-      }
-
-      img._camLoad = function () {
-        if (pending) {
-          if (Date.now() - pending < 30000) return false;  /* let it finish first */
-          fails++;                    /* hung past any TCP timeout: re-kick */
-          dark();
-        }
-        if (!isCvx) { fetchFrame(camLiveUrl(ip)); return true; }
-        var lease = _cvxTiles[ip];
-        if (lease && lease.shotUrl) {
-          fetchFrame(lease.shotUrl);
-          return false;               /* a loopback still is not a plant fetch */
-        }
-        /* no lease yet: take the controller's one view-only slot, and every
-           beat after this one just asks that session for a picture */
-        pending = Date.now();
-        BV.api.call("cvx_tile_start", { ip: ip }).then(function (r) {
-          pending = 0;
-          img._camSay(CAM_NOTE_DARK);     /* a fresh dial retires an old verdict */
-          _cvxTiles[ip] = { sid: r.session_id, shotUrl: r.shot_url,
-                            streamUrl: r.stream_url };
-          fetchFrame(r.shot_url);
-        }).catch(function (e) {
-          pending = 0; fails++;
-          /* say WHICH kind of dark this is: a held slot is not a dead cam */
-          img._camSay((e && e.code === "CVX_BUSY") ? CAM_NOTE_BUSY : CAM_NOTE_DARK);
-          dark();
-          img._camDue = Date.now() + Math.min(CAM_REFRESH_MS * Math.pow(2, fails), 30000);
-        });
-        return true;                      /* a dial counts against the beat cap */
-      };
-
-      img.addEventListener("load", function () {
-        pending = 0; fails = 0;
-        clearTimeout(slowTimer);
-        tile.classList.remove("cam-off");
-        tile.classList.remove("cam-wait");
-        img._camShown = 1;        /* it has a picture now: it joins the rotation */
-        img._camSay(CAM_NOTE_DARK);
-        img._camProbeAt = 0;      /* a camera that started publishing gets re-asked */
-        /* every tile polls, so every tile has a next beat. Nothing parks at
-           Infinity any more — that is what used to strand a tile whose picture
-           never arrived: unreachable by the tick, and dark until a restart. */
-        img._camDue = Date.now() + CAM_REFRESH_MS;
-      });
-      img.addEventListener("error", function () {
-        pending = 0; fails++;
-        clearTimeout(slowTimer);
-        dark();
-        /* 4s, 8s, 16s, then every 30s — a dead camera decays to a slow retry
-           instead of being re-polled at full rate forever. A CV-X whose lease
-           died under us heals a beat later, when cvx_tile_sync reports the
-           session gone and drops it. */
-        img._camDue = Date.now() + Math.min(CAM_REFRESH_MS * Math.pow(2, fails), 30000);
+      BV.camFeed.attach(img, {
+        ip: ip, cvx: isCvx,
+        onNote: function (text) { note.textContent = text; },
+        onState: function (state) {
+          tile.classList.toggle("cam-off", state === "dark");
+          tile.classList.remove("cam-wait");   /* a verdict outranks "waiting" */
+        },
       });
       box.appendChild(img);
       box.appendChild(note);
@@ -1770,18 +2006,45 @@
       meta.join(' <span class="sep">·</span> ')));
     tile.appendChild(main);
 
-    tile.title = ip ? "remote operation · " + ip : "no IP on record";
+    tile.title = ip
+      ? (floated ? "up in a floating box — click to find it"
+                 : "remote operation · " + ip + " · right-click to pop it out")
+      : "no IP on record";
+    /* pop-out lives on the RIGHT-click so a plain click still means what it
+       has always meant here (open the full remote) and the tile grows no new
+       chrome that would crowd a 16rem-wide box */
+    tile.addEventListener("contextmenu", function (e) {
+      e.preventDefault();
+      if (!ip) { BV.toast("this camera has no IP on record"); return; }
+      var items = [
+        floated
+          ? { label: "find its floating box",
+              onClick: function () { BV.camFloats.focusCam(c.id); } }
+          : { label: "pop out into a floating box",
+              onClick: function () { BV.camFloats.popOut(c.id); } },
+      ];
+      /* a selection outranks the tile under the cursor: if you ticked six
+         cameras, "pop out" means those six */
+      if (_camCl.size() > 1 || (_camCl.size() === 1 && !_camCl.has(c.id))) {
+        items.unshift({ label: "pop out the " + _camCl.size() + " selected",
+                        onClick: popOutSelected });
+      }
+      items.push({ label: "remote operation", onClick: function () { tile.click(); } });
+      BV.menu({ x: e.clientX, y: e.clientY }, items);
+    });
     tile.addEventListener("click", function () {
       if (!ip) { BV.toast("this camera has no IP on record"); return; }
+      /* already floating: the box IS this camera's view - point at it rather
+         than dialling a controller whose one remote slot is already spoken for */
+      if (floated) { BV.camFloats.focusCam(c.id); return; }
       if (!isCvx) { BV.openMtxRemote(ip, c.robot || ip); return; }
       /* a CV-X tile already holds the controller's one remote slot — the
          overlay ADOPTS that session (promoted out of view-only on the python
          side) instead of dialling twice. A beat too late (just reaped) falls
          back to a fresh dial after the slot settles. */
-      var lease = _cvxTiles[ip];
+      var lease = BV.camFeed.take(ip);   /* the overlay owns the session from here */
       if (lease && lease.sid) {
         var sid = lease.sid;
-        delete _cvxTiles[ip];              /* the overlay owns it from here */
         img._camDue = 0;                   /* redial when the overlay hands it back */
         BV.api.call("cvx_tile_adopt", sid).then(function () {
           BV.openCvxRemote(ip, c.robot || ip, { adopt: sid });
@@ -1800,127 +2063,30 @@
     return tile;
   }
 
-  /* one shared tick drives every live tile through its _camLoad. Only tiles
-     actually showing fetch: folded lines, a hidden window, tiles far off the
-     viewport, and any open modal or remote-operation overlay all pause them —
-     while a tech is inside one camera's remote session the wall behind it
-     goes quiet. New loads are capped per beat so a plant-sized grid never
-     bursts every camera at once. Self-stops when the library leaves the
-     screen or the lens flips back to backup; tiles render unloaded, so first
-     fetches land here too. */
-  /* pause = stop asking. Every tile polls a still now, so a paused wall has
-     nothing to let go of: skipping the pass is the whole pause. The leases
-     simply stop being renewed, and python's reaper hands the controllers'
-     single remote slots back within CVX_TILE_TTL — one mechanism covering
-     every way a wall stops being watched, which is what invariant 9 asks for. */
 
-  /* the lens flipped away (or the library left the screen): hang up every
-     tile session NOW instead of making the cameras wait out the TTL */
-  function releaseCvxTiles() {
-    Object.keys(_cvxTiles).forEach(function (tip) {
-      var l = _cvxTiles[tip];
-      if (l && l.sid) BV.api.call("cvx_tile_stop", l.sid).catch(function () {});
+  /* The wall is one SURFACE over the shared feed (components/camfeed.js): it
+     hands over its tiles and a liveness test, and the feed owns the rest —
+     one beat, one per-beat budget and one CV-X lease map across the wall and
+     the floating boxes alike, which is what stops a tile and a float from
+     both dialling a controller that has a single remote slot.
+
+     Only tiles actually showing fetch: folded lines, a hidden window, tiles
+     far off the viewport, and any open modal or remote overlay all pause them
+     — while a tech is inside one camera's remote session the wall behind it
+     goes quiet. Registering is idempotent, so every repaint just refreshes
+     the closure; when alive() goes false (the lens flipped, the library left
+     the screen) the feed drops the wall and hands back every session nothing
+     else is watching, rather than making those cameras wait out the TTL. */
+  function mountCamFeed() {
+    BV.camFeed.register("wall", {
+      imgs: function () {
+        return _libWrap ? _libWrap.querySelectorAll("img.cam-live") : [];
+      },
+      alive: function () {
+        return !!_libWrap && document.body.contains(_libWrap) &&
+               viewMode() === "multicam";
+      },
     });
-    _cvxTiles = {};
-  }
-
-  function startCamRefresh() {
-    if (_camTimer) return;
-    function pass() {
-      if (!_libWrap || !document.body.contains(_libWrap) || viewMode() !== "multicam") {
-        clearInterval(_camTimer); _camTimer = null;
-        releaseCvxTiles();
-        return;
-      }
-      if (document.hidden) return;
-      /* the CV-X and MTX remote overlays share the cvx-remote class */
-      if (document.querySelector(".cvx-remote") || BV.modalOpen()) return;
-      var imgs = _libWrap.querySelectorAll("img.cam-live");
-      var now = Date.now(), kicked = 0, sids = [], showing = [];
-      for (var i = 0; i < imgs.length; i++) {
-        var img = imgs[i];
-        /* folded/filtered: the house idiom — a raw offsetParent read inside a
-           content-visibility subtree forces layout (checklist.js has the
-           42-second receipt), and this loop runs forever on a timer */
-        var vis = (img.checkVisibility ? img.checkVisibility() : img.offsetParent !== null);
-        if (vis) {
-          var r = img.getBoundingClientRect();
-          vis = !(r.bottom < -window.innerHeight * CAM_NEAR_SCREEN ||
-                  r.top > window.innerHeight * (1 + CAM_NEAR_SCREEN));
-        }
-        if (!vis) continue;        /* scrolled/folded away: stop asking, keep the lease */
-        showing.push(img);
-        if (img.dataset.cvx) {
-          /* renew the lease of every tile actually on screen. NOT gated on
-             img.src any more: a tile whose first picture has not landed yet
-             still holds a live session, and letting that get reaped is how a
-             slow camera used to lose the slot it had just been given. */
-          var lease = _cvxTiles[img.dataset.ip];
-          if (lease && lease.sid) sids.push(lease.sid);
-        }
-      }
-      /* Spend the beat's budget as a ROTATION, not on a prefix.
-         This loop used to walk the tiles in DOM order and stop at six. A
-         CV-X tile survived that, because only its first dial costs a slot and
-         every frame after it is a free loopback read - but a MATROX tile pays
-         a slot for every frame it ever fetches, so the same handful at the top
-         of the list won the budget every single beat and the rest were never
-         asked for a picture at all. Twelve fed, whatever the wall's size:
-         with 56 cameras in the library, 44 of them could never paint.
-         And a tile that is never ASKED never fails either - no error, no 8s
-         timeout, so dark() never runs, .cam-off is never set, and the CSS
-         keeps the note hidden. The result was a silent black rectangle that
-         looked exactly like a broken camera while the camera was fine. That
-         is the honesty rule inverted, and it sent techs to the wrong line.
-         So: a tile that has NEVER painted goes first, wherever it sits (a
-         region just scrolled into view fills in on the next beat instead of
-         waiting out a lap), and the refresh rotation then resumes where the
-         last beat stopped, so every tile on the wall gets its turn. */
-      for (var f = 0; f < showing.length && kicked < CAM_MAX_LOADS; f++) {
-        var ft = showing[f];
-        if (ft._camShown || now < ft._camDue) continue;
-        if (ft._camLoad()) kicked++;
-      }
-      for (var k = 0; k < showing.length && kicked < CAM_MAX_LOADS; k++) {
-        var idx = (_camCursor + k) % showing.length;
-        var rt = showing[idx];
-        if (!rt._camShown || now < rt._camDue) continue;
-        if (rt._camLoad()) { kicked++; _camCursor = (idx + 1) % showing.length; }
-      }
-      /* one lease-renewal per pass for every tile actually on screen. Python
-         answers with liveness AND the session's frame count, which is what
-         lets a tile tell a quiet controller from a dark one. */
-      if (sids.length) {
-        BV.api.call("cvx_tile_sync", sids).then(function (alive) {
-          Object.keys(_cvxTiles).forEach(function (tip) {
-            var l = _cvxTiles[tip];
-            if (!l || !l.sid || !alive[l.sid]) return;
-            var im = _libWrap && _libWrap.querySelector(
-              'img.cam-live[data-ip="' + tip + '"]');
-            if (alive[l.sid].alive === false) {
-              /* the session died under us: drop the lease so the tile redials
-                 on its own backoff instead of re-asking a sid that is gone */
-              delete _cvxTiles[tip];
-              if (im) {
-                im.removeAttribute("src");
-                im._camDue = Date.now() + CAM_REFRESH_MS;
-                if (im._camSay) im._camSay(CAM_NOTE_DARK);
-                var t = im.closest(".cam-tile");
-                if (t) t.classList.add("cam-off");
-              }
-              return;
-            }
-            /* alive: a session that has never pushed a picture is a quiet
-               camera, not an absent one — say the true thing if it goes dark */
-            if (im && im._camSay) {
-              im._camSay(alive[l.sid].frames ? CAM_NOTE_DARK : CAM_NOTE_QUIET);
-            }
-          });
-        }).catch(function () {});
-      }
-    }
-    _camTimer = setInterval(pass, CAM_REFRESH_MS);
-    setTimeout(pass, 150);   /* first tiles light up now-ish, not a beat later */
   }
 
   /* ---- selection ---- */

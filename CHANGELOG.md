@@ -1,5 +1,151 @@
 # Changelog
 
+## v1.8 — the camera wall pops out into boxes and into a window of its own, a picker chooses what the wall shows, global-5 robots back up over http, and the boot fix meets its twin
+- **The boot fix met its twin.** Jake hit the same half-booting app when
+  WebView2 153 auto-installed on 09-17, found the same five-deep listen
+  backlog over CDP, and fixed it in this bundle by swapping pywebview's
+  server class for one with an OS-deep backlog; v1.7.1 fixed it a week later
+  by widening the stdlib backlog every server inherits. One mechanism stays —
+  v1.7.1's, because it reaches into no pywebview internals — and the stronger
+  guard is his: `test_page_server` runs pywebview's real server adapter on a
+  real socket, accepts nothing, fires one connect per script in `index.html`
+  and asserts none is refused, while a five-deep control refuses most of
+  them, so a green run means something. The page lists 66 scripts now.
+
+- **"add all programs from N selected robots" stops counting cameras as
+  robots.** A ticked camera was inflating that count and then being handed to
+  a program resolver with nothing to find — a camera has no TP programs. The
+  action now takes the robots out of the selection and says how many robots
+  that is, and when the selection holds no robot at all (a camera row on its
+  own) it is gone from the menu entirely rather than offering to add programs
+  that cannot exist.
+
+
+- **Camera rows on the backup list pop out too.** Right-click (or ⋯) a camera
+  row and the bottom of its menu, behind a rule, carries the same two actions
+  the wall's tiles do: *pop out into a floating box*, or *find its floating
+  box* if it is already up — and *pop out the N selected* when cameras are
+  ticked. Cameras only: a robot row's menu is unchanged, a ticked robot is never
+  counted or popped, and a camera action unticks only the cameras it popped, so
+  a robot selection lined up for a backup is left exactly as it was. No toolbar
+  controls were added to this lens, and the items are not offered from a
+  backup tab's menu — the float layer is parked everywhere but the library, so
+  a box popped from there would land where nobody could see it.
+
+
+- **Giving control back no longer blinks, and `tile them` lays out a real
+  grid.** Handing a box back to view-only used to blank the picture and wait
+  for the next beat — up to two seconds of nothing, which reads as a dropped
+  camera. The last frame is still true, so it stays up, and the still is asked
+  for in the same turn as the hand-back. And tiling past four boxes used to
+  cycle the four magnet zones and stack everything after the fourth on top of
+  them; four or fewer still land on real snap zones (so a window resize
+  re-derives them exactly), and beyond that they free-place on a grid. Locked
+  boxes are skipped and the grid lays out around them.
+
+
+- **Closing the camera window gives the boxes back, and a matrox box can be
+  driven too.** Closing that window used to close its cameras with it — the
+  arrangement now comes home to the main window, in the same places, and any
+  session it had taken control of is hung up on the way out (a promoted session
+  has no lease, so nothing else would ever collect it and that controller's one
+  slot would be held until the app exited). And **control** on a Matrox box
+  embeds the page the camera already serves, sandboxed by the same rule the
+  full remote uses — no arming step, because an iframe takes its own clicks and
+  a Matrox has no single remote slot to take off anyone; that rule was only
+  ever about CV-X.
+
+
+- **Taking control of a CV-X box went dark two seconds later**, claiming
+  another terminal held the camera. It was our own session: the driven picture
+  still carried the class the shared beat selects on, so the next tick asked
+  for a lease that taking control had just removed, python found the promoted
+  session sitting on that camera and honestly answered BUSY — and the re-fetch
+  reassigned `img.src`, killing the live stream with it. A picture with an
+  owner is no longer the beat's to touch. Every check around control read the
+  instant after the click, which is precisely the window where this looked
+  fine; the probe now sleeps past a beat and asserts the box is still
+  streaming, still says nothing, and has left the beat's selector.
+
+
+- **Pick several cameras and pop them all out, into a window of their own if
+  you want one.** The wall's tiles gained the same selection checkbox every
+  other list in the app has (shift+click ranges included), and a **pop out · N**
+  button puts the lot into floating boxes, arranged rather than stacked. From
+  the **floating** menu, *move them to their own window* hands the boxes to a
+  second OS window that is nothing but the cameras — so the main window is free
+  for the backup work — with its own slim bar to add, tile and close.
+  Both windows then keep feeding cameras, which needed the tile leases to count
+  **viewers** rather than assume one: a CV-X has a single session, so the second
+  window *joins* it instead of dialling beside it, each window renews its own
+  lease, and the session only stops when nobody holds one. Before that, flipping
+  the lens in one window hung up a camera the other window was showing.
+  Moving boxes between windows costs **zero dials**.
+  Two fixes to the boxes themselves: the **lock and close buttons did nothing**
+  — raising a box re-appended it to the DOM on every mousedown, which aborts the
+  click the browser was about to fire (dragging, which needs no click, worked
+  fine and hid it); boxes stack by z-index now and never move. And the resize
+  grips were painted over the top-right of the bar, swallowing the ✕ where
+  people actually aim. The probe missed both because `el.click()` bypasses hit
+  testing entirely — it reads `elementFromPoint` at each button's corners now,
+  and asserts a press never re-parents the box.
+
+
+- **The camera wall grows floating boxes.** A tile is 150 px tall, which is not
+  big enough to read a camera's screen from a step away — the workaround was
+  four camera remotes opened into their own OS windows and arranged by hand,
+  losing the pick, the shared beat and the layout every restart. Now
+  **right-click a tile → pop out into a floating box**: drag it by its bar,
+  magnet it to a corner or an edge (with a ghost preview of the zone it will
+  take), resize it from any of eight grips, ctrl+scroll to zoom inside it, and
+  lock it where it is. The bar's title swaps which camera the box shows, so an
+  arrangement outlives its contents, and `floating · N` on the cam toolbar
+  carries the count with *tile them* / *close all*. Boxes park when you leave
+  the library and come back exactly where you left them.
+  **Popping a camera out costs zero dials**: the box and the tile it came from
+  are two views of one leased session, so a CV-X controller is never asked for
+  a second remote slot it does not have. The wall keeps the tile in place but
+  renders it as a quiet placeholder with no `<img>` in it at all — the camera
+  is fetched exactly once by construction, and the grid never reflows under a
+  tech mid-look.
+  **Control is opt-in and one box at a time.** A float is view-only until you
+  press *control*, which promotes the leased session and swaps the 2 s still
+  for the live stream; one click inside then arms it, and only an armed box
+  forwards a mouse event. Arming a second box releases the first — button
+  included, so no camera is ever left mid-drag — and clicking away or `esc`
+  hands the mouse back to the app. Giving control back demotes the session to a
+  lease (`cvx_tile_yield`, the new inverse of `cvx_tile_adopt`) rather than
+  stopping and redialling, so the controller's single slot is never let go of
+  and raced for.
+  Under it: the wall's beat became `BV.camFeed` (one budget, one lease map,
+  shared by the wall and the floats), the CV-X mouse became `BV.cvxMouse`, and
+  `BV.zoomStage` / `BV.chromeInset` came out of the two remotes — all four are
+  promotions with both remotes converted onto them, not copies, and the
+  existing `ui_cvxremote_probe` / `ui_camwall_probe` passing unmodified is what
+  proves each extraction faithful.
+
+
+- **Pick which cameras the wall shows.** A `cameras · all` button beside the
+  CV-X switch drops the wall's own plant → line → camera folders with a
+  checkbox at every level, so "just this line" is one click rather than fifty.
+  The pick is saved as the cameras that are *off*, so a camera discovered
+  tomorrow lands on the wall by itself; taking a CV-X off hands its remote
+  slot back at once instead of waiting out the reaper; and the button carries
+  the count (`cameras · 12 of 60`) while an emptied wall names the control
+  that emptied it — a trimmed wall is never a silent absence.
+
+
+- **Global-5 robots back up without a password.** R-50iA controllers with user
+  management turned on refuse anonymous FTP (530), which is how every backup
+  was pulled. Their built-in web server still serves the whole `md:` device,
+  so a robot that refuses FTP is now backed up over HTTP instead — the same
+  files, the same crash-safe snapshot with its complete marker written last,
+  chosen per robot automatically (FTP first, HTTP on a 530, detected on the
+  worker thread so an unreachable host never blocks the start). One file that
+  stalls is recorded as a skip rather than sinking the backup; a run of stalls
+  aborts honestly. Checked live against a real R-50iA line: 672 files, 15 MB,
+  reopens in the viewer.
+
 ## v1.7.1 — the app boots whole again
 - **Every boot now loads every file — and says so when one does not.** v1.7
   came up half-built on most launches: a blank library, a settings dialog

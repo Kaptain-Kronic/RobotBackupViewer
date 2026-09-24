@@ -23,12 +23,30 @@ zoom** (never forwarded to the device); and the MJPEG server's framing was
 fixed to close every part **eagerly** (§4a, §7 — the frozen-until-input bug).
 The NAV_KEYS fullscreen tab-guard is retired (closing section).*
 
+*Updated 2026-09-11 by the floating-boxes pass (branch `cam-floats`), and again
+the same day by the camera-window pass on top of it (tile leases now count
+VIEWERS, and the boxes can take an OS window of their own): §1 gains
+a SIXTH surface and the one-controller rule that goes with it. Three promotions
+landed under it and both remotes were converted onto them rather than copied -
+`BV.camFeed` (the wall's beat, now shared with the floats), `BV.cvxMouse` (the
+only mouse path to a live controller), `BV.zoomStage` and `BV.chromeInset` -
+and `cvx_tile_yield` joins `cvx_tile_adopt` as its inverse. The proof each
+extraction was faithful is that `ui_cvxremote_probe` and `ui_camwall_probe`
+pass unmodified; the new surface has `tests/ui_camfloat_probe.py`.*
+
 *Updated 2026-09-24 (that update's commit is the anchor): the "browser zoom is
 disabled app-wide" premise under the local view zoom was **false** — pywebview
 never switches WebView2's page zoom off — so every app window now locks it on
 load (`api._lock_browser_zoom`), the page cancels ctrl+wheel (`keys.js`), and a
 wheel step is proportional to its delta (`BV.wheelZoomFactor`: a pinch glides).
 §5 invariant 10, §6 item 12, §7 the unlocked-zoom trap, closing section.*
+
+*Updated 2026-09-24 by the v1.8 merge (branch `sept-bundle`): the two
+passes above met here. `BV.zoomStage` carries the v1.7 wheel behaviour the
+remotes had gained in the meantime - it steps by `BV.wheelZoomFactor` and
+holds the zoom unrounded - so the conversion changed no behaviour the probe
+pins; the boxes pass's "browser zoom is disabled app-wide" wording was
+already false by then and reads as the per-window lock throughout.*
 
 Covers: src/backupviewer/cvx_remote.py, src/backupviewer/phoneview.py,
 src/backupviewer/qr.py, src/backupviewer/screengrab.py,
@@ -37,8 +55,12 @@ src/backupviewer/cvx_handshake/chan8503_tx.bin,
 src/backupviewer/cvx_handshake/chan8504_tx.bin,
 src/backupviewer/web/js/cvxremote.js,
 src/backupviewer/web/js/mtxremote.js,
-src/backupviewer/web/js/phoneview.js
-(10 files)
+src/backupviewer/web/js/phoneview.js,
+src/backupviewer/web/js/camfloat.js,
+src/backupviewer/web/js/components/camfeed.js,
+src/backupviewer/web/js/components/cvxmouse.js,
+src/backupviewer/web/js/components/floatbox.js
+(14 files)
 
 > **Template note.** The ten-section shape is kept, **including §6 Failure
 > modes**. Doc #3's refined keep-rule — keep §6 when the subsystem must
@@ -77,7 +99,7 @@ src/backupviewer/web/js/phoneview.js
 
 ## 1. What it is
 
-Five ways to put a live camera picture — or a live camera *screen* — in front
+Six ways to put a live camera picture — or a live camera *screen* — in front
 of a tech standing at the equipment, none of which exist while the app is only
 reading a backup. All of them vanish when there is nothing to drive:
 
@@ -116,11 +138,140 @@ reading a backup. All of them vanish when there is nothing to drive:
    session into the full remote (§5 invariants 5 and 9). The toolbar's **CV-X
    live** switch takes the whole vendor off the wall in one click: the tiles
    leave the grid and every session is hung up immediately, which is the fast
-   path for handing a line's remote slots back to the people at the HMIs.
+   path for handing a line's remote slots back to the people at the HMIs. The
+   **cameras** picker beside it does the same thing per plant / line / camera
+   (`home.js openCamPick`) — the cameras it takes off leave the grid, and any
+   CV-X among them is hung up on the spot rather than left to the reaper.
+
+6. **The floating boxes** (`camfloat.js` + `components/floatbox.js`) — a wall
+   tile is 150 px tall, which is not big enough to read a camera's screen from
+   a step away, so right-clicking one pops it out into a box on a layer over
+   the wall: drag it, magnet it to a corner or edge, resize it, zoom inside it,
+   lock it in place, swap which camera it shows. Two facts carry the whole
+   design. **A float and the tile it came from are two views of ONE leased
+   session** — both are fed by `BV.camFeed` off the same lease map, so popping
+   a camera out costs **zero dials** and the wall renders the floated camera as
+   a placeholder carrying no `<img>` at all (fetched exactly once by
+   construction, not by a guard). And **control is opt-in, one box at a time**:
+   a float is view-only until *control* is pressed, which promotes the leased
+   session through `cvx_tile_adopt`, swaps the 2 s still for the MJPEG stream
+   and mounts `BV.cvxMouse`; one click inside then *arms* it, and only an armed
+   box forwards anything. Giving control back goes through the new
+   `cvx_tile_yield` (§3) — demote to a lease rather than stop-and-redial, so
+   the controller's single slot is never let go of and raced for.
 
 The subsystem's centre of gravity is the CV-X protocol; the rest is
 comparatively ordinary once the trust posture is stated. Everything below
 spends its length accordingly.
+
+A float layer can also be handed a **window of its own** (`cam_window_open`,
+booting on `#camwall`): the boxes move there, the main window is left free for
+the backup work, and the wall keeps tiling those cameras small while the boxes
+show them big. Which is only safe because of the next section.
+
+### Tile leases count VIEWERS, not viewers-of-one
+
+`self._cvx_tiles` is `sid -> {viewer: last renew}`, where a viewer is a window
+(`"main"` / `"camwin"`). A CV-X has one session, so a second window watching a
+camera **joins** that session rather than dialling beside it — `cvx_tile_start`
+is idempotent per ip and just adds a viewer. `cvx_tile_sync` renews only the
+window that asked; `cvx_tile_stop` drops that window's lease and stops the
+session only once **nobody** holds one; the reaper expires viewers
+individually and collects the session when the last goes.
+
+Without the count, flipping the lens in one window hung up a camera the other
+window was showing, and the box went dark for no reason a tech could see.
+
+**Eager release is reserved for what a person asked for.** The CV-X switch, the
+wall picker and closing a box all call `camFeed.release()` by name and free the
+slot instantly. Incidental surface churn does **not** — guessing orphans from
+the DOM is a race that was lost twice (a surface leaves mid-repaint, just as
+the same cameras are about to come back; and a camera watched in another window
+is not in this document at all). Both guesses hung up a live camera and made
+something redial it. Churn is left to the reaper, which already knows about
+every window.
+
+### Popping out from the backup list
+
+A camera row's menu (`home.js rowMenuItems`) carries the same pop-out as a
+wall tile, appended below the row actions behind a `{sep:true}` rule. Two
+boundaries keep it honest: it is offered only for **camera** rows, and only
+when the menu was opened from a real library row (`main` set) — a backup tab
+calls the same builder with no row behind it, and the float layer is parked
+off the library, so a box popped from there would be invisible.
+
+That lens's selection is `_cl`, which it shares with robot rows (backups, tidy,
+the edit workspace). `selectedCams()` reads only the cameras out of it, and a
+pop-out unticks only the cameras it popped — a ticked robot is never counted,
+popped, or cleared by a camera action.
+
+### How many pictures the wall can carry
+
+`CAM_MAX_LOADS` (6) new fetches per `CAM_REFRESH_MS` (2 s) beat is the whole
+ceiling, and the two vendors spend it very differently:
+
+- a **Matrox** picture is a plant fetch *every* beat, so it costs a slot every
+  time. N visible Matrox pictures each refresh every `ceil(N / 6)` beats — six
+  or fewer is 2 s, twelve is 4 s, and so on. Floating boxes and wall tiles draw
+  on the SAME budget.
+- a **CV-X** picture costs a slot only for its first dial; every frame after is
+  a loopback read of `/cvxshot/<sid>` and is free. CV-X boxes are therefore
+  limited by controllers and screen space, not by the beat.
+
+The non-obvious part: a wall tile that a floating box is merely *covering* is
+still visible to `checkVisibility()` (occlusion is not visibility), so it goes
+on being fetched and goes on costing budget. Only a camera that is actually
+floating stops costing twice, because its tile is a placeholder carrying no
+`<img>` at all.
+
+### The one-controller rule, and where the slot can leak
+
+A CV-X has exactly one remote slot, and this surface has the most ways to lose
+it, so they are enumerated rather than left to be rediscovered:
+
+- **`cvx_tile_stop` is a deliberate no-op for a non-tile sid** (`api.py`, so a
+  tile release can never hang up an overlay). A box that took control holds a
+  *promoted* session, so tearing it down with `cvx_tile_stop` hands back
+  nothing, in silence. `camfloat.js drop()` calls `cvx_remote_stop` for a
+  controlling box and `camFeed.release` only for a view-only one; the probe's
+  `control.closing_while_driving_frees_the_slot` is what keeps that true.
+- **`camFeed.take(ip)` removes the lease before `cvx_tile_adopt` is asked.** If
+  the adopt then fails, the session is in neither registry and the reaper no
+  longer knows about it — so the `.catch` must `camFeed.give(ip, lease)` back
+  before surfacing the error.
+- **A failed `cvx_tile_yield` falls back to `cvx_remote_stop`**, for the same
+  reason: a session that is neither leased nor owned is collected by nothing.
+- **`cvx_tile_yield` starts the reaper if it is not running.** A session can be
+  yielded in a run where no tile was ever dialled, and a lease with nothing
+  reaping it is a slot held until the app exits.
+- **A driven picture leaves the beat.** `camFeed.detach(img)` on take,
+  `resume(img)` on release. The `<img>` still carried the class the beat
+  selects on, so two seconds after taking control the beat asked for a lease
+  `cvx_tile_adopt` had just removed, python found **our own promoted session**
+  on that camera and answered `CVX_BUSY`, and the box went dark reading *"in
+  use — another terminal holds it"* about a camera the user was driving — with
+  `img.src` reassigned, killing the stream. Every check around this read the
+  instant after the click, which is the one window in which it looked right;
+  `control.survives_the_next_beat` now sleeps past a beat.
+- **Closing the camera window hangs up what it was driving.** A promoted
+  session has no lease, so no reaper collects it — the window pushes the sid it
+  controls to python (`cam_window_push`'s `owned`) precisely so
+  `_close_cam_window_obj` can stop it. Its *arrangement* is kept, though: the
+  main window polls `cam_window_state` while that window is up and takes the
+  boxes back where they were.
+- **A matrox box is driven by the camera's own page**, not a mouse protocol —
+  control embeds the operator page through the shared `BV.mtx` helpers
+  (`mtxremote.js`), so the sandbox rule has exactly one definition. There is no
+  arming step for one: an iframe takes its own clicks, and a matrox has no
+  single remote slot to take off anybody. The one-at-a-time rule is about CV-X
+  slots and applies to CV-X alone.
+- **Handing a picture back never blanks it.** `camFeed.resume(img, url)` takes
+  the still url from the yield and points the img at it in the same turn; the
+  old blank-and-wait was a visible blink of up to `REFRESH_MS` every time a box
+  gave control back.
+- **Parking never yields control.** Routing off the library drops the MJPEG
+  connection (`img.src = ""`) but keeps the session — you come back to the box
+  you left, still in control.
 
 ## 2. The files
 
@@ -433,7 +584,10 @@ What must stay true, what enforces it, what breaks if it doesn't.
    path that does not wait for the reaper: turning it off calls
    `releaseCvxTiles()` directly, because a user saying "stop mirroring these"
    should not leave a terminal locked for another eight seconds
-   (`cvxswitch.off_frees_the_slots` in `ui_camwall_probe.py`). Since the tile-still pass that is the
+   (`cvxswitch.off_frees_the_slots` in `ui_camwall_probe.py`). The wall picker
+   takes the same shortcut for the cameras it removes — `releaseCvxTiles(ips)`
+   with a list, so the tiles still being watched keep mirroring
+   (`campick.cvx_off_frees_its_slot` / `campick.cvx_off_keeps_the_others`). Since the tile-still pass that is the
    *only* pause mechanism: a paused wall has nothing to detach, so skipping the
    pass IS the pause (`detachCvxStreams` is gone). Test-enforced
    (`test_cvx_tiles.py`; the adopt/redial choreography in `ui_batch_probe.py`).

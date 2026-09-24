@@ -13,10 +13,19 @@ a near-twin, and `mirror_latest` gained the long-path prefix it had been
 missing. §5 invariant 7, §7 and the Matrox facts table below carry the new
 claims; everything else still stands on the 2026-08-01 pass.*
 
-Covers: src/backupviewer/ftpbackup.py, src/backupviewer/keyencebackup.py,
-src/backupviewer/mtxbackup.py, src/backupviewer/discover.py,
-src/backupviewer/netlink.py, src/backupviewer/backuplog.py
-(6 files)
+*Amended 2026-08-31 (HTTP transport only, doc otherwise unre-verified): a fourth
+backup transport landed — `httpbackup.py`, for FANUC Global-5 (R-50iA)
+controllers whose User Management blocks anonymous FTP but whose built-in web
+server serves the same `MD:` set unauthenticated over HTTP. The FANUC device row
+now auto-detects (FTP first, HTTP on `530`) via a `RobotBackupJob` dispatcher.
+§1, §2 and a new §4 "FANUC Global-5 over HTTP" carry the claims, live-run against
+a real R-50iA line; everything else stands on the earlier passes.*
+
+Covers: src/backupviewer/ftpbackup.py, src/backupviewer/httpbackup.py,
+src/backupviewer/keyencebackup.py, src/backupviewer/mtxbackup.py,
+src/backupviewer/discover.py, src/backupviewer/netlink.py,
+src/backupviewer/backuplog.py
+(7 files)
 
 *§10 (the plant-link watch) was added 2026-08-14 against `main` @ `b1ef1c9` and
 brought `netlink.py` under this doc; the rest of the pass is unchanged.*
@@ -62,9 +71,11 @@ referenced here rather than documented here.*
 ## 1. What it is
 
 Everything that dials plant equipment lives here — the only code in the app
-with consequences beyond the local disk. Three backup transports pull
-snapshots into the library tree: FANUC controllers over FTP
-(`ftpbackup.BackupJob`), Keyence CV-X cameras over anonymous FTP
+with consequences beyond the local disk. Four backup transports pull
+snapshots into the library tree: FANUC Global-4 controllers over FTP
+(`ftpbackup.BackupJob`), FANUC Global-5 controllers over the unauthenticated
+HTTP `MD:` server (`httpbackup.HttpBackupJob`, chosen automatically when FTP is
+locked), Keyence CV-X cameras over anonymous FTP
 (`keyencebackup.KeyenceBackupJob`), Matrox cameras over SMB
 (`mtxbackup.CameraBackupJob`). `discover.py` sweeps a subnet to *find* those
 devices (FTP probe + EtherNet/IP identity broadcast + gated SMB), and
@@ -72,8 +83,9 @@ devices (FTP probe + EtherNet/IP identity broadcast + gated SMB), and
 read-only toward the device: the jobs GET files, the probes list and read —
 no capture module contains a single FTP/SMB write verb toward equipment
 (grep-verified 2026-08-01: no `storbinary`/`storlines`/`DELE`/`MKD`/rename
-anywhere under `src/backupviewer/`). Writing happens only locally, into the
-library tree — and never into an existing backup folder.
+anywhere under `src/backupviewer/`; re-checked 2026-08-31 with `httpbackup.py`
+added — GET-only, no `POST`/`PUT`/`DELETE`). Writing happens only locally, into
+the library tree — and never into an existing backup folder.
 
 The boundary with neighbours: `api.py` owns job construction (the
 device-type registry), threading, polling and cancellation; `jobs.js` owns
@@ -112,6 +124,16 @@ Structure worth knowing before touching it:
   (`api.py:203-247`) maps `device_type` → probe / diagnose / job class /
   per-brand credential defaults. `""` is the FANUC default row. Adding a
   brand is one row + one module.
+- **The FANUC row auto-detects its transport.** Its probe and `job_cls` are
+  `httpbackup.probe_robot` / `httpbackup.RobotBackupJob`, not the raw
+  `ftpbackup` ones: a Global-4 answers anonymous FTP and runs `BackupJob`; a
+  Global-5 (User Management → FTP `530`) runs `HttpBackupJob` over the web
+  server. The dispatcher decides on the **worker thread** (inside `run()`) so an
+  unreachable host never blocks the UI on a connect timeout, and forwards the
+  job interface to whichever inner job it built, leaving both transport classes
+  untouched. `httpbackup.py` reuses `ftpbackup`'s `_JobBase`, `dated_dir`,
+  `long_path` and the crash-safe `.part`-then-rename pattern — another module
+  leaning on the "ftp" one's shared base (see the note above).
 - **Two vocabularies deliberately twinned:** `ftpbackup.is_terminal`
   (`ftpbackup.py:45-51`) is the one Python home of "this job is over";
   `jobs.js:33-35` keeps the JS copy, and both files say so — a future status
@@ -196,6 +218,24 @@ How each was verified, or an honest **assumed**. Tags per the template note.
 | A report-`.LS` first line is `<file>  Robot Name <host> <date>` — the same header `session.py` classifies on; discovery reuses that regex (`session._REPORT_HEADER`) rather than a private copy | `discover.py:506-536` |
 | `.IMG`/`.IMR` image artifacts are skipped (not an FTP backup's job) and the skip is *recorded* — in the snapshot **and** in `backup.json` | `ftpbackup.py:40,550-552`, skipped-list plumbing `ftpbackup.py:301-310`; pinned by `test_ftpbackup.py:143-164` |
 | Blank user/pass = anonymous login; sites with FTP auth set `ftp.user` on the library entry and the batch flow prompts one shared password per run | `ftpbackup.py:504`, `home.js:1538-1550` |
+
+### FANUC Global-5 over HTTP
+
+Global-5 controllers (R-50iA / newer R-30iB Plus) ship with **User Management**
+enabled, which turns anonymous FTP OFF. But their built-in web server is
+unauthenticated and serves the same `MD:` set, so the FANUC row auto-detects and
+falls back to it. `httpbackup.py` holds the transport, the detection, and the
+`RobotBackupJob` dispatcher.
+
+| Fact | Evidence |
+|---|---|
+| A Global-5 refuses anonymous FTP (`530 Login incorrect`) — and `fanuc/fanuc` and the bare `anonymous` username too; the real credential sits behind User Management (the pendant's locked security tab). Port 22 is wolfSSH/SFTP, also login-gated; **port 80 is the way in** | **live-run 2026-08-31 (recorded)** against a real R-50iA line: `probe_controller` returned `530` for all three logins; a port scan showed 21/22/80/8193/44818 open |
+| The web server serves `MD:` files **by name with no login**: `GET /MD/<NAME>` returns the file the controller synthesizes — exactly the FTP `MD:` set | **live-run 2026-08-31 (recorded)**: `GET /MD/NUMREG.VR` and friends returned real `.VR`/`.SV` bytes (the `\xfe\xef` FANUC `.VR` magic), no credentials |
+| There is **no directory listing** (`GET /MD/` answers `200` + plaintext "File Access Error"), but the landing page links four auto-generated index pages — `INDEX_TP/VR/ER/OT.HTM` — each listing its files as `<a href="../MD/NAME">`. Unioning those hrefs is the listing FTP's `nlst` would give | **live-run 2026-08-31 (recorded)**: the four pages enumerated the whole `MD:`, every `.TP` with its comment; `index_filenames` parses the hrefs (`httpbackup.py`), pinned (`test_httpbackup.py::test_index_filenames_dedup_and_skip_self`) |
+| The synthesized system files (`SYSVARS.SV`, `SYSMAST.SV`, `DIOCFGSV.IO`, …) are served by name but are **not** in the index pages — an FTP `nlst` includes them, the web index does not. They come off a fixed `SYSTEM_FILES` list; a robot that lacks one 404s and it is dropped, never a recorded loss. A present one bumps `total` **with** `done` so a complete pull stays `done==total` | `httpbackup.SYSTEM_FILES`; pinned end-to-end (`test_httpbackup.py` pulls `SYSVARS.SV` off the list, not the index) |
+| A missing file is HTTP `404` **and** carries a `404 File Not Found` body; a bare directory is `200` + plaintext `File Access Error`. `_looks_like_error_body` matches those exact phrases, **not** HTML in general — the index pages and legitimate `.STM` files are HTML too, so a blanket "starts with `<HTML>`" would drop real content (it was the first-cut bug) | `httpbackup._looks_like_error_body`; pinned (`test_httpbackup.py::test_looks_like_error_body`) |
+| ~360 ms/file is the embedded web server, not the network (LAN is 1–2 ms) — one keep-alive connection reconnects once on a dropped socket then surfaces the error, ~4 min for a ~620-file robot. Gentle-touch identical to FTP (§5 invariant 3): one connection per controller, throttle, timeouts, no retry storm. The batch parallelizes **across** robots, never within one | **live-run 2026-08-31 (recorded)**: keep-alive timing measured on the real line |
+| Detection runs **inside** `RobotBackupJob.run()` on the worker thread, never in `start_backup` — an unreachable host must not block the UI on a connect timeout. The dispatcher shares its stable `id` + cancel event with the inner job it builds and forwards `snapshot`/`library_*`, so neither `BackupJob` nor `HttpBackupJob` changed | `httpbackup.RobotBackupJob`; pinned (`test_httpbackup.py` selects-http / selects-ftp / runs-end-to-end) |
 
 ### Keyence CV-X over FTP
 

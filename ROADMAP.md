@@ -261,6 +261,58 @@ one click backs up the robot + all its cameras together.
   See §7 of `docs/subsystems/remote-mobile.md` for why three separate test
   gaps let this reach a plant floor.
 
+- ✅ **The camera window, and multi-select pop-out** (`cam-floats`) — tick
+  several tiles (the shared checklist, so shift+click ranges work) and **pop
+  out · N** puts them all into boxes; *move them to their own window* hands the
+  boxes to a second OS window that holds nothing but cameras, leaving the main
+  window for the backup work. This is what made tile leases count **viewers**:
+  `_cvx_tiles` is `sid -> {viewer: renew}`, a second window JOINS a session
+  rather than dialling beside it, and a session stops only when nobody holds a
+  lease — without it, a lens flip in one window blacked out a camera the other
+  was showing. Eager release is now reserved for what a person asked for (the
+  CV-X switch, the picker, closing a box); incidental churn goes to the reaper,
+  because guessing orphans from the DOM is a race that was lost twice. Both of the
+  things left owed here have since landed: closing the camera window hands its
+  boxes back (and hangs up anything it was driving), and a Matrox box is driven
+  through the camera's own page via the shared `BV.mtx` helpers.
+
+- ✅ **Floating camera boxes** (`cam-floats`) — a 150 px tile is not big
+  enough to read a camera's screen from a step away, and the workaround was
+  four remotes in four OS windows arranged by hand. Right-click a tile to pop
+  it out onto a layer over the wall: drag, magnet-snap to corners/edges with a
+  ghost preview, resize, zoom, lock, and swap which camera a box shows. The
+  design rests on two facts. **Popping out costs zero dials** — the box and its
+  tile are two views of one leased session (`BV.camFeed`), and the wall keeps
+  the tile in place as a placeholder carrying no `<img>`, so a camera is
+  fetched exactly once by construction rather than by a guard. And **control is
+  opt-in, one box at a time** — view-only until pressed, then one click arms
+  the mouse; arming a second box releases the first with its button lifted, and
+  giving control back goes through `cvx_tile_yield` (the new inverse of
+  `cvx_tile_adopt`) so the controller's single slot is never let go of and
+  raced for. Geometry is stored as fractions of the layer plus a snap zone, so
+  a window resize re-derives rather than drifts. Pinned by
+  `tests/ui_camfloat_probe.py` (45 checks), including the two leaks that are
+  invisible in review: a box closed mid-drive (where `cvx_tile_stop` is a
+  deliberate no-op and hands back nothing), and a `take` whose `adopt` then
+  fails. Natural next slice if wanted: **Matrox control in a box** — the same
+  sandboxed operator-page iframe `mtxremote.js` builds, extracted rather than
+  copied.
+
+- ✅ **Pick which cameras tile** (`cam-pick`) — a wall of sixty tiles is not
+  the wall a tech watching one line wants, so the cam lens's toolbar gained a
+  **cameras** button beside the CV-X switch: a drop panel of the wall's own
+  PLANT → LINE → CAMERA folders with a checkbox at every level, so "just this
+  line" is one click. The pick is stored as the cameras that are OFF, never
+  the ones that are on — a camera discovered tomorrow lands on the wall by
+  itself rather than being invisible until somebody remembers to come back.
+  Taking a CV-X off frees its remote slot immediately (`releaseCvxTiles(ips)`),
+  the same courtesy the vendor switch pays; the button carries the count
+  (`cameras · 12 of 61`) so a trimmed wall is never a silent absence.
+  Pinned by the `campick.*` checks in `ui_camwall_probe.py`, including the two
+  traps the panel is placed to avoid: a chrome-mounted panel paints *under*
+  the view once frost is on, and a plain floating one closes itself on the
+  scroll its own repaint causes.
+
 - ✅ **Both remote bars carry the same options** — reload · open in window ·
   phone · fullscreen · close, on Matrox and CV-X alike. CV-X reload is a
   Python-side hang-up-then-redial under the same session id, and its pop-out
