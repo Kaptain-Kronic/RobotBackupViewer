@@ -66,7 +66,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/__init__.py` | 1 | package marker holding the single source of the app version string (1.4) | shared/infra | active |
 | `src/backupviewer/__main__.py` | 6 | python -m backupviewer entry point delegating to app.main | shared/infra | active |
 | `src/backupviewer/api.py` | 5347 | the pywebview bridge class: 131 @_endpoint methods returning {ok,data} envelopes across every feature area | shared/infra | active |
-| `src/backupviewer/app.py` | 288 | window boot: arg parsing, resource_path, pywebview window, the page server's accept-backlog widening (v1.7.1; the bundle's twin fix met it in v1.8 and one stayed), and the one-shot webview2 failure rescue relaunch | shared/infra | active |
+| `src/backupviewer/app.py` | 288 | window boot: arg parsing, resource_path, pywebview window, the page server's accept-backlog widening (the bundle's twin fix met it in the #20 merge and one stayed), and the one-shot webview2 failure rescue relaunch | shared/infra | active |
 | `src/backupviewer/backuplog.py` | 144 | durable backup-run log in %appdata%: per-run job rows, retry attempt counting, failed-spec list, never a password | backup capture | active |
 | `src/backupviewer/compare.py` | 552 | pure two-backup diff functions: io/registers/frames/payloads/programs rows plus tp-line alignment | compare engine | active |
 | `src/backupviewer/cvx_handshake/chan8502_tx.bin` | *96 KB* | captured cv-x 8502 control-channel client handshake: 13 messages incl. six 16 kb blobs, replayed at connect | remote/mobile | active |

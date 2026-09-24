@@ -41,7 +41,7 @@ load (`api._lock_browser_zoom`), the page cancels ctrl+wheel (`keys.js`), and a
 wheel step is proportional to its delta (`BV.wheelZoomFactor`: a pinch glides).
 §5 invariant 10, §6 item 12, §7 the unlocked-zoom trap, closing section.*
 
-*Updated 2026-09-24 by the v1.8 merge (branch `sept-bundle`): the two
+*Updated 2026-09-24 by the #20 merge (branch `sept-bundle`, shipped as v1.7.1): the two
 passes above met here. `BV.zoomStage` carries the v1.7 wheel behaviour the
 remotes had gained in the meantime - it steps by `BV.wheelZoomFactor` and
 holds the zoom unrounded - so the conversion changed no behaviour the probe

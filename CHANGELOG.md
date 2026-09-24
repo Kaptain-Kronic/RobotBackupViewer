@@ -1,12 +1,32 @@
 # Changelog
 
-## v1.8 — the camera wall pops out into boxes and into a window of its own, a picker chooses what the wall shows, global-5 robots back up over http, and the boot fix meets its twin
+## v1.7.1 — the app boots whole again, the camera wall pops out into boxes and a window of its own, a picker chooses what the wall shows, and global-5 robots back up over http
+- **Every boot now loads every file — and says so when one does not.** v1.7
+  came up half-built on most launches: a blank library, a settings dialog
+  that stopped at its first row, and a `library unavailable: Cannot read
+  properties of undefined (reading 'latest')` that had nothing to do with
+  the library. The page is served from the app's own local http server, and
+  that server's accept queue was the stdlib default of five: WebView2 fires
+  the page's 62 script requests down six parallel connections faster than
+  the single accept thread drains them, Windows resets the overflow, and a
+  run of consecutive scripts (jobs.js, theme.js, bgfx.js…) simply never
+  arrives — so the modules they define never exist. Measured at five boots
+  in six on the source and every boot of the v1.7 exe; with the queue
+  widened to 128, none in six. The fix is one line in app.py, before the
+  server listens. The belt: the page records every script or stylesheet it
+  asked for and never received, judges that before anything else runs,
+  reloads once when something is missing (the loss is a race, not a missing
+  file), and if it is missing again stops and names the files with the one
+  thing to do — instead of failing somewhere unrelated minutes later. A
+  module that loaded but never defined itself (a file killed by a parse
+  error) gets the same halt. Probe-pinned: the recorder against a real
+  failed load, the judge's whole table, and the halt's words.
 - **The boot fix met its twin.** Jake hit the same half-booting app when
   WebView2 153 auto-installed on 09-17, found the same five-deep listen
   backlog over CDP, and fixed it in this bundle by swapping pywebview's
-  server class for one with an OS-deep backlog; v1.7.1 fixed it a week later
-  by widening the stdlib backlog every server inherits. One mechanism stays —
-  v1.7.1's, because it reaches into no pywebview internals — and the stronger
+  server class for one with an OS-deep backlog; the fix above widened the
+  stdlib backlog every server inherits a week later. One mechanism stays —
+  the one above, because it reaches into no pywebview internals — and the stronger
   guard is his: `test_page_server` runs pywebview's real server adapter on a
   real socket, accepts nothing, fires one connect per script in `index.html`
   and asserts none is refused, while a five-deep control refuses most of
@@ -145,28 +165,6 @@
   stalls is recorded as a skip rather than sinking the backup; a run of stalls
   aborts honestly. Checked live against a real R-50iA line: 672 files, 15 MB,
   reopens in the viewer.
-
-## v1.7.1 — the app boots whole again
-- **Every boot now loads every file — and says so when one does not.** v1.7
-  came up half-built on most launches: a blank library, a settings dialog
-  that stopped at its first row, and a `library unavailable: Cannot read
-  properties of undefined (reading 'latest')` that had nothing to do with
-  the library. The page is served from the app's own local http server, and
-  that server's accept queue was the stdlib default of five: WebView2 fires
-  the page's 62 script requests down six parallel connections faster than
-  the single accept thread drains them, Windows resets the overflow, and a
-  run of consecutive scripts (jobs.js, theme.js, bgfx.js…) simply never
-  arrives — so the modules they define never exist. Measured at five boots
-  in six on the source and every boot of the v1.7 exe; with the queue
-  widened to 128, none in six. The fix is one line in app.py, before the
-  server listens. The belt: the page records every script or stylesheet it
-  asked for and never received, judges that before anything else runs,
-  reloads once when something is missing (the loss is a race, not a missing
-  file), and if it is missing again stops and names the files with the one
-  thing to do — instead of failing somewhere unrelated minutes later. A
-  module that loaded but never defined itself (a file killed by a parse
-  error) gets the same halt. Probe-pinned: the recorder against a real
-  failed load, the judge's whole table, and the halt's words.
 
 ## v1.7 — backups drag in and export out, the statusbar finds the switch, a program plays in 3d, the camera wall lights up all the way down, a matrox pull brings home its photo history, a taught position opens up whole, and the remote views stop zooming the whole app
 - **Ctrl+scroll in a remote view zooms the view — and only the view.** v1.6

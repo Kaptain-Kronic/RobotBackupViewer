@@ -75,7 +75,7 @@ def _widen_server_backlog(depth: int = 128) -> None:
     """Deepen the accept queue of pywebview's built-in file server before it
     listens. The page is served from http://127.0.0.1 by a bottle/wsgiref
     server whose listen backlog is socketserver's default of FIVE. WebView2
-    fires the page's script requests (66 at v1.8) down six connections faster
+    fires the page's script requests (66 at v1.7.1) down six connections faster
     than the server's single accept thread drains them, and Windows answers an
     overflowing backlog with a reset: net::ERR_CONNECTION_REFUSED on a run of
     consecutive scripts, whose modules then simply never exist. At v1.7 that
