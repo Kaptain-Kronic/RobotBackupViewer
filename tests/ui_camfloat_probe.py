@@ -297,14 +297,26 @@ _BAR_HITS_JS = """JSON.stringify((function(){
     var out={};
     [].forEach.call(b.querySelectorAll('.fbox-bar button'), function(btn){
       var r=btn.getBoundingClientRect();
-      var name=btn.className.replace('btn','').trim() || 'title';
+      /* a plain .btn in the slot (control / release / zoom) is named by its
+         text - the old fallback called every one of them 'title' */
+      var name=btn.className.replace('btn','').trim() || btn.textContent.trim() || 'button';
       /* the CORNERS, not just the middle: the resize grips covered the top and
          the top-right of these buttons while dead centre stayed clear, so a
          centre-only probe called it fine while the ✕ was unclickable in the
-         half of it people actually aim at */
+         half of it people actually aim at. A corner sample that lands OUTSIDE
+         the button's own rounded outline is moved back inside it (3/4 px in
+         from the arc): on a small pill-ish button the raw 12% point sits just
+         past the curve, and font metrics at another DPI decide which side - a
+         knife-edge that read as "painted over" on a 125% box. The invariant is
+         "as close to the corner as the paint goes", not the 12% number. */
+      var R=parseFloat(getComputedStyle(btn).borderTopLeftRadius)||0;
       var pts=[[0.5,0.5],[0.12,0.12],[0.88,0.12],[0.12,0.88],[0.88,0.88]];
       out[name]=pts.every(function(p){
-        var hit=document.elementFromPoint(r.left+r.width*p[0], r.top+r.height*p[1]);
+        var px=r.width*p[0], py=r.height*p[1];
+        var cx=Math.max(R, Math.min(r.width-R, px)), cy=Math.max(R, Math.min(r.height-R, py));
+        var d=Math.hypot(px-cx, py-cy);
+        if (R && d > R-0.75) { var k=(R-0.75)/d; px=cx+(px-cx)*k; py=cy+(py-cy)*k; }
+        var hit=document.elementFromPoint(r.left+px, r.top+py);
         return !!(hit && (hit===btn || btn.contains(hit)));
       });
     });
