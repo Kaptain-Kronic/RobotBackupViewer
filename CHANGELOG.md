@@ -1,6 +1,6 @@
 # Changelog
 
-## unreleased — backups drag in and export out, the statusbar finds the switch, a program plays in 3d, the camera wall lights up all the way down, a matrox pull brings home its photo history, a taught position opens up whole, and the remote views stop zooming the whole app
+## v1.7 — backups drag in and export out, the statusbar finds the switch, a program plays in 3d, the camera wall lights up all the way down, a matrox pull brings home its photo history, a taught position opens up whole, and the remote views stop zooming the whole app
 - **Ctrl+scroll in a remote view zooms the view — and only the view.** v1.6
   said browser zoom was disabled app-wide; it never was. pywebview leaves
   WebView2's own page zoom switched on, and that zoom is window-wide: a
