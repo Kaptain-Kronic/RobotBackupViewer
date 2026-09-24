@@ -71,6 +71,25 @@ def _fallback_storage_dir() -> Path:
     return Path(base) / "BackupViewer" / "webview2"
 
 
+def _widen_server_backlog(depth: int = 128) -> None:
+    """Deepen the accept queue of pywebview's built-in file server before it
+    listens. The page is served from http://127.0.0.1 by a bottle/wsgiref
+    server whose listen backlog is socketserver's default of FIVE. WebView2
+    fires the page's 62 script requests down six parallel connections faster
+    than the server's single accept thread drains them, and Windows answers an
+    overflowing backlog with a reset: net::ERR_CONNECTION_REFUSED on a run of
+    consecutive scripts, whose modules then simply never exist. At v1.7 that
+    lost jobs.js/theme.js/bgfx.js on five boots in six - a blank library, a
+    settings dialog that stopped at its first row, the boot chain dead before
+    get_state, and not a word about why (router.js's boot self-check now says
+    so). The attribute is read at listen() time, inside webview.start(), so
+    this has to run before it; it lands on the stdlib base every server
+    subclass inherits from, pywebview's threading adapter included."""
+    import socketserver
+    socketserver.TCPServer.request_queue_size = max(
+        socketserver.TCPServer.request_queue_size, depth)
+
+
 def _apply_fallback_env() -> dict:
     """Arm the fallback: software rendering via the WebView2 loader's
     environment hook (broken GPU drivers are the top 0x8007139F suspect) and a
@@ -159,6 +178,7 @@ def main(argv=None) -> int:
     if fallback:
         log.info("WebView2 fallback mode: software rendering + stable profile")
         start_kwargs.update(_apply_fallback_env())
+    _widen_server_backlog()      # before start(): the file server listens inside it
 
     api = Api()
     window = webview.create_window(

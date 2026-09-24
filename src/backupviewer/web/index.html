@@ -3,6 +3,17 @@
 <head>
 <meta charset="utf-8">
 <title>Backup Viewer</title>
+<script>
+/* boot self-check, the recording half (router.js judges it): every script or
+   stylesheet the page asked for and never received. Inline, and ahead of the
+   first <link>, on purpose - a lost util.js would take the recorder with it. */
+window.BV_LOST = [];
+window.addEventListener("error", function (e) {
+  var t = e.target;
+  if (!t || t === window || !(t.tagName === "SCRIPT" || t.tagName === "LINK")) return;
+  window.BV_LOST.push((t.src || t.href || "").split("/").slice(-2).join("/"));
+}, true);
+</script>
 <link rel="stylesheet" href="css/base.css">
 <link rel="stylesheet" href="css/components.css">
 </head>

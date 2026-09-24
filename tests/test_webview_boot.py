@@ -20,6 +20,28 @@ def _record(msg, level=logging.ERROR):
     return logging.LogRecord("pywebview", level, __file__, 1, msg, None, None)
 
 
+def test_file_server_backlog_is_widened_before_start():
+    """The page is served by pywebview's wsgiref server; its five-deep accept
+    queue overflowed under the page's 62 script requests and Windows reset the
+    extras (v1.7: jobs.js/theme.js/bgfx.js lost on five boots in six). The
+    widening is a class attribute read at listen() time, so it has to reach
+    the stdlib base every server subclass inherits from - mirrored here with
+    pywebview's own adapter shape, without importing webview."""
+    import socketserver
+    from wsgiref.simple_server import WSGIServer
+
+    app._widen_server_backlog()
+
+    class _LikePywebviews(socketserver.ThreadingMixIn, WSGIServer):
+        pass
+
+    assert _LikePywebviews.request_queue_size >= 128
+    # idempotent, and never narrows a queue someone else deepened further
+    socketserver.TCPServer.request_queue_size = 512
+    app._widen_server_backlog()
+    assert socketserver.TCPServer.request_queue_size == 512
+
+
 def test_failure_watch_fires_only_on_the_init_failure():
     w = _FakeWindow()
     watch = app._WebView2FailureWatch(w)

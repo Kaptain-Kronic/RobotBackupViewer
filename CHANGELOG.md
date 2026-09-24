@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.7.1 — the app boots whole again
+- **Every boot now loads every file — and says so when one does not.** v1.7
+  came up half-built on most launches: a blank library, a settings dialog
+  that stopped at its first row, and a `library unavailable: Cannot read
+  properties of undefined (reading 'latest')` that had nothing to do with
+  the library. The page is served from the app's own local http server, and
+  that server's accept queue was the stdlib default of five: WebView2 fires
+  the page's 62 script requests down six parallel connections faster than
+  the single accept thread drains them, Windows resets the overflow, and a
+  run of consecutive scripts (jobs.js, theme.js, bgfx.js…) simply never
+  arrives — so the modules they define never exist. Measured at five boots
+  in six on the source and every boot of the v1.7 exe; with the queue
+  widened to 128, none in six. The fix is one line in app.py, before the
+  server listens. The belt: the page records every script or stylesheet it
+  asked for and never received, judges that before anything else runs,
+  reloads once when something is missing (the loss is a race, not a missing
+  file), and if it is missing again stops and names the files with the one
+  thing to do — instead of failing somewhere unrelated minutes later. A
+  module that loaded but never defined itself (a file killed by a parse
+  error) gets the same halt. Probe-pinned: the recorder against a real
+  failed load, the judge's whole table, and the halt's words.
+
 ## v1.7 — backups drag in and export out, the statusbar finds the switch, a program plays in 3d, the camera wall lights up all the way down, a matrox pull brings home its photo history, a taught position opens up whole, and the remote views stop zooming the whole app
 - **Ctrl+scroll in a remote view zooms the view — and only the view.** v1.6
   said browser zoom was disabled app-wide; it never was. pywebview leaves

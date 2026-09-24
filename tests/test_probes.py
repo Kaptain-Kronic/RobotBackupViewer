@@ -52,6 +52,7 @@ PROBES = [
     "ui_backup_export_probe.py",
     "ui_batch_probe.py",
     "ui_bgfx_probe.py",
+    "ui_bootcheck_probe.py",
     "ui_camwall_probe.py",
     "ui_cleanup_probe.py",
     "ui_cvx3d_probe.py",

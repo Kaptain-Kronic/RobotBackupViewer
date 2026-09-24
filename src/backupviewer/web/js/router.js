@@ -451,7 +451,68 @@
   /* a found update re-renders the statusbar (the pill lives in rightStatusHtml) */
   BV.state.on("update", updateStatus);
 
+  /* ---- boot self-check ----
+     The page is served by pywebview's own http server, and a boot can lose
+     files: at v1.7 a run of <script> requests came back connection-refused
+     (the server's accept backlog was five deep - app.py widens it), BV.jobs,
+     BV.theme and friends never existed, and the app came up half-built with
+     no word of why: a blank library, a settings dialog that stopped at its
+     first row, this boot chain dead at BV.theme.load. index.html records
+     every script and stylesheet that never arrived (window.BV_LOST); this
+     judges it before anything else runs. Lost files = reload the page once
+     (the loss is a race, not a missing file - a second request lands); lost
+     again = stop and say so, naming the files, instead of failing somewhere
+     unrelated later. A core module that loaded but never defined itself (a
+     file killed by a parse error) gets the same halt. A retry the page
+     cannot remember is not taken - a reload loop is worse than a message. */
+  var CORE = [["api", "js/api.js"], ["state", "js/state.js"], ["jobs", "js/jobs.js"],
+              ["theme", "js/theme.js"]];
+  var RETRY_KEY = "bv_boot_retry";
+
+  function bootDecide(lost, retried) {
+    if (!lost.length) return "ok";
+    return retried ? "halt" : "reload";
+  }
+
+  function bootHalt(lost) {
+    toolbar.innerHTML = "";
+    toolbar.classList.add("hidden");
+    view.innerHTML =
+      '<div class="empty-state">' +
+      '<div class="big">the app did not load completely</div>' +
+      '<div class="hint">these files never arrived from the app’s own file server: ' +
+      '<span class="accent">' + BV.esc(lost.join(", ")) + "</span></div>" +
+      '<div class="hint">close the app and start it again</div>' +
+      "</div>";
+  }
+
+  function bootCheck() {
+    var lost = (window.BV_LOST || []).slice();
+    CORE.forEach(function (c) {
+      if (typeof BV[c[0]] === "undefined" && lost.indexOf(c[1]) < 0) lost.push(c[1]);
+    });
+    var retried = false;
+    try { retried = sessionStorage.getItem(RETRY_KEY) === "1"; } catch (e) { /* storage blocked: judged as a first look */ }
+    var verdict = bootDecide(lost, retried);
+    if (verdict === "ok") {
+      try { sessionStorage.removeItem(RETRY_KEY); } catch (e) { /* nothing to clear */ }
+      return true;
+    }
+    if (verdict === "reload") {
+      var remembered = false;
+      try {
+        sessionStorage.setItem(RETRY_KEY, "1");
+        remembered = sessionStorage.getItem(RETRY_KEY) === "1";
+      } catch (e) { /* no memory of a retry = no retry */ }
+      if (remembered) { location.reload(); return false; }
+    }
+    bootHalt(lost);
+    return false;
+  }
+  BV.bootCheck = { decide: bootDecide, halt: bootHalt, run: bootCheck };
+
   /* ---- boot ---- */
+  if (!bootCheck()) return;
   BV.api.ready.then(function (bridged) {
     if (!bridged) { emptyState(); updateStatus(); return; }
     /* a popped-out CV-X window is nothing but the remote: no backup, no tabs,
