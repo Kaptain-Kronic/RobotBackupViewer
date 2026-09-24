@@ -11,10 +11,17 @@ Candidate counts are time-stable by construction (candidates are strictly old,
 their shields are strictly order-based); the protected fold is asserted by
 PRESENCE and by exact membership (pinned + old-but-latest), never by calendar-
 dependent counts. Folded-away rows are still DOM - counts query the tree,
-clicks dispatch fine on display:none nodes."""
+clicks dispatch fine on display:none nodes.
+
+Every snapshot that has to be FRESH is dated relative to today (ago(n)):
+the report's 30-day stale window and cleanup's 90-day retention window are
+rolling, and a hardcoded date crosses them on a calendar day - the stale
+count went 1 -> 3 on 2026-08-31 and the partial-candidate count would have
+gone 1 -> 2 on 2026-09-29. Strictly-old snapshots keep their 2024 dates."""
 import json
 import sys
 import time
+from datetime import date, timedelta
 from pathlib import Path
 
 from probeutil import FAILURES, check, exit_code, isolate, js, poll, report
@@ -28,6 +35,18 @@ from backupviewer.api import Api  # noqa: E402
 from backupviewer.app import resource_path  # noqa: E402
 
 LIB = _TMP / "lib"
+
+
+def ago(days):
+    """A snapshot folder date `days` before today - inside or outside the
+    rolling windows by construction, never by the calendar."""
+    return (date.today() - timedelta(days=days)).strftime("%Y_%m_%d")
+
+
+FRESH = ago(10)             # inside the 30-day stale window: a robot with this is not stale
+SECOND = ago(70)            # older than FRESH, still inside the 90-day retention window
+RECENT_PARTIAL = ago(30)    # a dead pull young enough to be protected(recent) in cleanup
+NEWEST_BROKEN = ago(2)      # phase 2: newer than FRESH, so it is the newest snapshot
 
 
 def snap(robot, date, time_, *, complete=None, bytes_=1000):
@@ -45,18 +64,18 @@ def snap(robot, date, time_, *, complete=None, bytes_=1000):
 
 def build_tree():
     # RB010R01B01: two newer completed + two old -> exactly 2 superseded candidates
-    snap("RB010R01B01", "2026_08_01", "10_00_00")
-    snap("RB010R01B01", "2026_06_01", "10_00_00")
+    snap("RB010R01B01", FRESH, "10_00_00")
+    snap("RB010R01B01", SECOND, "10_00_00")
     snap("RB010R01B01", "2024_05_01", "10_00_00", bytes_=500)
     snap("RB010R01B01", "2024_01_01", "10_00_00", bytes_=250)
     # RB020R01B01: fresh completed + an old dead pull -> exactly 1 partial candidate
-    snap("RB020R01B01", "2026_08_01", "11_00_00")
+    snap("RB020R01B01", FRESH, "11_00_00")
     snap("RB020R01B01", "2024_02_02", "09_00_00", complete=False, bytes_=300)
     # RB030R01B01: one old completed -> protected "old but latest" (warn); stale
     snap("RB030R01B01", "2024_03_03", "08_00_00")
     # RB040R01B01: partial-only -> the report's "none at all" bucket; its fresh
     # partial is protected(recent) in cleanup, so candidate counts stay 3
-    snap("RB040R01B01", "2026_07_01", "09_00_00", complete=False)
+    snap("RB040R01B01", RECENT_PARTIAL, "09_00_00", complete=False)
 
 
 def open_manage(window):
@@ -298,7 +317,7 @@ def probe(window):
         check("disk.sources_gone",
               not (r1 / "2024_05_01").exists() and not (r1 / "2024_01_01").exists())
         check("disk.survivors_intact",
-              (r1 / "2026_08_01" / "10_00_00").is_dir()
+              (r1 / FRESH / "10_00_00").is_dir()
               and (LIB / "FakePlant" / "RBB01" / "RB030R01B01" / "2024_03_03").is_dir())
         logf = LIB / "_staged" / "staged.log"
         lines = [json.loads(x) for x in
@@ -318,7 +337,7 @@ def probe(window):
 
         # ---- phase 2: auto-stage sweeps dead pulls but SKIPS the newest one
         # (it is the out-of-date evidence), and backup-broken targets it ----
-        snap("RB010R01B01", "2026_08_09", "12_00_00", complete=False, bytes_=111)  # newest: broken
+        snap("RB010R01B01", NEWEST_BROKEN, "12_00_00", complete=False, bytes_=111)  # newest: broken
         snap("RB010R01B01", "2024_06_01", "12_00_00", complete=False, bytes_=222)  # auto-stage food
         js(window, "window.__rs=0; BV.api.call('lib_rescan').then(function(){window.__rs=1;})")
         poll(window, "window.__rs===1 ? 'y' : ''", tries=48)
@@ -344,7 +363,7 @@ def probe(window):
         assert_dir = LIB / "_staged" / "FakePlant" / "RBB01" / "RB010R01B01"
         check("auto.disk_swept_old_not_newest",
               (assert_dir / "2024_06_01" / "12_00_00").is_dir()
-              and (LIB / "FakePlant" / "RBB01" / "RB010R01B01" / "2026_08_09" / "12_00_00").is_dir())
+              and (LIB / "FakePlant" / "RBB01" / "RB010R01B01" / NEWEST_BROKEN / "12_00_00").is_dir())
         js(window, "document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))")
 
         report()
