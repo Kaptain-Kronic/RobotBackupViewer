@@ -5,12 +5,12 @@ private_mode=True and WebView2 storage is unreliable under a onefile exe.
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import threading
-import time
 from pathlib import Path
+
+from . import durable
 
 log = logging.getLogger(__name__)
 
@@ -35,12 +35,10 @@ def _settings_file() -> Path:
 
 
 def load() -> dict:
-    try:
-        with open(_settings_file(), encoding="utf-8") as f:
-            data = json.load(f)
-            return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    """Every setting, {} when none were ever saved. A damaged settings.json
+    reads its last good copy instead of coming back empty (see durable) - the
+    empty read was how one ordinary save used to wipe every other key."""
+    return durable.load(_settings_file()) or {}
 
 
 def save(settings: dict) -> None:
@@ -49,20 +47,10 @@ def save(settings: dict) -> None:
 
 
 def _write(settings: dict) -> None:
-    tmp = _settings_file().with_suffix(".tmp")
-    tmp.write_text(json.dumps(settings, indent=2), encoding="utf-8")
-    # Windows: replace() throws WinError 5 while ANY other handle has the target
-    # open - a concurrent reader thread (load() runs unlocked), a second app
-    # instance, or an AV scan. Seen in the field as a burst of start_backups all
-    # dying on this rename. Those holds clear in milliseconds - retry briefly.
-    for attempt in range(4):
-        try:
-            tmp.replace(_settings_file())
-            return
-        except PermissionError:
-            if attempt == 3:
-                raise
-            time.sleep(0.05 * (attempt + 1))
+    # durable.save flushes before the rename, keeps settings.json.bak, sets a
+    # damaged file aside, and retries the WinError 5 rename race (a concurrent
+    # reader, an AV scan) that once killed a burst of start_backups
+    durable.save(_settings_file(), settings, indent=2)
 
 
 def get(key: str, default=None):

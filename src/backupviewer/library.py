@@ -26,7 +26,7 @@ import threading
 import uuid
 from pathlib import Path
 
-from . import settings
+from . import durable, settings
 
 log = logging.getLogger(__name__)
 
@@ -43,12 +43,10 @@ def _empty() -> dict:
 
 
 def load() -> dict:
-    try:
-        with open(_library_file(), encoding="utf-8") as f:
-            data = json.load(f)
-        if not isinstance(data, dict):
-            return _empty()
-    except (OSError, ValueError):
+    # a damaged library.json reads its last good copy, never an empty library
+    # that the next write would then save over every robot (see durable)
+    data = durable.load(_library_file())
+    if data is None:
         return _empty()
     data.setdefault("version", VERSION)
     data.setdefault("roots", [])
@@ -58,10 +56,7 @@ def load() -> dict:
 
 
 def _write(data: dict) -> None:
-    f = _library_file()
-    tmp = f.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    tmp.replace(f)
+    durable.save(_library_file(), data, indent=2)
 
 
 def save(data: dict) -> None:

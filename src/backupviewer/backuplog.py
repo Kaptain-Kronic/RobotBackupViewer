@@ -20,11 +20,10 @@ flow does.
 from __future__ import annotations
 
 import datetime as _dt
-import json
 import logging
 import threading
 
-from . import settings
+from . import durable, settings
 
 log = logging.getLogger(__name__)
 
@@ -47,21 +46,15 @@ def _now() -> str:
 
 
 def load() -> dict:
-    try:
-        with open(_file(), encoding="utf-8") as f:
-            data = json.load(f)
-            if isinstance(data, dict) and isinstance(data.get("runs"), list):
-                return data
-    except (OSError, ValueError):
-        pass
+    data = durable.load(_file())
+    if isinstance(data, dict) and isinstance(data.get("runs"), list):
+        return data
     return {"runs": []}
 
 
 def _write(data: dict) -> None:
     try:
-        tmp = _file().with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
-        tmp.replace(_file())
+        durable.save(_file(), data, indent=1)
     except OSError:
         log.exception("could not write %s", _FILE)
 
