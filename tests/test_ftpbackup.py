@@ -373,3 +373,110 @@ def test_mirror_in_use_is_left_exactly_as_it_was(tmp_path):
     assert ftpbackup.mirror_latest(dated, latest) == latest     # nothing open: swaps
     assert _tree(latest) == ["NEW.DG"]
     assert not list(latest.parent.glob("*.__tmp"))
+
+
+# -- one controller, one backup at a time (audit 2026-11-18) -------------------
+
+def test_claim_dated_dir_never_shares_a_snapshot(tmp_path):
+    import datetime as dt
+    when = dt.datetime(2026, 11, 19, 10, 0, 0)
+    first, w1 = ftpbackup.claim_dated_dir(tmp_path, "FakePlant", "L1", "RB010R01B01", when)
+    second, w2 = ftpbackup.claim_dated_dir(tmp_path, "FakePlant", "L1", "RB010R01B01", when)
+    assert first.name == "10_00_00" and w1 == when
+    assert second.name == "10_00_01" and w2 == when + dt.timedelta(seconds=1)
+    assert first != second and first.is_dir() and second.is_dir()
+
+
+class _SlowJob:
+    """A job that records how many runs of its controller overlap."""
+    live: dict = {}
+    peak: dict = {}
+    overall: list = [0, 0]                 # [running now, most at once]
+    guard = None
+
+    def __init__(self, host, root, plant, line, robot, *, note="", run_id="",
+                 on_complete=None, **kw):
+        import threading
+        import uuid
+        self.id = uuid.uuid4().hex
+        self.host = host
+        self.ran = False
+        self._cancel = threading.Event()
+        self._snap = {"id": self.id, "run_id": run_id, "status": "pending", "host": host}
+
+    @property
+    def cancelled(self):
+        return self._cancel.is_set()
+
+    def cancel(self):
+        self._cancel.set()
+
+    def snapshot(self):
+        return dict(self._snap)
+
+    def finish_cancelled(self):
+        self._snap["status"] = "cancelled"
+        return dict(self._snap)
+
+    def run(self):
+        import time
+        cls = type(self)
+        self.ran = True
+        with cls.guard:
+            cls.live[self.host] = cls.live.get(self.host, 0) + 1
+            cls.peak[self.host] = max(cls.peak.get(self.host, 0), cls.live[self.host])
+            cls.overall[0] += 1
+            cls.overall[1] = max(cls.overall)
+        time.sleep(0.4)
+        with cls.guard:
+            cls.live[self.host] -= 1
+            cls.overall[0] -= 1
+        self._snap["status"] = "done"
+        return dict(self._snap)
+
+
+def _slow_api(monkeypatch, tmp_path):
+    import threading
+    from backupviewer import api as api_mod
+    _iso_lib(monkeypatch, tmp_path)
+    _SlowJob.live, _SlowJob.peak, _SlowJob.overall = {}, {}, [0, 0]
+    _SlowJob.guard = threading.Lock()
+    row = dict(api_mod._DEVICE_REGISTRY[""], job_cls=_SlowJob, job_kw=lambda spec: {})
+    monkeypatch.setitem(api_mod._DEVICE_REGISTRY, "", row)
+    return api_mod.Api()
+
+
+def _wait_settled(api, ids, timeout=10.0):
+    import time
+    end = time.time() + timeout
+    while time.time() < end:
+        if all(ftpbackup.is_terminal(api._jobs[i].snapshot()["status"]) for i in ids):
+            return
+        time.sleep(0.05)
+    raise AssertionError("jobs did not settle")
+
+
+def test_a_controller_never_gets_two_backups_at_once(monkeypatch, tmp_path):
+    """Every job used to start on its own thread at once, so a double-click or
+    two library rows for one IP opened two sessions on one live controller.
+    Now the second waits its turn; different controllers still run together."""
+    api = _slow_api(monkeypatch, tmp_path)
+    specs = [("192.0.2.10", "RB010R01B01"), ("192.0.2.10", "RB010R01B01"),
+             ("192.0.2.11", "RB010R02B01")]
+    ids = [api.start_backup({"host": h, "robot": r, "line": "L1"})["data"]["job_id"]
+           for h, r in specs]
+    _wait_settled(api, ids)
+    assert _SlowJob.peak["192.0.2.10"] == 1
+    assert _SlowJob.overall[1] >= 2            # the other controller was not held up
+    assert all(api._jobs[i].snapshot()["status"] == "done" for i in ids)
+
+
+def test_a_backup_cancelled_while_waiting_never_dials(monkeypatch, tmp_path):
+    api = _slow_api(monkeypatch, tmp_path)
+    first = api.start_backup({"host": "192.0.2.10", "robot": "RB010R01B01"})["data"]["job_id"]
+    queued = api.start_backup({"host": "192.0.2.10", "robot": "RB010R01B01"})["data"]["job_id"]
+    api._jobs[queued].cancel()
+    _wait_settled(api, [first, queued])
+    assert api._jobs[queued].snapshot()["status"] == "cancelled"
+    assert api._jobs[queued].ran is False
+    assert api._jobs[first].snapshot()["status"] == "done"

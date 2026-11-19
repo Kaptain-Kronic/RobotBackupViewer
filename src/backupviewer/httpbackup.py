@@ -36,7 +36,7 @@ import uuid
 from pathlib import Path
 
 from . import ftpbackup
-from .ftpbackup import _JobBase, _now, dated_dir, long_path, probe_controller
+from .ftpbackup import _JobBase, _now, claim_dated_dir, long_path, probe_controller
 
 log = logging.getLogger(__name__)
 
@@ -184,9 +184,8 @@ class HttpBackupJob(_JobBase):
             total = len(names)
             self._set(status="downloading", total=total)
 
-            when = _now()
-            dated = dated_dir(self.dest_root, self.plant, self.line, self.robot, when)
-            dated.mkdir(parents=True, exist_ok=True)
+            dated, when = claim_dated_dir(self.dest_root, self.plant, self.line,
+                                          self.robot, _now())
             self._set(dated_path=str(dated))
             # started-marker first: backup.json exists from the first moment with
             # complete:false; only _write_sidecars - the LAST step of a
@@ -423,6 +422,13 @@ class RobotBackupJob:
 
     def snapshot(self) -> dict:
         return self._inner.snapshot() if self._inner else dict(self._pending)
+
+    def finish_cancelled(self) -> dict:
+        """End a job cancelled while it waited its turn - before any transport
+        was chosen or any connection made."""
+        self._pending.update(status="cancelled",
+                             finished=_now().isoformat(timespec="seconds"))
+        return dict(self._pending)
 
     def cancel(self):
         self._cancel.set()

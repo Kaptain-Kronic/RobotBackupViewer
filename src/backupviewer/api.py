@@ -379,6 +379,12 @@ class Api:
         self._active_sid: str | None = None  # what the MAIN window is showing
         self._sessions_lock = threading.Lock()  # registry mutations only
         self._jobs: dict[str, ftpbackup.BackupJob] = {}  # active/finished backup jobs
+        # one backup per controller at a time (CLAUDE.md: one connection to a
+        # live controller). A second job for a host - a double-click, a retry,
+        # two library rows that point at one IP - waits its turn instead of
+        # opening a second session beside the first.
+        self._host_locks: dict[str, threading.Lock] = {}
+        self._host_locks_guard = threading.Lock()
         self._scans: dict[str, discover._ScanJob] = {}  # folder + network scan jobs
         self._link = discover.LinkWatch()  # the plant-link pill's state machine
         self._link_ips: tuple[int, ...] = ()  # library addresses, packed + cached
@@ -539,6 +545,23 @@ class Api:
 
     def _backups_active(self) -> bool:
         return self._active_backup_count() > 0
+
+    def _hold_hosts(self, hosts, cancelled):
+        """Take the per-controller lock of every host a job dials, in sorted
+        order (two stations sharing a camera cannot deadlock). Returns the held
+        locks, or None when the job was cancelled while it waited - with
+        anything already taken given back."""
+        held = []
+        for h in sorted({str(x).strip().lower() for x in hosts if x}):
+            with self._host_locks_guard:
+                lk = self._host_locks.setdefault(h, threading.Lock())
+            while not lk.acquire(timeout=0.25):
+                if cancelled():
+                    for x in reversed(held):
+                        x.release()
+                    return None
+            held.append(lk)
+        return held
 
     def _import_active(self) -> bool:
         t = self._import_thread
@@ -4877,9 +4900,18 @@ class Api:
         )
         self._jobs[job.id] = job
         backuplog.start_job(run_id, job.id, spec)
+        hosts = [host] + [c.get("host") for c in (spec.get("cameras") or [])
+                          if isinstance(c, dict)]
 
         def _run_and_log():
-            snap = job.run()          # returns the final snapshot on every path
+            # wait (status stays "pending") while another backup has any of this
+            # job's controllers; a cancel while waiting ends it without dialling
+            held = self._hold_hosts(hosts, lambda: job.cancelled)
+            try:
+                snap = job.finish_cancelled() if held is None else job.run()
+            finally:
+                for lk in reversed(held or []):
+                    lk.release()
             try:
                 backuplog.finish_job(run_id, job.id, snap)
             except Exception:  # noqa: BLE001 - the log must never kill a backup thread

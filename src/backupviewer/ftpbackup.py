@@ -72,6 +72,25 @@ def dated_dir(root: Path, plant: str, line: str, robot: str, when: _dt.datetime)
     return Path(*parts)
 
 
+def claim_dated_dir(root: Path, plant: str, line: str, robot: str,
+                    when: _dt.datetime) -> tuple[Path, _dt.datetime]:
+    """Create this run's dated snapshot folder and return (folder, when). When
+    that second's folder already exists - a second pull of the same robot in
+    the same second (a double-click, two library rows for one robot) - take
+    the next free second instead: two runs must never share, and interleave
+    their files inside, one snapshot. The mkdir itself is the claim, so two
+    threads racing for one second cannot both win it."""
+    for _ in range(120):
+        dated = dated_dir(root, plant, line, robot, when)
+        dated.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            dated.mkdir()
+            return dated, when
+        except FileExistsError:
+            when += _dt.timedelta(seconds=1)
+    raise OSError(f"no free snapshot folder for {robot} near {when:%Y-%m-%d %H:%M:%S}")
+
+
 def latest_dir(root: Path, plant: str, line: str, robot: str) -> Path:
     """<root>\\<plant>\\<line>\\Latest\\<robot> - the overwritten newest mirror."""
     parts = [root]
@@ -355,6 +374,11 @@ class _JobBase:
                   finished=_now().isoformat(timespec="seconds"))
         return self.snapshot()
 
+    def finish_cancelled(self) -> dict:
+        """End a job that was cancelled before it ever started (it was waiting
+        its turn on a controller another backup was using)."""
+        return self._finish("cancelled")
+
     def _fire_on_complete(self):
         """Post-success registration hook, guarded so library/identity work can
         NEVER fail a finished backup (load-bearing - the tests encode it)."""
@@ -471,10 +495,9 @@ class CameraJobBase(_JobBase):
 
     def run(self) -> dict:
         self._set(status="connecting", started=_now().isoformat(timespec="seconds"))
-        when = _now()
-        dated = dated_dir(self.dest_root, self.plant, self.line, self.robot, when)
         try:
-            dated.mkdir(parents=True, exist_ok=True)
+            dated, when = claim_dated_dir(self.dest_root, self.plant, self.line,
+                                          self.robot, _now())
             self._set(dated_path=str(dated))
             # started-marker written FIRST: backup.json exists from the first
             # moment with complete:false, and only _write_sidecars - the LAST
@@ -556,9 +579,8 @@ class BackupJob(_JobBase):
                 return self._finish("cancelled")
             self._set(status="downloading", total=len(files))
 
-            when = _now()
-            dated = dated_dir(self.dest_root, self.plant, self.line, self.robot, when)
-            dated.mkdir(parents=True, exist_ok=True)
+            dated, when = claim_dated_dir(self.dest_root, self.plant, self.line,
+                                          self.robot, _now())
             self._set(dated_path=str(dated))
             # started-marker: backup.json exists from the first moment with
             # complete:false, and only _write_sidecars - the LAST step of a
