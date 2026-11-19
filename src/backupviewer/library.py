@@ -1866,12 +1866,76 @@ def _volume_recycles(root: Path) -> bool:
         return False
 
 
+def _volume_guid(path) -> str:
+    """'{guid}' of the volume holding `path` (the key Windows files each drive's
+    Recycle Bin settings under), or "" when it cannot be read."""
+    try:
+        import ctypes
+        drive = os.path.splitdrive(str(_safe_resolve(Path(path))))[0]
+        if not drive or drive.startswith("\\\\"):
+            return ""
+        buf = ctypes.create_unicode_buffer(64)
+        if not ctypes.windll.kernel32.GetVolumeNameForVolumeMountPointW(drive + "\\", buf, 64):
+            return ""
+    except Exception:  # noqa: BLE001 - no ctypes/windll (non-Windows test run)
+        return ""
+    m = re.search(r"\{[0-9A-Fa-f-]{36}\}", buf.value)
+    return m.group(0) if m else ""
+
+
+def _reg_dword(root, key: str, name: str):
+    try:
+        import winreg
+        with winreg.OpenKey(root, key) as k:
+            return winreg.QueryValueEx(k, name)[0]
+    except (ImportError, OSError):
+        return None
+
+
+_POLICY_KEY = r"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+_BITBUCKET_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\BitBucket\Volume"
+
+
+def recycle_refusal(path, nbytes: int, *, read=_reg_dword, guid_of=_volume_guid) -> str:
+    """Why the Recycle Bin would DELETE this snapshot outright instead of keeping
+    it - or "" when it will keep it. The recycle call runs without confirmation,
+    so Windows used to nuke silently and the app still said "recycled" (audit
+    2026-11-18): when IT turns the bin off (NoRecycleFiles), when the drive's bin
+    is set to delete immediately (NukeOnDelete), or when the snapshot is bigger
+    than the drive's bin (MaxCapacity, in MB). `read`/`guid_of` are injectable."""
+    try:
+        import winreg
+        hklm, hkcu = winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER
+    except ImportError:
+        return ""
+    if read(hklm, _POLICY_KEY, "NoRecycleFiles") == 1 or read(hkcu, _POLICY_KEY, "NoRecycleFiles") == 1:
+        return ("the Recycle Bin is turned off on this PC, so recycling would delete "
+                "permanently - pick a staging folder instead")
+    guid = guid_of(path)
+    if not guid:
+        return ""
+    key = _BITBUCKET_KEY + "\\" + guid
+    if read(hkcu, key, "NukeOnDelete") == 1:
+        return ("this drive's Recycle Bin is set to remove files immediately, so "
+                "recycling would delete permanently - pick a staging folder instead")
+    cap = read(hkcu, key, "MaxCapacity")
+    if isinstance(cap, int) and cap >= 0 and nbytes > cap * 1024 * 1024:
+        return (f"this snapshot ({nbytes / 1048576:.0f} MB) is bigger than the drive's "
+                f"Recycle Bin ({cap} MB), so Windows would delete it permanently - "
+                "pick a staging folder instead")
+    return ""
+
+
 def _send_to_recycle(paths: list) -> None:
     """Send folders to the Windows Recycle Bin (SHFileOperationW +
     FOF_ALLOWUNDO). The bin keeps origin + date and offers Restore, and
     Windows' own storage policy handles expiry - that IS the point of this
     mode. Raises OSError on any failure (sources intact). NULs are built
-    programmatically - never as literals through a tool layer."""
+    programmatically - never as literals through a tool layer.
+
+    FOF_WANTNUKEWARNING backs up recycle_refusal: should Windows still decide
+    a folder cannot be recycled, it asks before deleting it for good instead of
+    doing so silently under FOF_NOCONFIRMATION (a "no" aborts -> OSError)."""
     import ctypes
     from ctypes import wintypes
 
@@ -1887,7 +1951,8 @@ def _send_to_recycle(paths: list) -> None:
     joined = nul.join(str(Path(p)) for p in paths) + nul   # ctypes adds the 2nd
     op = SHFILEOPSTRUCTW(None, 3,                          # FO_DELETE
                          joined, None,
-                         0x40 | 0x10 | 0x4 | 0x400,        # ALLOWUNDO|NOCONFIRMATION|SILENT|NOERRORUI
+                         # ALLOWUNDO|NOCONFIRMATION|SILENT|NOERRORUI|WANTNUKEWARNING
+                         0x40 | 0x10 | 0x4 | 0x400 | 0x4000,
                          False, None, None)
     rc = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
     if rc or op.fAnyOperationsAborted:
@@ -2012,8 +2077,12 @@ def stage_backups(picks: list, days: int, keep: int, progress=None) -> dict:
                     err = "a flat import (not a dated snapshot) - move it by hand"
                 elif mode != "recycle":
                     err = ""
-                    dst = (staged_root / e.get("plant", "") / e.get("line", "")
-                           / e.get("robot", "") / src.parent.name / src.name)
+                    # mirror the snapshot's REAL place in the tree (files are
+                    # law). Rebuilding it from the entry's raw names failed for a
+                    # robot named with ':' or '?' and let '..' climb a level -
+                    # the backup folders themselves use _safe_name'd names
+                    # (audit 2026-11-18)
+                    dst = staged_root / _safe_resolve(src).relative_to(root)
                     if dst.exists():
                         err = "already parked in staging (restore or delete that copy first)"
                 else:
@@ -2037,6 +2106,11 @@ def stage_backups(picks: list, days: int, keep: int, progress=None) -> dict:
                             except OSError:
                                 pass
                 if mode == "recycle":
+                    why = recycle_refusal(src, rec["bytes"])
+                    if why:                   # the bin would delete it for good
+                        failed.append({"robot_id": rid, "taken": t, "error": why})
+                        _tick()
+                        continue
                     try:
                         _send_to_recycle([src])
                     except OSError as ex:

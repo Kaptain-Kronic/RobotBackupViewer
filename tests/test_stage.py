@@ -251,6 +251,8 @@ def test_stage_to_recycle_bin(monkeypatch, tmp_path):
     library.scan_library_root(root)
     settings.set_value("staging_mode", "recycle")
     monkeypatch.setattr(library, "_volume_recycles", lambda p: True)
+    # this machine's real bin settings must not decide the test
+    monkeypatch.setattr(library, "recycle_refusal", lambda p, n: "")
     sent = []
 
     def fake_recycle(paths):
@@ -328,3 +330,75 @@ def test_lib_stage_refuses_mid_run(monkeypatch, tmp_path):
     r = api.lib_stage([{"robot_id": "rid-1", "taken": "2024-01-01T10:00:00"}])
     assert r["ok"] is False
     assert (r1 / "2024_01_01" / "10_00_00").is_dir()   # nothing moved
+
+
+# -- recycling never quietly becomes a permanent delete (audit 2026-11-18) -----
+
+def _bin(policy=None, nuke=None, cap=None):
+    """A fake registry: the policy key answers NoRecycleFiles, the volume key
+    answers NukeOnDelete / MaxCapacity (MB)."""
+    def read(root, key, name):
+        if name == "NoRecycleFiles":
+            return policy
+        return {"NukeOnDelete": nuke, "MaxCapacity": cap}.get(name)
+    return read
+
+
+@pytest.mark.parametrize("read,nbytes,says", [
+    (_bin(policy=1), 10, "turned off"),
+    (_bin(nuke=1, cap=5000), 10, "immediately"),
+    (_bin(nuke=0, cap=1), 3 * 1024 * 1024, "bigger than"),
+], ids=["policy off", "nuke on delete", "too big for the bin"])
+def test_recycle_refusal_names_why_the_bin_would_delete(read, nbytes, says):
+    why = library.recycle_refusal("C:/lib/x", nbytes, read=read, guid_of=lambda p: "{g}")
+    assert says in why and "staging folder" in why
+
+
+def test_recycle_refusal_is_quiet_when_the_bin_keeps_it():
+    assert library.recycle_refusal("C:/lib/x", 10, read=_bin(nuke=0, cap=5000),
+                                   guid_of=lambda p: "{g}") == ""
+
+
+def test_stage_recycle_leaves_what_the_bin_would_nuke(monkeypatch, tmp_path):
+    """The recycle call runs without confirmation, so a bin that would delete
+    for good used to do it silently while the app said "recycled"."""
+    _iso(monkeypatch, tmp_path)
+    root = _lib(tmp_path)
+    r1 = _seed_r1(root)
+    library.scan_library_root(root)
+    settings.set_value("staging_mode", "recycle")
+    monkeypatch.setattr(library, "_volume_recycles", lambda p: True)
+    monkeypatch.setattr(library, "recycle_refusal", lambda p, n: "the bin would delete it")
+    sent = []
+    monkeypatch.setattr(library, "_send_to_recycle", lambda paths: sent.extend(paths))
+
+    res = library.stage_backups(
+        [{"robot_id": "rid-1", "taken": "2024-05-01T10:00:00"}], 90, 2)
+    assert res["staged"] == [] and sent == []
+    assert res["failed"][0]["error"] == "the bin would delete it"
+    assert (r1 / "2024_05_01" / "10_00_00" / "SUMMARY.DG").is_file()
+
+
+# -- staging mirrors the real folder, not a re-derived name (audit 2026-11-18) -
+
+def test_stage_mirrors_the_folder_on_disk_not_the_raw_name(monkeypatch, tmp_path):
+    """Backup folders use _safe_name'd names, but staging rebuilt its path from
+    the entry's RAW name - so a robot named with ':' could not be staged at all
+    (WinError 123) and one named '..' landed a level up. The snapshot's own
+    place under the library root is what gets mirrored now."""
+    _iso(monkeypatch, tmp_path)
+    root = _lib(tmp_path)
+    _seed_r1(root)
+    library.scan_library_root(root)
+    data = library.load()
+    for e in data["robots"]:
+        if e["id"] == "rid-1":
+            e["robot"] = "R:1"             # a raw name no folder could carry
+    library.save(data)
+
+    res = library.stage_backups(
+        [{"robot_id": "rid-1", "taken": "2024-05-01T10:00:00"}], 90, 2)
+    assert len(res["staged"]) == 1, res["failed"]
+    assert (root / "_staged" / "P" / "L" / "R1" / "2024_05_01" / "10_00_00"
+            / "SUMMARY.DG").is_file()
+    assert res["staged"][0]["rel"] == "P/L/R1/2024_05_01/10_00_00"
