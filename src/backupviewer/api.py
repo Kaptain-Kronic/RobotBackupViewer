@@ -552,17 +552,21 @@ class Api:
         """Take the per-controller lock of every host a job dials, in sorted
         order (two stations sharing a camera cannot deadlock). Returns the held
         locks, or None when the job was cancelled while it waited - with
-        anything already taken given back."""
+        anything already taken given back. The cancel is read again once a
+        lock is taken: one that lands as the controller comes free must not
+        dial either."""
         held = []
         for h in sorted({str(x).strip().lower() for x in hosts if x}):
             with self._host_locks_guard:
                 lk = self._host_locks.setdefault(h, threading.Lock())
-            while not lk.acquire(timeout=0.25):
-                if cancelled():
-                    for x in reversed(held):
-                        x.release()
-                    return None
-            held.append(lk)
+            while not cancelled():
+                if lk.acquire(timeout=0.25):
+                    held.append(lk)
+                    break
+            if cancelled():
+                for x in reversed(held):
+                    x.release()
+                return None
         return held
 
     def _import_active(self) -> bool:

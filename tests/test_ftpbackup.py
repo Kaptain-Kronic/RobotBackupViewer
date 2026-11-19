@@ -488,3 +488,27 @@ def test_a_backup_cancelled_while_waiting_never_dials(monkeypatch, tmp_path):
     assert api._jobs[queued].snapshot()["status"] == "cancelled"
     assert api._jobs[queued].ran is False
     assert api._jobs[first].snapshot()["status"] == "done"
+
+
+def test_a_cancel_that_lands_as_the_controller_frees_up_never_dials(monkeypatch, tmp_path):
+    """A waiting job looked at its cancel only while the lock stayed busy, so a
+    cancel that landed in the same moment the controller came free dialled
+    anyway. Here the lock is free, and the cancel lands while it is taken."""
+    import threading
+    api = _slow_api(monkeypatch, tmp_path)
+    cancel = threading.Event()
+
+    class _CancelledWhileTaken:
+        held = False
+
+        def acquire(self, timeout=-1):
+            cancel.set()
+            self.held = True
+            return True
+
+        def release(self):
+            self.held = False
+
+    lock = api._host_locks["192.0.2.10"] = _CancelledWhileTaken()
+    assert api._hold_hosts(["192.0.2.10"], cancel.is_set) is None
+    assert lock.held is False                      # given back, never kept

@@ -23,7 +23,7 @@ batch lands, or with `--check` to hear about drift).
 > When per-subsystem docs land, they supersede this file for their own area. This
 > map's remaining job is breadth: what exists, and where.
 
-**Scope.** 305 files / ~104,133 lines. Covers everything in the working tree except: the
+**Scope.** 305 files / ~104,161 lines. Covers everything in the working tree except: the
 **Scope.** 265 files / ~78,187 lines. Covers everything in the working tree except: the
 **Scope.** 270 files / ~81,013 lines. Covers everything in the working tree except: the
 `.git` internals, build outputs (`dist/`, `build/`, `__pycache__/`), the private
@@ -65,7 +65,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `packaging/libraryimporter.spec` | 41 | pyinstaller onefile spec for libraryimporter.exe, bundling src/libraryimporter/web, no icon | build/config | active |
 | `src/backupviewer/__init__.py` | 1 | package marker holding the single source of the app version string (1.4) | shared/infra | active |
 | `src/backupviewer/__main__.py` | 6 | python -m backupviewer entry point delegating to app.main | shared/infra | active |
-| `src/backupviewer/api.py` | 5413 | the pywebview bridge class: 131 @_endpoint methods returning {ok,data} envelopes across every feature area | shared/infra | active |
+| `src/backupviewer/api.py` | 5417 | the pywebview bridge class: 131 @_endpoint methods returning {ok,data} envelopes across every feature area | shared/infra | active |
 | `src/backupviewer/app.py` | 437 | window boot: arg parsing, resource_path, pywebview window, the page server's accept-backlog widening (the bundle's twin fix met it in the #20 merge and one stayed), and the one-shot webview2 failure rescue relaunch | shared/infra | active |
 | `src/backupviewer/backuplog.py` | 137 | durable backup-run log in %appdata%: per-run job rows, retry attempt counting, failed-spec list, never a password | backup capture | active |
 | `src/backupviewer/compare.py` | 552 | pure two-backup diff functions: io/registers/frames/payloads/programs rows plus tp-line alignment | compare engine | active |
@@ -236,7 +236,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/test_files_extract.py` | 153 | pytest for the files-tab USB extract endpoint: byte-exact copies, .part → rename landing, per-robot folder nesting, mtime preservation, never-into-a-backup refusal | tests | active |
 | `tests/test_fixture_gate.py` | 60 | the absence reporter (a clean clone says "0 backup roots" in its summary instead of nothing) plus unit tests of the fixture gate's own error/skip branches | tests | active |
 | `tests/test_frames.py` | 55 | pytest for the tool/user/jog frame model built from SYSFRAME.VA plus FRAMEVAR.VA comments *(untracked, local-only)* | tests | active |
-| `tests/test_ftpbackup.py` | 490 | pytest for the fanuc ftp pull against a fake controller: disk layout, completion marker, library register | tests | active |
+| `tests/test_ftpbackup.py` | 514 | pytest for the fanuc ftp pull against a fake controller: disk layout, completion marker, library register | tests | active |
 | `tests/test_httpbackup.py` | 342 | pytest for the global-5 http pull against a fake web server: index parse + dedup, transport auto-detect, disk layout + completion marker, stalled-file skip vs dead-connection abort, dispatcher choice | tests | active |
 | `tests/test_healthscan.py` | 1011 | pytest for every fleet health check plus the scan job, driven by synthetic file texts through a fake session | tests | active |
 | `tests/test_import_endpoints.py` | 124 | pytest for the drop-import bridge on a windowless Api: envelopes, BUSY refusals, background copy + progress poll, handle_drop's path push | tests | active |
@@ -328,8 +328,8 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 
 | subsystem | files | ~lines |
 |---|---:|---:|
-| tests | 104 | 33,612 |
-| shared/infra | 30 | 11,200 |
+| tests | 104 | 33,636 |
+| shared/infra | 30 | 11,204 |
 | library | 5 | 8,499 |
 | docs | 12 | 8,260 |
 | theming | 34 | 6,748 |
@@ -344,7 +344,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | compare engine | 5 | 1,388 |
 | tools/scripts | 5 | 1,087 |
 | build/config | 7 | 266 |
-| **total** | **305** | **104,133** |
+| **total** | **305** | **104,161** |
 
 > Counts are by *primary* subsystem only — a file appears once, so these add up to the
 > whole repo. The `tests` row is the largest because every probe and unit suite counts as
