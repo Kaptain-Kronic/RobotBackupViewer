@@ -5167,6 +5167,9 @@ class Api:
         cidr = discover.normalize_cidr(spec.get("cidr") or "") or discover.default_cidr()
         if not cidr:
             raise ApiError("BAD_SPEC", "could not determine a subnet to scan")
+        problem = discover.scan_size_problem(cidr)
+        if problem:
+            raise ApiError("BAD_SPEC", problem)
         job = discover.NetworkScanJob(cidr, port=spec.get("port", 21),
                                       smb_port=spec.get("smb_port", discover.SMB_PORT))
         self._scans[job.id] = job

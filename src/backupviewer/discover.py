@@ -101,6 +101,25 @@ def normalize_cidr(text: str) -> str:
     return s + "/24"
 
 
+# The most addresses one sweep may cover: a /20 (sixteen /24s - a plant puts
+# each line on its own /24). There was no limit: a typo'd /16 probed 65,000
+# addresses, and a /8 built 16.7 million jobs up front and froze the app before
+# it dialled anything (audit 2026-11-18).
+MAX_SCAN_ADDRESSES = 4096
+
+
+def scan_size_problem(cidr: str) -> str:
+    """"" when `cidr` is a subnet small enough to sweep, else why not."""
+    try:
+        net = ipaddress.ip_network(cidr, strict=False)
+    except ValueError:
+        return f"not a subnet: {cidr}"
+    if net.num_addresses > MAX_SCAN_ADDRESSES:
+        return (f"{cidr} is {net.num_addresses:,} addresses - a sweep covers at most "
+                f"{MAX_SCAN_ADDRESSES:,} (a /20); scan the line's own /24")
+    return ""
+
+
 def enumerate_hosts(cidr: str) -> list[str]:
     """Usable host addresses in a CIDR. A /32 (or /31) yields its literal address(es)."""
     net = ipaddress.ip_network(cidr, strict=False)
@@ -732,6 +751,10 @@ class NetworkScanJob(_ScanJob):
     def run(self):
         try:
             self._set(status="scanning")
+            problem = scan_size_problem(self.cidr)
+            if problem:
+                self._set(status="error", error=problem)
+                return
             hosts = self._host_provider(self.cidr)
             self._set(total=len(hosts))
             self._matrox_eip = self._identity_sweep()
