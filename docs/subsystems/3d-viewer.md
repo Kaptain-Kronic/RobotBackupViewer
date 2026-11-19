@@ -244,7 +244,11 @@ so the view restores exactly (`st()`, `view3d.js:25-44`).
 What's pure vs stateful: everything in `kinematics.py` / `fk.js` /
 `proj3d.js` / `dcszones.py` is pure (same input, same output — what makes
 the twin probe possible). State lives in the session cache (`"dcszones"`),
-`modeldb`'s `%APPDATA%\kinematics.json`, and the tab state above.
+`modeldb`'s `%APPDATA%\kinematics.json`, and the tab state above. (Since
+2026-11-19 `kinematics.json` saves through `durable`, like settings and the
+library: flushed to disk before the rename, last good copy kept as `.bak`, so
+a damaged file reads its backup instead of dropping every user import on the
+next one.)
 
 ## 4. Domain truths
 

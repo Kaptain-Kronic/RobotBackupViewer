@@ -1,5 +1,67 @@
 # Changelog
 
+## unreleased — audit fixes: a device can no longer write files anywhere on the PC, a damaged settings file no longer wipes the rest, the simulator export never destroys a workspace, and one controller never gets two backups at once
+- **A device names files, never local paths.** A backup wrote every file name
+  an FTP listing gave it, and pathlib lets an absolute name replace the
+  snapshot folder outright - so a rogue box answering on a robot's or a CV-X's
+  address (the FTP is anonymous and unencrypted) could drop a file anywhere on
+  the PC, a Startup-folder script included. Reproduced against a fake server
+  on both paths; the CV-X job even reported done. A name must now be one plain
+  path component; anything else is recorded as skipped and never pulled.
+- **A damaged settings.json no longer wipes every other setting.** An
+  unreadable file read back as empty, and the next ordinary click saved just
+  that one key over it - the library folder fell back to the home default and
+  the app quietly showed a different library. Saves are now flushed to disk
+  before the rename (a hard power-off could leave the file empty), the last
+  good copy is kept as `.bak` and read when the file is damaged, and a damaged
+  file is set aside as `.corrupt-<time>` instead of written over. The library
+  registry, backup log and imported kinematics save the same way.
+- **The simulator export never half-deletes a workspace, and asks before
+  replacing one that changed.** Re-loading a camera deleted the old copy and
+  then renamed the new one in; with the simulator holding any file open, most
+  of the workspace was gone and nothing replaced it. The swap now renames the
+  old copy aside first, which Windows refuses while a file is open - so it is
+  left exactly as it was ("close the simulator and load again"). And the
+  export remembers what each workspace held when it loaded it: one that changed
+  since (edits saved in the simulator, scans pulled in with Keyence's tool)
+  asks first, like a folder the app did not create. Every Latest mirror uses
+  the same swap.
+- **One controller never gets two backups at once.** A double-click, a retry
+  or two library rows for one IP opened a second session beside the first; the
+  second backup now waits its turn (cancel it while it waits and it never
+  dials). Two runs of one robot in the same second also get their own
+  snapshot folders instead of sharing one.
+- **The CV-X logic tab shows every line of a script.** `FOR`/`NEXT`,
+  `DO`/`LOOP`, `EXIT FOR`/`EXIT DO` and the two-word `END IF` were not in the
+  script grammar, so they were silently left out - a loop read as if its body
+  ran once.
+- **A camera scan never hands out your Windows login.** The Matrox probe
+  touched the camera share before setting up the camera's own login, so
+  Windows signed in as you - and the scan probes any device that claims to be
+  a Matrox. The camera login is now staged first; a credential you saved for a
+  camera is never overwritten or deleted.
+- **The phone mirror shows the window, not the screen.** "Mirror this window"
+  copied the screen where the window sat, so an email or chat lying over the
+  app went to the phone too. The window now renders itself, and only the app's
+  own windows can be mirrored.
+- **Phone shares are harder to guess and end on their own.** The share code is
+  now 128-bit (was 48), idle connections time out, a stranger cannot hold
+  hundreds open, and a share nobody watches for 30 minutes stops by itself.
+  The firewall rule the phone panel adds now admits only this app.
+- **Smaller ones.** PowerShell and Explorer are started by full path; the
+  Recycle Bin cleanup refuses (and says why) when the bin would delete a
+  snapshot permanently - turned off by IT, set to delete immediately, or too
+  small; staging mirrors each snapshot's real folder, so a robot named with
+  `:` or `?` can be staged; a network sweep is capped at 4,096 addresses (a
+  /8 froze the app); only one copy of the app runs per settings folder (a
+  second launch brings the first to the front); the WebView2 profile is one
+  reused folder instead of a new one in %TEMP% per launch; a page that never
+  reaches the bridge in 90 s gets the same once-only rescue relaunch as a
+  WebView2 init failure; app.log rotates at 2 MB; the edit workspace keeps
+  its program list in its own file instead of inside settings.json; the CV-X
+  remote's buffers stay bounded and a lost mouse call can no longer leave a
+  button held; the LibraryImporter refuses `..` as a line or robot name.
+
 ## v1.7.1 — the app boots whole again, the camera wall pops out into boxes and a window of its own, a picker chooses what the wall shows, and global-5 robots back up over http
 - **Every boot now loads every file — and says so when one does not.** v1.7
   came up half-built on most launches: a blank library, a settings dialog
