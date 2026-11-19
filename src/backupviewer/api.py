@@ -3877,6 +3877,10 @@ class Api:
             # export (replace freely) or a folder somebody made by hand, which
             # exporting would DESTROY. The picker must not blur them.
             it["foreign"] = keyence_workspace.would_replace_foreign(root, it["name"])
+            # ours, but changed since it was loaded (simulator edits, scans pulled
+            # into it with Keyence's tool) - replacing it destroys that work too
+            it["changed"] = (not it["foreign"]
+                             and keyence_workspace.would_replace_changed(root, it["name"]))
         return planned
 
     @_endpoint
@@ -3911,12 +3915,16 @@ class Api:
             try:
                 dest = keyence_workspace.export_workspace(
                     it["src"], root, it["name"], replace_foreign=bool(replace_foreign))
-            except keyence_workspace.ForeignWorkspace:
-                blocked.append({**row, "path": str(root / it["name"])})
+            except keyence_workspace.ForeignWorkspace as e:
+                blocked.append({**row, "path": str(root / it["name"]), "changed": e.changed})
                 continue
             (done if dest else failed).append({**row, "path": str(dest or "")})
         if not done and failed and not blocked:
-            raise ApiError("EXPORT_FAILED", f"nothing copied ({len(failed)} failed)")
+            # the usual cause: the simulator has the workspace open, and Windows
+            # will not let an open folder be swapped (it is left as it was)
+            raise ApiError("EXPORT_FAILED",
+                           f"nothing copied ({len(failed)} failed) - if the simulator has "
+                           "these workspaces open, close it and load again")
         return {"root": str(root), "exported": done, "failed": failed, "blocked": blocked}
 
     @_endpoint

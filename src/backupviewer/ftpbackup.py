@@ -175,10 +175,18 @@ def retrieve(ftp, retr_arg: str, dest: Path, *, retries: int = RETRIES) -> int:
 
 
 def mirror_latest(dated: Path, latest: Path, *, label: str = "") -> Path | None:
-    r"""Overwrite `latest` with a copy of the `dated` snapshot, built in a sibling
-    .__tmp dir then atomically swapped, so a half-written mirror is never visible
-    and a failure here leaves the (good) dated snapshot untouched. Returns the
-    mirror path, or None on failure (logged).
+    r"""Overwrite `latest` with a copy of the `dated` snapshot. Returns the
+    mirror path, or None on failure (logged) - and on failure `latest` is
+    exactly what it was before, never a half-deleted mix.
+
+    The swap: copy into a sibling `.__tmp`, rename the current folder ASIDE to
+    `.__old.__tmp`, rename the copy into place, then delete the old one.
+    Windows refuses to rename a folder while any file inside it is open (the
+    CV-X simulator running on an exported workspace, an Explorer preview, AV),
+    and that refusal now leaves everything as it was. The old order - delete
+    first, rename after - wiped all but the open file and then failed to place
+    the new copy (audit 2026-11-18, reproduced). Both transient names end in
+    `.__tmp`, which every library walk already skips.
 
     Every path goes through \\?\ : the SOURCE side is a dated camera snapshot,
     which is the deepest tree this app ever makes (`<lib>\<plant>\<line>\<robot>\
@@ -187,20 +195,44 @@ def mirror_latest(dated: Path, latest: Path, *, label: str = "") -> Path | None:
     Past 260 chars a plain copy fails with 'cannot find the path' - which this
     function catches and logs, so the symptom is a Latest mirror that quietly
     stops tracking while every dated snapshot looks perfect."""
+    what = label or latest.name
     tmp = latest.with_name(latest.name + ".__tmp")
-    tmp_l, latest_l = long_path(tmp), long_path(latest)
+    old = latest.with_name(latest.name + ".__old.__tmp")
+    tmp_l, old_l, latest_l = long_path(tmp), long_path(old), long_path(latest)
     try:
         os.makedirs(long_path(latest.parent), exist_ok=True)
         shutil.rmtree(tmp_l, ignore_errors=True)
+        shutil.rmtree(old_l, ignore_errors=True)   # an old copy a past run could not delete
         shutil.copytree(long_path(dated), tmp_l)
-        shutil.rmtree(latest_l, ignore_errors=True)
-        os.replace(tmp_l, latest_l)
-        return latest
     except OSError:
-        log.exception("Latest mirror failed for %s (dated snapshot is intact)",
-                      label or latest.name)
+        log.exception("mirror of %s failed while copying (the source is intact)", what)
         shutil.rmtree(tmp_l, ignore_errors=True)
         return None
+    had_old = os.path.lexists(latest_l)
+    if had_old:
+        try:
+            os.replace(latest_l, old_l)
+        except OSError as e:
+            log.warning("mirror of %s not refreshed: %s is in use (%s) - left exactly "
+                        "as it was", what, latest, e)
+            shutil.rmtree(tmp_l, ignore_errors=True)
+            return None
+    try:
+        os.replace(tmp_l, latest_l)
+    except OSError:
+        log.exception("mirror of %s failed at the final rename", what)
+        if had_old:
+            try:
+                os.replace(old_l, latest_l)       # put the previous copy back
+            except OSError:
+                log.exception("the previous copy of %s is left at %s", what, old)
+        shutil.rmtree(tmp_l, ignore_errors=True)
+        return None
+    if had_old:
+        shutil.rmtree(old_l, ignore_errors=True)
+        if os.path.lexists(old_l):
+            log.warning("could not finish deleting the old copy at %s", old)
+    return latest
 
 
 # -- read-only FTP tree walk (shared by the Keyence CV-X camera backup) ----------

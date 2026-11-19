@@ -338,3 +338,38 @@ def test_hostile_listing_never_writes_outside_the_snapshot(monkeypatch, tmp_path
     meta = json.loads((Path(res["dated_path"]) / "backup.json").read_text(encoding="utf-8"))
     assert sum("not pulled" in s for s in meta["skipped"]) == len(hostile)
     assert (Path(res["dated_path"]) / "SUMMARY.DG").is_file()
+
+
+# -- the Latest swap is all or nothing (audit 2026-11-18, reproduced) ----------
+
+def _tree(folder):
+    return sorted(str(p.relative_to(folder)) for p in folder.rglob("*"))
+
+
+def test_mirror_in_use_is_left_exactly_as_it_was(tmp_path):
+    """The old swap deleted the mirror first and renamed the new copy in after.
+    With one file held open (an Explorer preview, the simulator, AV) that wiped
+    every other file and then failed to place the new copy - 6 of 7 gone,
+    nothing back. Windows refuses to rename a folder with an open file inside,
+    so renaming the old copy ASIDE first turns that into a clean no-op."""
+    dated = tmp_path / "dated"
+    dated.mkdir()
+    (dated / "NEW.DG").write_text("new copy")
+    latest = tmp_path / "Latest" / "RB010R01B01"
+    latest.mkdir(parents=True)
+    for i in range(6):
+        (latest / f"OLD{i}.DG").write_text("the copy already there")
+    (latest / "HELD.DG").write_text("open in another program")
+    before = _tree(latest)
+
+    held = open(latest / "HELD.DG", "rb")
+    try:
+        assert ftpbackup.mirror_latest(dated, latest, label="RB010R01B01") is None
+    finally:
+        held.close()
+    assert _tree(latest) == before
+    assert not list(latest.parent.glob("*.__tmp"))
+
+    assert ftpbackup.mirror_latest(dated, latest) == latest     # nothing open: swaps
+    assert _tree(latest) == ["NEW.DG"]
+    assert not list(latest.parent.glob("*.__tmp"))

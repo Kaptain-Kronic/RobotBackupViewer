@@ -38,6 +38,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import logging
+import os
 import re
 import struct
 from pathlib import Path
@@ -300,7 +301,14 @@ _LEDGER_NOTE = ("folders listed here were created by Backup Viewer's simulator "
 
 
 class ForeignWorkspace(Exception):
-    """Raised when an export would delete a folder this export did not create."""
+    """Raised when an export would delete a folder it may not replace freely:
+    one this export did not create, or (changed=True) one it created that has
+    changed since - edits saved in the simulator, scans downloaded into it with
+    Keyence's own tool."""
+
+    def __init__(self, name, changed: bool = False):
+        super().__init__(name)
+        self.changed = changed
 
 
 def read_ledger(sim_root) -> dict:
@@ -333,11 +341,55 @@ def would_replace_foreign(sim_root, name: str) -> bool:
     return name not in read_ledger(sim_root)
 
 
-def _record_export(sim_root, name: str, src) -> None:
-    """Add one folder to the ledger. Best-effort: a ledger we could not write
-    only costs a confirmation next time, so it must never fail the export."""
+def fingerprint(folder) -> dict:
+    """What a workspace folder holds right now, cheaply: file count, total
+    bytes and the newest modified time. Edits the simulator saves and scans
+    Keyence's download drops in each move at least one of the three."""
+    from .ftpbackup import long_path
+
+    files = total = newest = 0
+    for dirpath, _dirs, names in os.walk(long_path(Path(folder))):
+        for n in names:
+            try:
+                st = os.stat(os.path.join(dirpath, n))
+            except OSError:
+                continue
+            files += 1
+            total += st.st_size
+            newest = max(newest, int(st.st_mtime))
+    return {"files": files, "bytes": total, "newest": newest}
+
+
+def would_replace_changed(sim_root, name: str) -> bool:
+    """True when <name> is a folder this export created that has CHANGED since
+    it was loaded - replacing it would destroy that work as surely as a foreign
+    folder, so it needs the same deliberate yes. The ledger used to record only
+    "we created it", and a re-export silently wiped scans downloaded into a
+    loaded workspace (audit 2026-11-18). An entry written before fingerprints
+    existed cannot be proven unchanged, so it asks too - once; the export that
+    follows records one."""
+    name = _safe_folder(name)
+    folder = Path(sim_root) / name
+    try:
+        if not folder.is_dir():
+            return False
+    except OSError:
+        return False
+    entry = read_ledger(sim_root).get(name)
+    if entry is None:
+        return False                      # not ours: would_replace_foreign's case
+    want = entry.get("fingerprint") if isinstance(entry, dict) else None
+    return want != fingerprint(folder)
+
+
+def _record_export(sim_root, name: str, src, dest=None) -> None:
+    """Add one folder to the ledger, with what it held as we left it.
+    Best-effort: a ledger we could not write only costs a confirmation next
+    time, so it must never fail the export."""
     sim_root = Path(sim_root)
     entry = {"source": str(src), "written": _dt.datetime.now().isoformat(timespec="seconds")}
+    if dest is not None:
+        entry["fingerprint"] = fingerprint(dest)
     try:
         exports = read_ledger(sim_root)
         exports[_safe_folder(name)] = entry
@@ -356,19 +408,25 @@ def export_workspace(src, sim_root, name: str, *, replace_foreign: bool = False)
     the source (a backup) is only ever READ.
 
     Refuses with ForeignWorkspace when <name> already exists and this export did
-    not create it - that is somebody's hand-made simulator save, and the caller
-    must confirm (replace_foreign=True) before it is destroyed.
+    not create it - that is somebody's hand-made simulator save - or when this
+    export created it but it has changed since (ForeignWorkspace.changed). The
+    caller must confirm (replace_foreign=True) before either is destroyed.
 
-    Returns the destination Path, or None on failure (logged)."""
+    Returns the destination Path, or None on failure (logged) - including when
+    the simulator has the old workspace open: the swap then leaves it exactly
+    as it was (ftpbackup.mirror_latest)."""
     from .ftpbackup import mirror_latest   # local: the swap-in-place primitive
 
     src = Path(src)
     if not is_workspace(src):
         log.info("refusing to export %s - not a workspace", src)
         return None
-    if not replace_foreign and would_replace_foreign(sim_root, name):
-        raise ForeignWorkspace(name)
+    if not replace_foreign:
+        if would_replace_foreign(sim_root, name):
+            raise ForeignWorkspace(name)
+        if would_replace_changed(sim_root, name):
+            raise ForeignWorkspace(name, changed=True)
     dest = mirror_latest(src, Path(sim_root) / _safe_folder(name), label=name)
     if dest is not None:
-        _record_export(sim_root, name, src)
+        _record_export(sim_root, name, src, dest)   # fingerprinted as we leave it
     return dest

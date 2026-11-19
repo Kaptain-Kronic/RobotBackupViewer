@@ -1408,8 +1408,11 @@ def _rebuild_backups(e: dict, robot_dir, root) -> None:
 
 def _regen_latest(e: dict, root: Path):
     """Rebuild the Latest/<robot> mirror from the newest existing dated snapshot
-    (temp dir -> copytree -> atomic replace). Newest missing -> leave any existing
-    mirror untouched (don't destroy a good-but-currently-offline mirror)."""
+    through the backup engine's own swap (ftpbackup.mirror_latest: long paths,
+    and a mirror in use is left whole rather than half-deleted). Newest missing
+    -> leave any existing mirror untouched (don't destroy a good-but-currently-
+    offline mirror)."""
+    from . import ftpbackup
     newest = None
     for b in e.get("backups", []):                     # newest-first
         if b.get("partial"):
@@ -1421,20 +1424,7 @@ def _regen_latest(e: dict, root: Path):
     if newest is None:
         return None
     latest = _latest_dir_for(root, e.get("plant", ""), e.get("line", ""), e.get("robot", ""))
-    tmp = latest.with_name(latest.name + ".__tmp")
-    try:
-        latest.parent.mkdir(parents=True, exist_ok=True)
-        if tmp.exists():
-            shutil.rmtree(tmp, ignore_errors=True)
-        shutil.copytree(newest, tmp)
-        if latest.exists():
-            shutil.rmtree(latest, ignore_errors=True)
-        os.replace(tmp, latest)
-        return latest
-    except OSError:
-        log.exception("Latest mirror regen failed for %s (dated snapshot intact)", e.get("robot"))
-        shutil.rmtree(tmp, ignore_errors=True)
-        return None
+    return ftpbackup.mirror_latest(newest, latest, label=e.get("robot", ""))
 
 
 def _rel(p, root) -> str:
