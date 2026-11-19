@@ -447,13 +447,21 @@ def _slow_api(monkeypatch, tmp_path):
 
 
 def _wait_settled(api, ids, timeout=10.0):
+    """Every job final AND its thread gone. The thread writes the backup log
+    AFTER the status turns final, and a write that outlives the test lands in
+    the developer's real %APPDATA% once monkeypatch has put app_dir back."""
+    import threading
     import time
     end = time.time() + timeout
-    while time.time() < end:
-        if all(ftpbackup.is_terminal(api._jobs[i].snapshot()["status"]) for i in ids):
-            return
+    while not all(ftpbackup.is_terminal(api._jobs[i].snapshot()["status"]) for i in ids):
+        if time.time() >= end:
+            raise AssertionError("jobs did not settle")
         time.sleep(0.05)
-    raise AssertionError("jobs did not settle")
+    names = {"backup-" + i for i in ids}
+    for t in threading.enumerate():
+        if t.name in names:
+            t.join(max(0.0, end - time.time()))
+            assert not t.is_alive(), f"{t.name} outlived its job"
 
 
 def test_a_controller_never_gets_two_backups_at_once(monkeypatch, tmp_path):

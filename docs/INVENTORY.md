@@ -23,7 +23,7 @@ batch lands, or with `--check` to hear about drift).
 > When per-subsystem docs land, they supersede this file for their own area. This
 > map's remaining job is breadth: what exists, and where.
 
-**Scope.** 305 files / ~104,094 lines. Covers everything in the working tree except: the
+**Scope.** 305 files / ~104,133 lines. Covers everything in the working tree except: the
 **Scope.** 265 files / ~78,187 lines. Covers everything in the working tree except: the
 **Scope.** 270 files / ~81,013 lines. Covers everything in the working tree except: the
 `.git` internals, build outputs (`dist/`, `build/`, `__pycache__/`), the private
@@ -220,7 +220,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/test_close_guard.py` | 95 | pytest for the app-close confirm guard: asks while backups or scans run (scans say nothing-on-disk-is-affected), and fails open when the dialog throws | tests | active |
 | `tests/test_compare.py` | 267 | pytest for every compare diff category plus cross-backup integration through the api *(untracked, local-only)* | tests | active |
 | `tests/test_compare_align.py` | 105 | pytest for identity-normalized program alignment: equiv classification, junk blanks, banner comments | tests | active |
-| `tests/test_cvx_image.py` | 281 | pytest for the cv-x bmp decoder: 15-bit height packing, no-data sentinel, pairing, and the photos endpoint | tests | active |
+| `tests/test_cvx_image.py` | 290 | pytest for the cv-x bmp decoder: 15-bit height packing, no-data sentinel, pairing, and the photos endpoint | tests | active |
 | `tests/test_cvx_inspect.py` | 162 | pytest for reading a cv-x camera's own name out of inspect.dat and teaching it into the library | tests | active |
 | `tests/test_cvx_models.py` | 691 | pytest for the cv-x model decoder: containers, zlib-stl gate, calibration self-validation, and the models/export endpoints | tests | active |
 | `tests/test_cvx_program.py` | 540 | pytest for the cv-x inspection-program reader: st-magic gate, recovery-copy fold, name-table and script-grammar refusals, plus the logic tab requirement and the cvx_logic endpoint | tests | active |
@@ -236,7 +236,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/test_files_extract.py` | 153 | pytest for the files-tab USB extract endpoint: byte-exact copies, .part → rename landing, per-robot folder nesting, mtime preservation, never-into-a-backup refusal | tests | active |
 | `tests/test_fixture_gate.py` | 60 | the absence reporter (a clean clone says "0 backup roots" in its summary instead of nothing) plus unit tests of the fixture gate's own error/skip branches | tests | active |
 | `tests/test_frames.py` | 55 | pytest for the tool/user/jog frame model built from SYSFRAME.VA plus FRAMEVAR.VA comments *(untracked, local-only)* | tests | active |
-| `tests/test_ftpbackup.py` | 482 | pytest for the fanuc ftp pull against a fake controller: disk layout, completion marker, library register | tests | active |
+| `tests/test_ftpbackup.py` | 490 | pytest for the fanuc ftp pull against a fake controller: disk layout, completion marker, library register | tests | active |
 | `tests/test_httpbackup.py` | 342 | pytest for the global-5 http pull against a fake web server: index parse + dedup, transport auto-detect, disk layout + completion marker, stalled-file skip vs dead-connection abort, dispatcher choice | tests | active |
 | `tests/test_healthscan.py` | 1011 | pytest for every fleet health check plus the scan job, driven by synthetic file texts through a fake session | tests | active |
 | `tests/test_import_endpoints.py` | 124 | pytest for the drop-import bridge on a windowless Api: envelopes, BUSY refusals, background copy + progress poll, handle_drop's path push | tests | active |
@@ -274,13 +274,13 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `tests/test_retention.py` | 229 | pytest for the cleanup verdict engine: candidate vs protected reasons, keep-N/age windows, pins, partial age-exemption, unsized totals | tests | active |
 | `tests/test_screengrab.py` | 151 | pytest decoding the app's own PNG output by hand, a window that renders itself without the window covering it (near-invisible tk windows), another program's window never found, and pointer-sized handle prototype guards | tests | active |
 | `tests/test_session.py` | 75 | pytest for BackupSession: manifest, .ls program-vs-report split, case-insensitive find, karel detection *(untracked, local-only)* | tests | active |
-| `tests/test_sessions.py` | 201 | pytest for the multi-session registry behind backup tabs: open/switch/close, per-entry compare, session cap, pop-out drop, sid/side parameter-order guard | tests | active |
+| `tests/test_sessions.py` | 212 | pytest for the multi-session registry behind backup tabs: open/switch/close, per-entry compare, session cap, pop-out drop, sid/side parameter-order guard | tests | active |
 | `tests/test_settings.py` | 168 | pytest that settings._write retries a transient Windows PermissionError on the atomic replace and still raises when the lock never clears; a damaged settings.json/library.json reads its .bak and is set aside, never wiping other keys; saves fsync; the edit workspace lives in its own files; app.log rotates | tests | active |
 | `tests/test_single_instance.py` | 60 | pytest for the one-app-per-settings-folder claim: a second claim refused, released for the rescue relaunch, separate folders never colliding, a second launch exiting before any window | tests | active |
 | `tests/test_stage.py` | 404 | pytest for staging moves: mirrored `_staged` tree, robot-dir prune boundary, staged.log ledger, re-judged picks, recycle-bin and outside-library destinations | tests | active |
 | `tests/test_sim_export.py` | 201 | pytest for loading camera workspaces into the CV-X simulator's flat folder: what is offered, naming, blocking hand-made workspaces, sim_root setting | tests | active |
 | `tests/test_summary.py` | 67 | pytest for parse_summary over a real SUMMARY.DG: identity, options, memory, ethernet, tasks, macros *(untracked, local-only)* | tests | active |
-| `tests/test_sysvar_merge.py` | 157 | pytest for merge_system_records stitching [*SYSTEM*] records across many .VA files, excluding register/KAREL sections, through to get_sysvar_records | tests | active |
+| `tests/test_sysvar_merge.py` | 168 | pytest for merge_system_records stitching [*SYSTEM*] records across many .VA files, excluding register/KAREL sections, through to get_sysvar_records | tests | active |
 | `tests/test_sysvars.py` | 92 | pytest for the sysvar record tree and flatten, plus KAREL structs whose field lines carry no $ prefix *(untracked, local-only)* | tests | active |
 | `tests/test_updatecheck.py` | 130 | pytest for updatecheck: version parsing/ordering, check()'s honest per-failure statuses with fetch injected, and the frozen-only autocheck policy | tests | active |
 | `tests/test_v02_parsers.py` | 154 | pytest grab-bag for callgraph, gmwizlog, mastering, styles, io pendant names and the search engine *(untracked, local-only)* | tests | active |
@@ -328,7 +328,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 
 | subsystem | files | ~lines |
 |---|---:|---:|
-| tests | 104 | 33,573 |
+| tests | 104 | 33,612 |
 | shared/infra | 30 | 11,200 |
 | library | 5 | 8,499 |
 | docs | 12 | 8,260 |
@@ -344,7 +344,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | compare engine | 5 | 1,388 |
 | tools/scripts | 5 | 1,087 |
 | build/config | 7 | 266 |
-| **total** | **305** | **104,094** |
+| **total** | **305** | **104,133** |
 
 > Counts are by *primary* subsystem only — a file appears once, so these add up to the
 > whole repo. The `tests` row is the largest because every probe and unit suite counts as

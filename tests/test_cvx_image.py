@@ -9,9 +9,18 @@ import struct
 
 import pytest
 
+from backupviewer import settings
 from backupviewer.api import Api
 from backupviewer.parsers import cvx_image
 from backupviewer.session import BackupSession
+
+
+@pytest.fixture(autouse=True)
+def _own_settings_folder(tmp_path_factory, monkeypatch):
+    """open_backup remembers the folder it opened (last_folder) - in a
+    throwaway settings folder, never the developer's real %APPDATA%."""
+    appdata = tmp_path_factory.mktemp("appdata")
+    monkeypatch.setattr(settings, "app_dir", lambda: appdata)
 
 
 # -- fixture builders -----------------------------------------------------------

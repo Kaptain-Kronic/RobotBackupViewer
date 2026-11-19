@@ -8,9 +8,20 @@ in. Fully synthetic + identifier-clean (fake RB robot, FANUC-generic var names),
 so this runs in CI without a real backup - the real-tree numbers live in the
 untracked test_sysvars.py.
 """
+import pytest
+
+from backupviewer import settings
 from backupviewer.api import Api
 from backupviewer.parsers import sysvars
 from backupviewer.session import BackupSession
+
+
+@pytest.fixture(autouse=True)
+def _own_settings_folder(tmp_path_factory, monkeypatch):
+    """open_backup remembers the folder it opened (last_folder) - in a
+    throwaway settings folder, never the developer's real %APPDATA%."""
+    appdata = tmp_path_factory.mktemp("appdata")
+    monkeypatch.setattr(settings, "app_dir", lambda: appdata)
 
 # -- synthetic .VA fixtures, mirroring real record shapes ---------------------
 
