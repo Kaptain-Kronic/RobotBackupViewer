@@ -22,6 +22,7 @@ import ftplib
 import ipaddress
 import json
 import logging
+import os
 import socket
 import struct
 import subprocess
@@ -111,8 +112,13 @@ def enumerate_hosts(cidr: str) -> list[str]:
 
 # -- network adapters (for the discover dialog) ----------------------------------
 
-# absolute path: PATH is unreliable inside a frozen onefile exe
-_PS_EXE = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+# Windows tools by FULL path, built from %SystemRoot%: PATH is unreliable inside
+# a frozen onefile exe, and a bare name is searched for in the app's own folder
+# and the current directory BEFORE System32 - a planted powershell.exe there
+# would run instead (audit 2026-11-18). api.py launches through these too.
+SYSTEM_ROOT = os.environ.get("SystemRoot") or r"C:\Windows"
+_PS_EXE = os.path.join(SYSTEM_ROOT, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+EXPLORER_EXE = os.path.join(SYSTEM_ROOT, "explorer.exe")
 _ADAPTER_TIMEOUT = 5
 _ADAPTER_PS = (
     "$a=Get-NetAdapter -ErrorAction SilentlyContinue|"
@@ -130,7 +136,7 @@ _ADAPTER_PS = (
 def _powershell(script: str, runner) -> str:
     """Run a PowerShell one-liner and return stdout, or "" on any failure. Uses an
     absolute exe + CREATE_NO_WINDOW so a windowed exe never flashes a console."""
-    exe = _PS_EXE if Path(_PS_EXE).exists() else "powershell.exe"
+    exe = _PS_EXE                        # never a bare name - see SYSTEM_ROOT
     kwargs = {"capture_output": True, "text": True, "timeout": _ADAPTER_TIMEOUT}
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     if flags:

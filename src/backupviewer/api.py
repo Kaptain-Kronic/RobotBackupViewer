@@ -1550,7 +1550,7 @@ class Api:
             os.startfile(str(rp))  # Windows-native; the app only ships on Windows
         except (AttributeError, OSError):
             try:
-                subprocess.Popen(["explorer", str(rp)])  # noqa: S607
+                subprocess.Popen([discover.EXPLORER_EXE, str(rp)])  # noqa: S607
             except OSError:
                 pass
         return str(rp)
@@ -3617,11 +3617,23 @@ class Api:
     def _fw_port_range(self) -> str:
         return f"{phoneview.PORT_BASE}-{phoneview.PORT_BASE + phoneview.PORT_TRIES - 1}"
 
+    @staticmethod
+    def _fw_program() -> str:
+        """The program the inbound rule admits: this exe (in a source run, the
+        Python interpreter running it). The phone-view server runs in-process."""
+        import sys
+        return os.path.abspath(sys.executable)
+
     def _fw_command(self) -> str:
-        """The exact rule-adding command, shown in the UI for copy/paste."""
+        """The exact rule-adding command, shown in the UI for copy/paste. Scoped
+        to THIS program: the rule used to admit any program on the port range,
+        on every network, for as long as the rule stayed (audit 2026-11-18).
+        All profiles stay - a Public-only rule is what left the phone blocked
+        on a Private hotspot."""
         return ("New-NetFirewallRule -DisplayName '" + self._FW_RULE_NAME +
                 "' -Direction Inbound -Action Allow -Protocol TCP -LocalPort " +
-                self._fw_port_range() + " -Profile Any")
+                self._fw_port_range() + " -Profile Any -Program '" +
+                self._fw_program().replace("'", "''") + "'")
 
     @_endpoint
     def phone_view_firewall_status(self):
@@ -3629,13 +3641,20 @@ class Api:
         it (single source of truth for the UI's copy button). A non-elevated
         read - no UAC."""
         present = False
-        probe = ("if (Get-NetFirewallRule -DisplayName '" + self._FW_RULE_NAME +
-                 "' -ErrorAction SilentlyContinue) { 'yes' } else { 'no' }")
+        # the program each rule of ours admits ('Any' for the old unscoped
+        # rule, NONE when there is no rule): only a rule for THIS exe counts,
+        # so a rule left by a moved exe or the old all-programs rule is offered
+        # for replacement rather than reported as working
+        probe = ("$r = Get-NetFirewallRule -DisplayName '" + self._FW_RULE_NAME +
+                 "' -ErrorAction SilentlyContinue; if ($r) { ($r | "
+                 "Get-NetFirewallApplicationFilter).Program } else { 'NONE' }")
+        want = os.path.normcase(self._fw_program())
         try:
-            r = subprocess.run(["powershell", "-NoProfile", "-Command", probe],
+            r = subprocess.run([discover._PS_EXE, "-NoProfile", "-Command", probe],
                                capture_output=True, text=True, timeout=10,
                                creationflags=_CREATE_NO_WINDOW)
-            present = "yes" in (r.stdout or "").lower()
+            present = any(os.path.normcase(ln.strip()) == want
+                          for ln in (r.stdout or "").splitlines())
         except (OSError, subprocess.SubprocessError):
             pass   # can't read it - the UI just offers the command anyway
         return {"rule_present": present, "command": self._fw_command(),
@@ -3651,10 +3670,11 @@ class Api:
                  "' -ErrorAction SilentlyContinue; " + self._fw_command() +
                  " | Out-Null")
         enc = base64.b64encode(inner.encode("utf-16-le")).decode()
-        outer = ("Start-Process powershell -Verb RunAs -WindowStyle Hidden "
+        outer = ("Start-Process '" + discover._PS_EXE.replace("'", "''") +
+                 "' -Verb RunAs -WindowStyle Hidden "
                  "-ArgumentList '-NoProfile','-EncodedCommand','" + enc + "'")
         try:
-            subprocess.Popen(["powershell", "-NoProfile", "-Command", outer],
+            subprocess.Popen([discover._PS_EXE, "-NoProfile", "-Command", outer],
                              creationflags=_CREATE_NO_WINDOW)
         except OSError as e:
             raise ApiError("PHONE_VIEW", f"could not launch the admin prompt: {e}")
@@ -3771,7 +3791,7 @@ class Api:
             os.startfile(str(d))  # Windows-native; the app only ships on Windows
         except (AttributeError, OSError):
             try:
-                subprocess.Popen(["explorer", str(d)])  # noqa: S607
+                subprocess.Popen([discover.EXPLORER_EXE, str(d)])  # noqa: S607
             except OSError:
                 pass
         return str(d)
@@ -4785,7 +4805,7 @@ class Api:
             os.startfile(str(rp))  # Windows-native; the app only ships on Windows
         except (AttributeError, OSError):
             try:
-                subprocess.Popen(["explorer", str(rp)])  # noqa: S607
+                subprocess.Popen([discover.EXPLORER_EXE, str(rp)])  # noqa: S607
             except OSError:
                 pass
         return str(rp)

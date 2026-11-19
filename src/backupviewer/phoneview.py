@@ -9,9 +9,14 @@ to reach the laptop).
 
 Posture, deliberately narrow:
 - OFF by default; the server exists only while a share is active and dies
-  with the app (daemon thread). stop_session() with no token left shuts it.
-- Every route is token-gated (secrets.token_urlsafe) and read-only; unknown
-  paths are a plain 404 with no reflection of what was asked.
+  with the app (daemon thread). stop_session() with no token left shuts it,
+  and so does the reaper once the last share ages out (SESSION_TTL) or goes
+  unwatched (SESSION_IDLE) - with no phone needing to ask first.
+- Every route is token-gated (a 128-bit secrets.token_urlsafe) and read-only;
+  unknown paths are a plain 404 with no reflection of what was asked.
+- Plain HTTP on every interface, so the share URL is the secret: anyone who
+  can see it on the network can watch. Idle connections time out and the
+  number held open at once is capped, so a stranger cannot pin the server.
 - The camera IP is fixed at session start by the desktop user - nothing a
   phone sends chooses what gets fetched.
 - Gentle with the camera: one in-flight fetch per session ever (single
@@ -38,6 +43,9 @@ PORT_BASE = 8756
 PORT_TRIES = 20
 MIN_FETCH_GAP = 0.45                        # floor between camera fetches, seconds
 SESSION_TTL = 12 * 3600
+SESSION_IDLE = 30 * 60      # a share no phone has pulled for this long ends itself
+REAP_EVERY = 30.0           # how often the reaper looks
+TOKEN_BYTES = 16            # 128 bits - the URL is the only thing guarding a share
 MAX_FRAME_BYTES = 8 * 1024 * 1024
 
 
@@ -54,6 +62,30 @@ class _QuietServer(ThreadingHTTPServer):
     # that's already listening (two app instances would fight for the phones);
     # without it a taken port raises EADDRINUSE and we move up one - correct.
     allow_reuse_address = False
+    # Every open connection holds a thread; past this many at once a new one
+    # is closed on arrival rather than given a thread (a handful of phones
+    # needs a few; a stranger opening thousands must not pin the app).
+    max_clients = 32
+
+    def __init__(self, *args, **kwargs):
+        self._slots = threading.BoundedSemaphore(self.max_clients)
+        super().__init__(*args, **kwargs)
+
+    def process_request(self, request, client_address):
+        if not self._slots.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self._slots.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
 
     def handle_error(self, request, client_address):
         # phones drop connections constantly (page closed mid-poll, screen
@@ -68,7 +100,7 @@ class _Session:
 
     def __init__(self, ip: str, label: str, kind: str = "camera",
                  ctype: str = "image/jpeg", fetch=None):
-        self.token = secrets.token_urlsafe(6)
+        self.token = secrets.token_urlsafe(TOKEN_BYTES)
         self.ip = ip                # camera sessions; "" for screen/window sessions
         self.label = label
         self.kind = kind            # "camera" | "window"
@@ -155,10 +187,17 @@ class PhoneShare:
         return {"running": self._httpd is not None, "port": self.port,
                 "sessions": sessions}
 
+    @staticmethod
+    def _expired(s: _Session, now: float) -> bool:
+        """Past its 12 h life, or nobody has pulled a frame for SESSION_IDLE
+        (counted from the share's start when no phone ever came)."""
+        return (now - s.created > SESSION_TTL
+                or now - (s.last_pull or s.created) > SESSION_IDLE)
+
     def _session_for(self, token: str) -> _Session | None:
         with self._lock:
             s = self._sessions.get(token)
-            if s and time.time() - s.created > SESSION_TTL:
+            if s and self._expired(s, time.time()):
                 self._sessions.pop(token, None)
                 if not self._sessions:
                     # a forgotten app instance goes fully quiet once its last
@@ -166,6 +205,25 @@ class PhoneShare:
                     self._shutdown_server()
                 return None
             return s
+
+    def _reap(self, httpd) -> None:
+        """Drop shares that aged out or went unwatched, and stop the server
+        when none is left - without waiting for a phone to ask (the share used
+        to live as long as the app did if nobody ever came back to it)."""
+        while True:
+            time.sleep(REAP_EVERY)
+            with self._lock:
+                if self._httpd is not httpd:
+                    return                         # stopped or replaced meanwhile
+                now = time.time()
+                for token, s in list(self._sessions.items()):
+                    if self._expired(s, now):
+                        self._sessions.pop(token, None)
+                        log.info("phone share %s ended (%s)", s.label or s.ip,
+                                 "aged out" if now - s.created > SESSION_TTL else "unwatched")
+                if not self._sessions:
+                    self._shutdown_server()
+                    return
 
     # -- server lifecycle ----------------------------------------------------------
 
@@ -186,6 +244,8 @@ class PhoneShare:
         self.port = self._httpd.server_address[1]
         threading.Thread(target=self._httpd.serve_forever,
                          name="phoneview-http", daemon=True).start()
+        threading.Thread(target=self._reap, args=(self._httpd,),
+                         name="phoneview-reaper", daemon=True).start()
 
     def _shutdown_server(self):
         """Synchronous: the listening socket is fully released on return, so a
@@ -318,6 +378,10 @@ class _Handler(BaseHTTPRequestHandler):
     server_version = "BackupViewer"
     sys_version = ""
     protocol_version = "HTTP/1.1"
+    # a connection that says nothing for this long is closed (the socket
+    # timeout StreamRequestHandler applies) - a phone polls every 0.5-1 s, so
+    # only an abandoned or hostile connection ever waits this out
+    timeout = 30
 
     def log_message(self, fmt, *args):  # quiet: plant floor, not a web server
         log.debug("phoneview http: " + fmt, *args)

@@ -285,18 +285,32 @@ def test_firewall_command_shape(api):
     assert "-Profile Any" in cmd
     lo = phoneview.PORT_BASE
     assert f"{lo}-{lo + phoneview.PORT_TRIES - 1}" in cmd
+    # ...but only for THIS program: an unscoped rule let any program on the PC
+    # take inbound connections on that range, on every network (audit 2026-11-18)
+    assert "-Program '" + api._fw_program() + "'" in cmd
 
 
 def test_firewall_status_reads_rule_presence(api, monkeypatch):
     import backupviewer.api as api_mod
 
     def fake_run(args, **kw):
-        return types.SimpleNamespace(stdout="yes\n", returncode=0)
+        return types.SimpleNamespace(stdout=api._fw_program() + "\n", returncode=0)
     monkeypatch.setattr(api_mod.subprocess, "run", fake_run)
     r = api.phone_view_firewall_status()
     assert r["ok"] is True
     assert r["data"]["rule_present"] is True
     assert r["data"]["command"] == api._fw_command()
+
+
+@pytest.mark.parametrize("stdout", ["Any\n", r"C:\old\place\BackupViewer.exe" + "\n", "NONE\n"],
+                         ids=["old unscoped rule", "exe moved", "no rule"])
+def test_firewall_status_counts_only_a_rule_for_this_exe(api, monkeypatch, stdout):
+    """A rule for any program, or for an exe that has since moved, is not this
+    app's rule - the panel offers the fix, which replaces it."""
+    import backupviewer.api as api_mod
+    monkeypatch.setattr(api_mod.subprocess, "run",
+                        lambda args, **kw: types.SimpleNamespace(stdout=stdout))
+    assert api.phone_view_firewall_status()["data"]["rule_present"] is False
 
 
 def test_firewall_status_absent_and_failure_are_honest(api, monkeypatch):
@@ -341,3 +355,61 @@ def test_firewall_fix_reports_launch_failure(api, monkeypatch):
         raise OSError("no shell")
     monkeypatch.setattr(api_mod.subprocess, "Popen", boom)
     assert api.phone_view_firewall_fix()["error"]["code"] == "PHONE_VIEW"
+
+
+# -- a share is hard to guess, hard to pin, and ends on its own (audit 2026-11-18)
+
+def test_the_share_url_carries_a_128_bit_secret(share):
+    r = share.start_session("192.0.2.10", "cam")
+    assert len(r["token"]) >= 22                 # token_urlsafe(16): 128 bits, was 48
+
+
+def test_an_unwatched_share_ends_without_anyone_asking(monkeypatch):
+    """The TTL was only checked when a phone asked for that share, so a share
+    nobody came back to stayed listening for as long as the app ran."""
+    monkeypatch.setattr(phoneview, "REAP_EVERY", 0.05)
+    monkeypatch.setattr(phoneview, "SESSION_IDLE", 0.2)
+    s = _share()
+    s.start_session("192.0.2.10", "cam")
+    _wait_down(s.port)
+    assert s.status()["running"] is False and s.status()["sessions"] == []
+
+
+def test_a_watched_share_stays_up(monkeypatch, share):
+    monkeypatch.setattr(phoneview, "REAP_EVERY", 0.05)
+    monkeypatch.setattr(phoneview, "SESSION_IDLE", 0.6)
+    r = share.start_session("192.0.2.10", "cam")
+    for _ in range(8):                           # 0.8 s of polling, past one idle window
+        _get(share.port, f"/v/{r['token']}/frame")
+        time.sleep(0.1)
+    assert share.status()["running"] is True
+
+
+def test_idle_connections_time_out():
+    assert 0 < phoneview._Handler.timeout <= 60
+
+
+def test_connections_past_the_cap_are_closed_on_arrival(monkeypatch):
+    """Every open connection holds a thread; a stranger opening hundreds must
+    not pin the app. Past max_clients a new one is closed at once."""
+    import socket
+    monkeypatch.setattr(phoneview._QuietServer, "max_clients", 2)
+    s = _share()
+    held = []
+    try:
+        s.start_session("192.0.2.10", "cam")
+        for _ in range(2):                       # two silent clients take both slots
+            held.append(socket.create_connection(("127.0.0.1", s.port), timeout=5))
+        time.sleep(0.2)
+        extra = socket.create_connection(("127.0.0.1", s.port), timeout=5)
+        held.append(extra)
+        extra.settimeout(3)
+        try:
+            got = extra.recv(1)
+        except ConnectionResetError:
+            got = b""
+        assert got == b""                        # closed, not served or left hanging
+    finally:
+        for c in held:
+            c.close()
+        s.stop_session(None)
