@@ -53,9 +53,12 @@ BOX_DIR = "cv-x/box"
 BACKUP_TYPE = "keyence cv-x setting"
 
 
-def keyence_enumerate(ftp, home: str, *, include_box: bool = False, cancel=None) -> list[str]:
+def keyence_enumerate(ftp, home: str, *, include_box: bool = False, cancel=None,
+                      skipped: list | None = None) -> list[str]:
     """Relpaths (from `home`) to pull for one CV-X: the whole `cv-x/setting/` tree,
-    plus `cv-x/box/` when include_box. Read-only; restores CWD to `home`."""
+    plus `cv-x/box/` when include_box. Read-only; restores CWD to `home`. Entries
+    whose names cannot be local file names land in `skipped` (see
+    ftpbackup.safe_remote_name)."""
     out: list = []
 
     def _home():
@@ -71,7 +74,7 @@ def keyence_enumerate(ftp, home: str, *, include_box: bool = False, cancel=None)
         try:
             for part in target.split("/"):
                 ftp.cwd(part)
-            _walk(ftp, target, out, cancel)
+            _walk(ftp, target, out, cancel, skipped)
         except ftplib.all_errors:
             log.info("no %s tree on this CV-X", target)
     _home()
@@ -129,10 +132,13 @@ class KeyenceBackupJob(ftpbackup.CameraJobBase):
                 home = ftp.pwd()
             except ftplib.all_errors:
                 home = ""
+            unsafe: list = []
             rels = keyence_enumerate(ftp, home, include_box=self.include_box,
-                                     cancel=lambda: self.cancelled)
+                                     cancel=lambda: self.cancelled, skipped=unsafe)
             with self._lock:
                 self._p["total"] += len(rels)
+                self._p["skipped"].extend(
+                    f"{label}/{r} {ftpbackup.UNSAFE_NOTE}" for r in unsafe)
             self._set(status="downloading")
 
             cur_dir = None
@@ -145,7 +151,9 @@ class KeyenceBackupJob(ftpbackup.CameraJobBase):
                 if rdir != cur_dir:
                     self._cwd_into(ftp, home, rdir)   # reposition only on dir change
                     cur_dir = rdir
-                dest = dated.joinpath(label, keyence_workspace.SD_DIR, *parts)
+                # join_remote re-checks every component, so the file can only
+                # land inside this camera's SD folder
+                dest = ftpbackup.join_remote(dated / label / keyence_workspace.SD_DIR, rel)
                 try:
                     nbytes += ftpbackup.retrieve(ftp, base, dest)   # bare-name RETR at CWD
                     done += 1

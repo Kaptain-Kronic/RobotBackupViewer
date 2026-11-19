@@ -85,6 +85,43 @@ def latest_dir(root: Path, plant: str, line: str, robot: str) -> Path:
 # Shared by the FANUC BackupJob and the Matrox CameraBackupJob (mtxbackup.py) so
 # the gentle, crash-safe download + mirror behaviour is written once.
 
+# -- device-supplied names -> local paths --------------------------------------
+# Every file name a transfer writes comes from the DEVICE's listing, and a device
+# is not trusted to name local paths. A listing entry that was a whole Windows
+# path ("C:\...\x.bat") replaced the snapshot folder outright under pathlib's
+# join rules, and the pull wrote the file THERE - anywhere on the PC (audit
+# 2026-11-18, reproduced against a fake server). A name is pulled only when it
+# is one plain path component; anything else is recorded as skipped.
+
+_BAD_NAME_CHARS = frozenset('\\/:*?"<>|')
+
+
+def safe_remote_name(name: str) -> bool:
+    r"""True when `name` - one entry of a device's listing - can be used as ONE
+    local path component as-is: not empty, not "." or "..", no path separator
+    or drive colon, none of the characters Windows refuses, no control
+    characters, and no trailing dot or space (Windows strips those, so the file
+    on disk would not be the file the device named). Reserved device names
+    (CON, AUX, ...) stay allowed: every write goes through the \\?\ prefix,
+    which stores them literally, and a controller may hold a program called AUX."""
+    if not name or name in (".", "..") or name[-1] in ". ":
+        return False
+    return not any(c in _BAD_NAME_CHARS or ord(c) < 32 for c in name)
+
+
+def join_remote(root: Path, rel: str) -> Path:
+    """`root` joined with a device-supplied "/"-separated relpath. Raises
+    ValueError for any component safe_remote_name refuses, so the result can
+    only ever sit under `root`."""
+    parts = rel.split("/")
+    if not all(safe_remote_name(p) for p in parts):
+        raise ValueError(f"unsafe remote path {rel!r}")
+    return root.joinpath(*parts)
+
+
+UNSAFE_NOTE = "(not a usable file name - not pulled)"
+
+
 def long_path(p) -> str:
     r"""A Windows extended-length path string (\\?\...) so a file whose full path
     exceeds the legacy 260-char MAX_PATH still opens. Camera trees blow past it
@@ -188,11 +225,13 @@ def _names(ftp) -> list[str]:
     return out
 
 
-def _walk(ftp, rel: str, out: list, cancel=None) -> None:
+def _walk(ftp, rel: str, out: list, cancel=None, skipped: list | None = None) -> None:
     """Recursively collect file relpaths under the CURRENT directory (whose path
     from the walk root is `rel`). Directories are detected by descending into them
     (cwd succeeds) and files fall through. Leaves CWD where it started (each
-    descent is matched by a cwd('..'))."""
+    descent is matched by a cwd('..')). A name that cannot be a local path
+    component (safe_remote_name) is never entered or listed for download; it goes
+    to `skipped` instead, so the loss stays on the record."""
     for name in sorted(_names(ftp)):
         if cancel is not None and cancel():
             return
@@ -200,12 +239,17 @@ def _walk(ftp, rel: str, out: list, cancel=None) -> None:
             log.warning("ftp walk hit file cap %d under %s", WALK_MAX_FILES, rel)
             return
         child = f"{rel}/{name}" if rel else name
+        if not safe_remote_name(name):
+            log.warning("ftp walk: refused the name %r under %s", name, rel)
+            if skipped is not None:
+                skipped.append(child)
+            continue
         try:
             ftp.cwd(name)                 # success => it's a directory, now inside it
         except ftplib.all_errors:
             out.append(child)             # not a directory => a file to pull
             continue
-        _walk(ftp, child, out, cancel)
+        _walk(ftp, child, out, cancel, skipped)
         try:
             ftp.cwd("..")
         except ftplib.all_errors:
@@ -576,6 +620,11 @@ class BackupJob(_JobBase):
             if base in (".", ".."):
                 continue
             child = f"{rel}/{base}" if rel else base
+            if not safe_remote_name(base):
+                log.warning("refused the file name %r from %s", base, self.host)
+                with self._lock:
+                    self._p["skipped"].append(f"{child} {UNSAFE_NOTE}")
+                continue
             if base.upper().endswith(SKIP_EXTS):
                 with self._lock:
                     self._p["skipped"].append(child)
@@ -608,7 +657,9 @@ class BackupJob(_JobBase):
 
     def _download_one(self, ftp, dev, rel, dated: Path) -> int:
         # MD: is flat, so CWD is already the device and a bare basename RETRs.
-        return retrieve(ftp, rel.rsplit("/", 1)[-1], dated / rel.replace("/", os.sep))
+        # join_remote re-checks every component: the listing filter above is
+        # the first line, this is the one that guarantees the file lands inside
+        return retrieve(ftp, rel.rsplit("/", 1)[-1], join_remote(dated, rel))
 
 
 def probe_controller(host, *, user="", passwd="", passive=True, port=21,

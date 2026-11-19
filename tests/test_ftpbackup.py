@@ -5,6 +5,8 @@ import ftplib
 import json
 from pathlib import Path
 
+import pytest
+
 from backupviewer import ftpbackup, library, settings
 from backupviewer.session import BackupSession
 
@@ -270,3 +272,69 @@ def test_api_joins_the_in_flight_run():
     assert api._active_run_id() == "run-live"
     api._jobs["b"] = _StubJob("cancelled", "run-live")
     assert api._active_run_id() == ""
+
+
+# -- a device names files, it never names local paths (audit 2026-11-18) -------
+
+def test_safe_remote_name_takes_one_plain_component_only():
+    for ok in ("SUMMARY.DG", "env.dat", "AUX.TP", "two words.dat", "a..b"):
+        assert ftpbackup.safe_remote_name(ok), ok
+    for bad in ("", ".", "..", r"..\..\x.bat", r"C:\Users\x.bat", "a/b", "x:y",
+                "a*b", 'a"b', "a<b", "a|b", "dot.", "space ", "tab" + chr(9) + "here",
+                r"\\host\share\x"):
+        assert not ftpbackup.safe_remote_name(bad), repr(bad)
+
+
+def test_join_remote_refuses_any_bad_component(tmp_path):
+    assert (ftpbackup.join_remote(tmp_path, "cv-x/setting/env.dat")
+            == tmp_path / "cv-x" / "setting" / "env.dat")
+    for bad in ("../x", "cv-x/../../x", r"C:\x.bat", "cv-x//x", ""):
+        with pytest.raises(ValueError):
+            ftpbackup.join_remote(tmp_path, bad)
+
+
+class HostileFTP(FakeFTP):
+    """Lists names built to escape the snapshot folder and serves bytes for ANY
+    name asked - what a rogue box answering on a robot's address would do."""
+
+    def __init__(self, source, hostile, timeout=None):
+        super().__init__(source, timeout=timeout)
+        self._hostile = list(hostile)
+
+    def nlst(self, *args):
+        return super().nlst(*args) + (self._hostile if self._cwd == "MD:" else [])
+
+    def retrbinary(self, cmd, callback, blocksize=8192):
+        if cmd.split(" ", 1)[1] in self._hostile:
+            callback(b"written by a hostile server")
+            return "226 transfer complete"
+        return super().retrbinary(cmd, callback, blocksize)
+
+
+def test_hostile_listing_never_writes_outside_the_snapshot(monkeypatch, tmp_path):
+    """Before the fix an absolute name was written exactly where it pointed
+    (pathlib lets an absolute right side replace the base), and a backslash
+    name aborted the whole pull. Now both are refused, recorded as skipped, and
+    the robot's real files still come home."""
+    _iso_lib(monkeypatch, tmp_path)
+    src = _make_controller(tmp_path)
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    # six levels up from <lib>/plant/line/robot/date/time is tmp_path itself
+    hostile = [str(victim / "pwned_abs.bat"), "..\\" * 6 + "escaped_up.txt"]
+    dest = tmp_path / "lib"
+    before = {p for p in tmp_path.rglob("*") if p.is_file()}
+    job = ftpbackup.BackupJob(
+        "192.0.2.10", dest, "FakePlant", "L1", "RB010R01B01", throttle=0,
+        ftp_factory=lambda timeout=None: HostileFTP(src, hostile, timeout))
+    res = job.run()
+
+    assert res["status"] == "done", res
+    assert list(victim.iterdir()) == []
+    new = {p for p in tmp_path.rglob("*") if p.is_file()} - before
+    assert new and all(dest in p.parents for p in new), sorted(map(str, new))
+    for name in hostile:
+        assert any(s.startswith(name) and "not pulled" in s for s in res["skipped"]), name
+    meta = json.loads((Path(res["dated_path"]) / "backup.json").read_text(encoding="utf-8"))
+    assert sum("not pulled" in s for s in meta["skipped"]) == len(hostile)
+    assert (Path(res["dated_path"]) / "SUMMARY.DG").is_file()
