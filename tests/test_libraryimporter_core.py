@@ -208,3 +208,21 @@ def test_dest_warnings_against_the_configured_root(tmp_path, monkeypatch):
     assert core.dest_warnings(root / "FakePlant") == []
     assert any("nested deeper" in w for w in core.dest_warnings(root / "FakePlant" / "RBB01"))
     assert any("won't show up" in w for w in core.dest_warnings(tmp_path / "Elsewhere"))
+
+
+def test_dot_dot_names_never_leave_the_chosen_folder(tmp_path):
+    """".." passed the old character check, so a list naming a line or robot
+    ".." seeded robot.json OUTSIDE the folder the user picked (audit 2026-11-18)."""
+    m = core.parse_source(_write_list(tmp_path, {
+        "..": {"010R01": "192.0.2.5"},
+        "RBB01": {"..": "192.0.2.6", "020R01.": "192.0.2.7", "030R01": "192.0.2.8"},
+    }))
+    assert m["ok"] and m["robots"] == 1
+    assert [r["robot"] for ln in m["lines"] for r in ln["robots"]] == ["030R01"]
+    assert any("illegal folder characters" in w for w in m["warnings"])
+
+    dest = tmp_path / "plant" / "inner"
+    dest.mkdir(parents=True)
+    res = core.seed(m, dest, _selection(m))
+    assert res["created"] == 1
+    assert [p for p in tmp_path.rglob("robot.json") if dest not in p.parents] == []

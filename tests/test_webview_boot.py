@@ -110,3 +110,60 @@ def test_fallback_storage_dir_survives_missing_localappdata(monkeypatch, tmp_pat
     monkeypatch.setattr(settings, "app_dir", lambda: appdir)
     monkeypatch.delenv("LOCALAPPDATA", raising=False)
     assert str(app._fallback_storage_dir()).startswith(str(appdir))
+
+
+# -- one profile folder, and a watchdog for a boot that never arrives ----------
+# (audit 2026-11-18: pywebview's per-launch temp profiles piled up in %TEMP%,
+# and a WebView2 that never reached the bridge hung with no error and no rescue)
+
+def test_normal_mode_always_names_one_stable_profile(monkeypatch, tmp_path):
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    kw = app._start_kwargs(debug=False, fallback=False)
+    assert kw["storage_path"] == str(tmp_path / "BackupViewer" / "webview2-profile")
+    assert kw["storage_path"] == app._start_kwargs(debug=False, fallback=False)["storage_path"]
+    assert kw["storage_path"] != str(app._fallback_storage_dir())   # a rescue wipes that one
+    assert "private_mode" not in kw                  # still a non-persisting profile
+
+
+def test_fallback_mode_keeps_its_own_fresh_profile(monkeypatch, tmp_path):
+    monkeypatch.setattr(app, "_apply_fallback_env",
+                        lambda: {"storage_path": "FALLBACK", "private_mode": False})
+    kw = app._start_kwargs(debug=False, fallback=True)
+    assert kw["storage_path"] == "FALLBACK" and kw["private_mode"] is False
+
+
+class _Win:
+    def __init__(self):
+        self.destroyed = False
+
+    def destroy(self):
+        self.destroyed = True
+
+
+def test_watchdog_closes_a_boot_that_never_reaches_the_bridge():
+    import threading
+    import types
+    api = types.SimpleNamespace(booted=threading.Event())
+    win, watch = _Win(), types.SimpleNamespace(failed=False)
+    app._arm_boot_watchdog(win, api, watch, deadline=0.1).join(2)
+    assert watch.failed is True and win.destroyed is True
+    # ...and main() then takes the existing once-only relaunch ladder
+    assert app._next_boot_action(watch.failed, "normal", rescued=False) == "relaunch-fallback"
+
+
+def test_watchdog_stands_down_once_the_page_boots():
+    import threading
+    import types
+    api = types.SimpleNamespace(booted=threading.Event())
+    win, watch = _Win(), types.SimpleNamespace(failed=False)
+    api.booted.set()
+    app._arm_boot_watchdog(win, api, watch, deadline=5).join(2)
+    assert watch.failed is False and win.destroyed is False
+
+
+def test_get_state_is_what_marks_the_boot():
+    from backupviewer.api import Api
+    a = Api()
+    assert not a.booted.is_set()
+    a.get_state()
+    assert a.booted.is_set()

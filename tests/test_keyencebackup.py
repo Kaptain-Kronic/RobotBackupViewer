@@ -281,3 +281,46 @@ def test_fanuc_job_refuses_cvx(monkeypatch, tmp_path):
     assert res["status"] == "error", res
     assert "keyence" in res["error"].lower()
     assert "device type" in res["error"].lower()
+
+
+
+class HostileCVX(FakeCVX):
+    """A CV-X-shaped server whose setting folder lists a name that is a whole
+    Windows path, and which serves bytes for any name asked."""
+
+    def __init__(self, source, hostile, timeout=None):
+        super().__init__(source, timeout=timeout)
+        self._hostile = hostile
+
+    def nlst(self, *args):
+        extra = [self._hostile] if self._cwd.name == "setting" else []
+        return super().nlst(*args) + extra
+
+    def retrbinary(self, cmd, callback, blocksize=8192):
+        if cmd.split(" ", 1)[1] == self._hostile:
+            callback(b"written by a hostile server")
+            return "226 transfer complete"
+        return super().retrbinary(cmd, callback, blocksize)
+
+
+def test_hostile_listing_never_writes_outside_the_snapshot(monkeypatch, tmp_path):
+    """The CV-X walk used to RETR an absolute name straight to where it pointed
+    AND report the job done. Now the name is refused before any CWD or RETR,
+    recorded as skipped, and every real file still lands under the snapshot."""
+    _iso_lib(monkeypatch, tmp_path)
+    home = _make_cvx(tmp_path)
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    hostile = str(victim / "pwned.bat")
+    dest = tmp_path / "Backups"
+    job = keyencebackup.KeyenceBackupJob(
+        "192.0.2.55", dest, "FakePlant", "L1", "RC010", throttle=0,
+        ftp_factory=lambda timeout=None: HostileCVX(home, hostile, timeout))
+    res = job.run()
+
+    assert res["status"] == "done", res
+    assert list(victim.iterdir()) == []
+    assert any(hostile in s and "not pulled" in s for s in res["skipped"]), res["skipped"]
+    dated = Path(res["dated_path"])
+    for rel in SETTING_FILES:
+        assert (dated / "CAM1" / keyence_workspace.SD_DIR / rel).is_file(), rel

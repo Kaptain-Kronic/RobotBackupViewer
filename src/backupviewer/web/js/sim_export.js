@@ -61,6 +61,7 @@
            our own earlier export is routine, a folder we did not create is
            somebody's hand-made simulator save that loading would destroy. */
         if (c.foreign) main.appendChild(BV.pill.node("not ours", "err"));
+        else if (c.changed) main.appendChild(BV.pill.node("changed", "err"));
         else if (c.already) main.appendChild(BV.pill.node("replaces", "warn"));
         lab.appendChild(main);
 
@@ -78,6 +79,10 @@
           lab.appendChild(BV.el("span", { class: "sim-why err" },
             "a folder called " + BV.esc(c.name) + " is already there and " +
             "Backup Viewer did not create it — loading would replace it"));
+        } else if (c.changed) {
+          lab.appendChild(BV.el("span", { class: "sim-why err" },
+            BV.esc(c.name) + " changed after it was loaded (edits saved in the " +
+            "simulator, or scans downloaded into it) — loading would replace it"));
         }
         rows.appendChild(lab);
       });
@@ -135,18 +140,31 @@
       function confirmForeign(blocked, res, keys) {
         var b = BV.el("div", { class: "sim-export" });
         var n = (res.exported || []).length;
+        /* two reasons a folder is held back: Backup Viewer never made it, or it
+           made it and something changed it since - both mean replacing destroys
+           work, and the words must say which one it is */
+        var changed = blocked.filter(function (x) { return x.changed; }).length;
+        var why = !changed
+          ? "a folder of that name is already in the simulator folder and Backup " +
+            "Viewer did not create it. Replacing it deletes whatever is in it — " +
+            "including a workspace you built by hand."
+          : changed === blocked.length
+            ? "Backup Viewer loaded " + (changed === 1 ? "it" : "them") + " before, but " +
+              (changed === 1 ? "it has" : "they have") + " changed since (edits saved in " +
+              "the simulator, or images downloaded into " + (changed === 1 ? "it" : "them") +
+              " with Keyence's tool). Replacing deletes those changes."
+            : "some of these folders were not created by Backup Viewer and some changed " +
+              "after it loaded them. Replacing deletes whatever is in them now.";
         b.appendChild(BV.el("p", null,
           (n ? n + " loaded. " : "") + "<b>" + blocked.length + "</b> " +
-          (blocked.length === 1 ? "camera was" : "cameras were") + " not loaded: a folder " +
-          "of that name is already in the simulator folder and Backup Viewer did not " +
-          "create it. Replacing it deletes whatever is in it — including a workspace " +
-          "you built by hand."));
+          (blocked.length === 1 ? "camera was" : "cameras were") + " not loaded: " + why));
         var list = BV.el("div", { class: "sim-rows" });
         blocked.forEach(function (x) {
           var r = BV.el("div", { class: "sim-row" });
           r.appendChild(BV.el("span", null, ""));
           r.appendChild(BV.el("span", { class: "sim-name" }, BV.esc(x.name)));
-          r.appendChild(BV.el("span", { class: "sim-sub dim" }, BV.esc(x.path)));
+          r.appendChild(BV.el("span", { class: "sim-sub dim" },
+            BV.esc(x.path) + (x.changed ? " · changed since loaded" : "")));
           list.appendChild(r);
         });
         b.appendChild(list);
@@ -161,7 +179,9 @@
         /* opening this modal takes over the one root, so the picker behind it is
            already gone; closing THIS one runs opts.onClose and lands back in
            settings, same as any other exit. */
-        var m2 = BV.modal("replace folders Backup Viewer did not create?", b, opts);
+        var m2 = BV.modal(!changed ? "replace folders Backup Viewer did not create?"
+          : changed === blocked.length ? "replace workspaces that changed since loading?"
+          : "replace these folders?", b, opts);
         keep.addEventListener("click", function () {
           m2.close(true);
           BV.toast(n ? (n + " loaded, " + blocked.length + " left alone")

@@ -21,6 +21,32 @@ now auto-detects (FTP first, HTTP on `530`) via a `RobotBackupJob` dispatcher.
 §1, §2 and a new §4 "FANUC Global-5 over HTTP" carry the claims, live-run against
 a real R-50iA line; everything else stands on the earlier passes.*
 
+
+*Amended 2026-11-19 (security + bug audit, doc otherwise unre-verified; all
+offline - fakes and scratch folders, no live equipment):*
+- *A device names files, never local paths. Every FTP listing entry must be ONE
+  plain path component (`ftpbackup.safe_remote_name`; no `\ / :`, no `..`, no
+  trailing dot/space); anything else is recorded as skipped, never CWD'd into
+  or RETR'd, and `join_remote` re-checks each component before a write. An
+  absolute name used to replace the snapshot folder outright and land the file
+  anywhere on the PC (reproduced against a fake server for both the FANUC and
+  CV-X paths; the CV-X job even reported done).*
+- *One backup per controller at a time (§5 invariant 2, §6.4), and every run
+  claims its own dated folder (`claim_dated_dir`).*
+- *`mirror_latest` swaps all-or-nothing (§5 invariant 7).*
+- *Matrox SMB: nothing touches `\\host\mtxuser` until a camera credential is in
+  place - the tech's saved one, or ours staged first. The old first move was a
+  UNC stat with nothing in place, which signs in as the LOGGED-ON Windows user;
+  the scan probes any host that claims to be a Matrox on an unauthenticated
+  broadcast. A credential the tech saved is never overwritten or deleted
+  (`_cred_exists`; only one WE staged is cleaned up). Pinned by call-order
+  tests in `test_mtxbackup.py`; the live SMB behaviour itself was not re-run.*
+- *Discovery refuses a sweep over 4,096 addresses (`scan_size_problem`); a /8
+  used to build 16.7 million jobs up front.*
+- *`backuplog.json` (and settings/library/kinematics) save through `durable`:
+  flushed to disk before the rename, last good copy kept as `.bak`, a damaged
+  file set aside rather than written over.*
+
 Covers: src/backupviewer/ftpbackup.py, src/backupviewer/httpbackup.py,
 src/backupviewer/keyencebackup.py, src/backupviewer/mtxbackup.py,
 src/backupviewer/discover.py, src/backupviewer/netlink.py,
@@ -297,14 +323,17 @@ five are CLAUDE.md's "Gentle with live equipment" made mechanical.
    promise — "reads evidence, does not modify robots" — is gone; write-back
    is a future, separately-gated tier (ROADMAP 2.0).
 2. **One connection per device at a time, files sequential.** Enforced by
-   shape, not by a lock: each job owns exactly one FTP handle / SMB mount
-   per camera and pulls files in a plain loop
+   shape AND, since 2026-11-19, by a lock: each job owns exactly one FTP
+   handle / SMB mount per camera and pulls files in a plain loop
    (`ftpbackup.py:444-497`, `keyencebackup.py:114-172`,
    `mtxbackup.py:319-349`); a station's cameras run sequentially
    (`ftpbackup.py:384-394`); discovery touches each host sequentially
    within one worker (`discover.py:404-458`). Parallelism exists only
-   *across* devices (one thread per job; 48 scan workers). Nothing stops
-   two *jobs* aimed at one robot — see §6.4 for what happens then.
+   *across* devices (one thread per job; 48 scan workers). A second *job*
+   aimed at a controller another job holds now waits its turn on a
+   per-host lock (`Api._hold_hosts`, every host the job dials, taken in
+   sorted order), and a cancel while it waits ends it without dialling -
+   see §6.4.
 3. **Throttled and capped.** 30 ms between files on both FTP transports
    (`throttle=0.03`, `ftpbackup.py:425`, `keyencebackup.py:97`); listing
    caps (`FR_MAX_FILES` 5000 on the FANUC enumerate, `WALK_MAX_FILES`
@@ -340,9 +369,15 @@ five are CLAUDE.md's "Gentle with live equipment" made mechanical.
    import (§4) and walks past all of it.
 7. **The dated snapshot is immutable truth; the mirror is a convenience
    built beside and swapped in.** `mirror_latest` copies to a sibling
-   `.__tmp`, then atomic-`os.replace`s onto `Latest/<robot>`; any failure
-   is logged and returns None — the dated snapshot is never the thing at
-   risk (`ftpbackup.py:136-155`). Same idea per file: `.part` then
+   `.__tmp`, renames the current `Latest/<robot>` ASIDE to
+   `.__old.__tmp`, renames the copy into place, then deletes the old one;
+   any failure is logged and returns None with the mirror exactly as it was
+   — the dated snapshot is never the thing at risk. (Until 2026-11-19 it
+   deleted first and renamed after, so one open file inside the mirror left
+   it mostly deleted with nothing placed; Windows refuses to rename a folder
+   with an open file inside, which the aside-rename turns into a clean
+   no-op. `library._regen_latest` and the CV-X simulator export use the
+   same function.) Same idea per file: `.part` then
    `os.replace`, so no half-file ever wears a real name
    (`ftpbackup.py:102-133`, `mtxbackup.py:267-291`).
 
@@ -446,21 +481,22 @@ off the code this pass, no test; anything weaker is tagged.
    errors only when NOTHING was pulled, else finishes done-with-errors
    (`ftpbackup.py:384-399`). Verified for the transports' shared base
    (`test_mtxbackup.py:218-232` drives the nothing-pulled arm).
-4. **Two backups target one robot.** Nothing prevents it: the row menu has
-   no backup action (batch-only), the batch fires each robot once, and
-   `isRobotActive` only suppresses cry-wolf pills — but two overlapping
-   batch clicks can double-fire a robot, and `backuplog` even models it
-   ("a row still running is a real concurrent job", `backuplog.py:94-106`).
-   Traced consequences: two FTP sessions against one controller (the one
-   real breach of invariant 2's spirit); distinct start-seconds → distinct
-   dated dirs, both valid; both then race `mirror_latest` at the same
-   `Latest/<robot>` — worst case one copytree loses to the other's rmtree,
-   is *logged*, returns None, and the loser's dated snapshot stays intact,
-   so the race can cost a mirror but never a backup. The genuinely bad
-   interleaving — same robot, same wall-clock **second** → both jobs share
-   one dated dir and interleave writes under one marker — is not reachable
-   from the shipped UI (two deliberate clicks through a modal in <1 s).
-   Not test-pinned; recorded as §9 item 4.
+4. **Two backups target one robot.** Two overlapping batch clicks, a retry,
+   or two library rows that point at one IP can fire one controller twice,
+   and `backuplog` models it ("a row still running is a real concurrent
+   job", `backuplog.py:94-106`). **Since 2026-11-19 the second job waits**:
+   `_start_backup_job` takes a per-host lock for every host the job dials
+   before `job.run()`, so a controller never sees two sessions from this
+   app; the waiting job stays `pending`, and a cancel while it waits ends it
+   via `finish_cancelled()` without dialling (pinned:
+   `test_ftpbackup.py::test_a_controller_never_gets_two_backups_at_once`,
+   `::test_a_backup_cancelled_while_waiting_never_dials`). And the dated
+   folder is CLAIMED (`claim_dated_dir`: `mkdir` without exist_ok, the next
+   free second on a clash), so two runs of one robot in the same second can
+   no longer share and interleave inside one snapshot
+   (`::test_claim_dated_dir_never_shares_a_snapshot`). There is still no
+   global cap on how many DIFFERENT controllers run at once - a line's
+   batch is deliberately all in parallel.
 5. **The app is killed / the PC loses power mid-run.** Backup threads are
    daemons; closing the window intentionally asks first ("N backups still
    running… Close anyway?") and fails OPEN if the dialog itself breaks —

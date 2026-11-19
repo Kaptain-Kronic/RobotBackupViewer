@@ -22,7 +22,6 @@ a different arm (210F for a missing 210FS, the plain 120iD wrist for a
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -31,7 +30,7 @@ from datetime import date
 from pathlib import Path
 from xml.etree.ElementTree import ParseError
 
-from . import settings
+from . import durable, settings
 from .kinematics_builtin import BUILTIN
 from .parsers import roboguidedef
 
@@ -47,12 +46,7 @@ def _db_file() -> Path:
 def load() -> dict:
     """The user-imported layer only:
     {norm_key: {"name", "source", "imported", "kin": {...}}}"""
-    try:
-        with open(_db_file(), encoding="utf-8") as f:
-            data = json.load(f)
-            return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    return durable.load(_db_file()) or {}
 
 
 def merged() -> dict:
@@ -65,9 +59,7 @@ def merged() -> dict:
 
 
 def _save(db: dict) -> None:
-    tmp = _db_file().with_suffix(".tmp")
-    tmp.write_text(json.dumps(db, indent=1), encoding="utf-8")
-    tmp.replace(_db_file())
+    durable.save(_db_file(), db, indent=1)
 
 
 def import_folder(folder: str) -> dict:

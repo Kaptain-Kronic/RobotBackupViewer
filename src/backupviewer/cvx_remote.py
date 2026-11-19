@@ -146,24 +146,41 @@ def _port_priority(port: int) -> int:
     return {CTRL_PORT: 0, AUX_PORT: 1, VIDEO_PORT: 2}.get(port, 3)
 
 
+# Far past any real frame (a 1024x768 screen JPEG is ~100-300 KB). A start
+# marker with no end inside this many bytes is not a frame that is still
+# arriving - it is a stream out of step, and holding it grew without bound.
+MAX_JPEG_BYTES = 8 * 1024 * 1024
+
+
 def extract_jpegs(buf: bytearray) -> list[bytes]:
     """Pull complete JPEGs (SOI FFD8 .. EOI FFD9) out of an accumulating body
     buffer, removing consumed bytes. The buffer must hold raw JPEG bytes only:
     callers strip each chunk's sub-header (_VIDEO_SUBHDR) before appending -
     stray bytes land inside the entropy-coded scan and decode as garbage
     patches, and a sub-header that happens to contain FFD8/FFD9 tears the
-    frame."""
+    frame.
+
+    Never grows without bound (audit 2026-11-18): bytes ahead of a frame start
+    can never be part of a frame and are dropped at once (only a trailing 0xFF
+    is kept - the first half of a start marker split across two reads), and a
+    start that has not ended within MAX_JPEG_BYTES is abandoned for the next."""
     frames = []
     while True:
         soi = buf.find(b"\xff\xd8")
         if soi < 0:
+            keep = 1 if buf[-1:] == b"\xff" else 0
+            del buf[:len(buf) - keep]
             break
-        eoi = buf.find(b"\xff\xd9", soi + 2)
+        if soi:
+            del buf[:soi]
+        eoi = buf.find(b"\xff\xd9", 2)
         if eoi < 0:
+            if len(buf) > MAX_JPEG_BYTES:
+                del buf[:2]                  # give this start up; resync on the next
+                continue
             break
-        end = eoi + 2
-        frames.append(bytes(buf[soi:end]))
-        del buf[:end]
+        frames.append(bytes(buf[:eoi + 2]))
+        del buf[:eoi + 2]
     return frames
 
 
@@ -199,6 +216,7 @@ class CvxRemoteSession:
         self._mouse_buf: dict[int, tuple] = {}   # out-of-order arrivals, seq -> (ev, x, y)
         self._mouse_gap_t0 = 0.0                 # when we first stalled on a missing seq
         self._mouse_lock = threading.Lock()
+        self._mouse_timer: threading.Timer | None = None   # flushes a stalled event
         self._stop = threading.Event()
         self._alive = False
         self.error = ""
@@ -260,6 +278,10 @@ class CvxRemoteSession:
     def stop(self):
         self._stop.set()
         self._alive = False
+        with self._mouse_lock:
+            if self._mouse_timer is not None:
+                self._mouse_timer.cancel()
+                self._mouse_timer = None
         self._teardown()
         with self._frame_cond:            # wake blocked stream consumers so they see dead
             self._frame_cond.notify_all()
@@ -301,6 +323,9 @@ class CvxRemoteSession:
     def _parse_ctrl(self, port: int, buf: bytearray):
         while len(buf) >= 32:
             body_len = _u32(buf, 28)
+            if body_len > 10_000_000:            # desync -> resync one byte at a time
+                del buf[:1]                      # (as _parse_video does) - waiting for a
+                continue                         # 4 GB "body" grew the buffer forever
             total = 32 + body_len
             if len(buf) < total:
                 return
@@ -457,6 +482,11 @@ class CvxRemoteSession:
         means that call died - skip it, a frozen mouse is worse than one lost
         event."""
         with self._mouse_lock:
+            if seq < self._mouse_next:
+                # a call that arrives after its hole was skipped is stale: sending
+                # it now would replay an old position out of order, and keeping it
+                # rewound the stream to it (min of the buffer) and stalled again
+                return
             self._mouse_buf[seq] = (event_id, x, y)
             now = time.monotonic()
             if self._mouse_next not in self._mouse_buf:
@@ -472,6 +502,37 @@ class CvxRemoteSession:
                 self.send_mouse(ev, sx, sy)
             if self._mouse_buf and self._mouse_gap_t0 == 0.0:
                 self._mouse_gap_t0 = now
+            if self._mouse_buf:
+                self._arm_mouse_flush()
+
+    MOUSE_FLUSH_S = 0.2
+
+    def _arm_mouse_flush(self):
+        """(lock held) Make sure a held-back event is released even if no
+        further mouse event ever arrives. Skipping a dead hole used to happen
+        only when the NEXT event came in - so a lost call just before a
+        button-up left the button held on the controller until the mouse moved
+        again (audit 2026-11-18)."""
+        if self._mouse_timer is None:
+            self._mouse_timer = threading.Timer(self.MOUSE_FLUSH_S, self._flush_mouse)
+            self._mouse_timer.daemon = True
+            self._mouse_timer.start()
+
+    def _flush_mouse(self):
+        with self._mouse_lock:
+            self._mouse_timer = None
+            if not self._mouse_buf or not self.alive:
+                return
+            if self._mouse_next not in self._mouse_buf:
+                self._mouse_next = min(self._mouse_buf)     # the hole is dead
+                self._mouse_gap_t0 = 0.0
+            while self._mouse_next in self._mouse_buf:
+                ev, sx, sy = self._mouse_buf.pop(self._mouse_next)
+                self._mouse_next += 1
+                self.send_mouse(ev, sx, sy)
+            if self._mouse_buf:                          # another hole behind it
+                self._mouse_gap_t0 = time.monotonic()
+                self._arm_mouse_flush()
 
     def click(self, x: int, y: int):
         """A left click = move, down, up at the same point (spaced like the real client)."""

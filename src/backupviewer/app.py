@@ -71,6 +71,47 @@ def _fallback_storage_dir() -> Path:
     return Path(base) / "BackupViewer" / "webview2"
 
 
+def _normal_storage_dir() -> Path:
+    """The ONE WebView2 profile folder normal mode uses. pywebview's default is a
+    fresh temp folder per launch, deleted at exit only if the browser process
+    quits within 3 s - so they piled up in %TEMP% (30 of them, 280 MB, by
+    2026-09). Given a folder, a launch reuses it: at most one, ever. It stays
+    a private (non-persisting) profile, exactly as before; it is just not new
+    every time. Separate from the fallback folder, which a rescue wipes."""
+    base = os.environ.get("LOCALAPPDATA") or str(settings.app_dir())
+    return Path(base) / "BackupViewer" / "webview2-profile"
+
+
+# How long a launch may take to reach `ui booted` before it is treated like a
+# WebView2 init failure. A healthy boot takes ~2.5 s from here (the onefile
+# unpack happens before this code runs); 90 s is far past any slow disk.
+_BOOT_DEADLINE_S = 90.0
+
+
+def _arm_boot_watchdog(window, api, watch, deadline: float = _BOOT_DEADLINE_S):
+    """The rescue below only catches the init failure pywebview LOGS. WebView2
+    runtime 153 failed silently instead - a window that never reached the
+    bridge, no error anywhere (2026-09-17). If the page has not booted by the
+    deadline, mark the start failed and close the dead window, so main() takes
+    the same once-only relaunch ladder (_next_boot_action)."""
+    import threading
+
+    def run():
+        if api.booted.wait(deadline):
+            return
+        log.error("no 'ui booted' %.0f s after start - treating it as a failed "
+                  "WebView2 start", deadline)
+        watch.failed = True
+        try:
+            window.destroy()
+        except Exception:  # noqa: BLE001 - window may already be gone
+            pass
+
+    t = threading.Thread(target=run, name="boot-watchdog", daemon=True)
+    t.start()
+    return t
+
+
 def _widen_server_backlog(depth: int = 128) -> None:
     """Deepen the accept queue of pywebview's built-in file server before it
     listens. The page is served from http://127.0.0.1 by a bottle/wsgiref
@@ -107,6 +148,18 @@ def _apply_fallback_env() -> dict:
     return {"storage_path": str(d), "private_mode": False}
 
 
+def _start_kwargs(debug: bool, fallback: bool) -> dict:
+    """webview.start() options for this boot: always ONE stable profile folder
+    (see _normal_storage_dir), swapped for the fresh fallback one in fallback
+    mode."""
+    kw = {"gui": "edgechromium", "debug": debug,
+          "storage_path": str(_normal_storage_dir())}
+    if fallback:
+        log.info("WebView2 fallback mode: software rendering + stable profile")
+        kw.update(_apply_fallback_env())
+    return kw
+
+
 def _relaunch_cmd() -> list[str]:
     """This process's own launch command (frozen exe vs `python run.py`)."""
     if getattr(sys, "frozen", False):
@@ -128,6 +181,86 @@ def _wire_drop(window, api: Api) -> None:
         except Exception:  # noqa: BLE001 - surface varies across pywebview versions
             log.exception("drag-drop unavailable - browse still works")
     window.events.loaded += wire
+
+
+# ---- one app per settings folder -------------------------------------------------
+# Two copies running at once each read-modify-write library.json and
+# settings.json, each run a library watcher and scans, and the last writer
+# silently wins (audit 2026-11-18). The onefile exe is slow enough to start
+# that a second double-click is the usual way it happens. A named mutex keyed
+# to the settings folder lets the second launch hand over and exit - and keys
+# it so test runs with their own throwaway APPDATA never collide with the real
+# app or with each other.
+
+_ERROR_ALREADY_EXISTS = 183
+_instance_mutex = None          # held for the life of the process
+
+
+def _instance_mutex_name() -> str:
+    import hashlib
+    folder = os.path.normcase(str(settings.app_dir()))
+    return "Local\\BackupViewer-" + hashlib.sha1(folder.encode("utf-8")).hexdigest()[:16]
+
+
+def _claim_single_instance() -> bool:
+    """True when no other Backup Viewer is running on this settings folder (and
+    this one now holds the claim). Anything that stops the check answers True:
+    a launch must never be blocked by the guard itself."""
+    global _instance_mutex
+    try:
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateMutexW.restype = wintypes.HANDLE
+        k32.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
+        k32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        handle = k32.CreateMutexW(None, False, _instance_mutex_name())
+        already = ctypes.get_last_error() == _ERROR_ALREADY_EXISTS
+    except Exception:  # noqa: BLE001 - no kernel32 (non-Windows test run)
+        return True
+    if not handle:
+        return True
+    if already:
+        k32.CloseHandle(handle)
+        return False
+    _instance_mutex = (k32, handle)
+    return True
+
+
+def _release_single_instance() -> None:
+    """Give the claim up early - before a rescue relaunch, whose new process
+    must be able to take it while this one is still exiting."""
+    global _instance_mutex
+    if _instance_mutex:
+        k32, handle = _instance_mutex
+        _instance_mutex = None
+        try:
+            k32.CloseHandle(handle)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _front_running_window() -> bool:
+    """Bring the running app's main window to the front; False when it has no
+    window yet (still starting up)."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        u32 = ctypes.WinDLL("user32", use_last_error=True)
+        u32.FindWindowW.restype = wintypes.HWND
+        u32.FindWindowW.argtypes = (wintypes.LPCWSTR, wintypes.LPCWSTR)
+        u32.IsIconic.argtypes = (wintypes.HWND,)
+        u32.ShowWindow.argtypes = (wintypes.HWND, ctypes.c_int)
+        u32.SetForegroundWindow.argtypes = (wintypes.HWND,)
+        hwnd = u32.FindWindowW(None, "Backup Viewer")
+        if not hwnd:
+            return False
+        if u32.IsIconic(hwnd):
+            u32.ShowWindow(hwnd, 9)          # SW_RESTORE
+        u32.SetForegroundWindow(hwnd)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _next_boot_action(failed: bool, mode: str, rescued: bool) -> str:
@@ -158,6 +291,13 @@ def main(argv=None) -> int:
     if args.diagnose:
         return _run_diagnose(args.diagnose)
 
+    if not _claim_single_instance():
+        log.info("another Backup Viewer is running on this settings folder - handing over")
+        if not _front_running_window():
+            _message("Backup Viewer is already starting - its window will appear "
+                     "in a moment.", 0x40)
+        return 0
+
     try:
         import webview
     except ImportError:
@@ -174,10 +314,7 @@ def main(argv=None) -> int:
     else:
         fallback = bool(settings.get(_WV2_SETTING)) and not args.webview2_normal
 
-    start_kwargs = {"gui": "edgechromium", "debug": args.debug}
-    if fallback:
-        log.info("WebView2 fallback mode: software rendering + stable profile")
-        start_kwargs.update(_apply_fallback_env())
+    start_kwargs = _start_kwargs(args.debug, fallback)
     _widen_server_backlog()      # before start(): the file server listens inside it
 
     api = Api()
@@ -195,6 +332,7 @@ def main(argv=None) -> int:
 
     watch = _WebView2FailureWatch(window)
     logging.getLogger("pywebview").addHandler(watch)
+    _arm_boot_watchdog(window, api, watch)
     try:
         webview.start(**start_kwargs)
     except Exception as e:
@@ -223,6 +361,7 @@ def main(argv=None) -> int:
         settings.set_value(_WV2_SETTING, None)      # the remembered mode was wrong
     env = dict(os.environ)
     env[_WV2_RESCUE_ENV] = target
+    _release_single_instance()          # the relaunched process takes the claim
     try:
         subprocess.Popen(_relaunch_cmd(), env=env, close_fds=True)
     except OSError:
@@ -257,6 +396,16 @@ def _run_diagnose(host: str) -> int:
     except Exception:  # noqa: BLE001 - console run / non-Windows
         pass
     return 0
+
+
+def _message(text: str, flags: int = 0x40) -> None:
+    """A plain Windows message box (the windowed exe has no console)."""
+    try:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(None, text, "Backup Viewer", flags)
+    except Exception:  # noqa: BLE001 - console run / non-Windows
+        print(text)
 
 
 def _webview2_help(err: Exception, runtime_missing: bool = False) -> None:

@@ -5,6 +5,8 @@ import ftplib
 import json
 from pathlib import Path
 
+import pytest
+
 from backupviewer import ftpbackup, library, settings
 from backupviewer.session import BackupSession
 
@@ -270,3 +272,243 @@ def test_api_joins_the_in_flight_run():
     assert api._active_run_id() == "run-live"
     api._jobs["b"] = _StubJob("cancelled", "run-live")
     assert api._active_run_id() == ""
+
+
+# -- a device names files, it never names local paths (audit 2026-11-18) -------
+
+def test_safe_remote_name_takes_one_plain_component_only():
+    for ok in ("SUMMARY.DG", "env.dat", "AUX.TP", "two words.dat", "a..b"):
+        assert ftpbackup.safe_remote_name(ok), ok
+    for bad in ("", ".", "..", r"..\..\x.bat", r"C:\Users\x.bat", "a/b", "x:y",
+                "a*b", 'a"b', "a<b", "a|b", "dot.", "space ", "tab" + chr(9) + "here",
+                r"\\host\share\x"):
+        assert not ftpbackup.safe_remote_name(bad), repr(bad)
+
+
+def test_join_remote_refuses_any_bad_component(tmp_path):
+    assert (ftpbackup.join_remote(tmp_path, "cv-x/setting/env.dat")
+            == tmp_path / "cv-x" / "setting" / "env.dat")
+    for bad in ("../x", "cv-x/../../x", r"C:\x.bat", "cv-x//x", ""):
+        with pytest.raises(ValueError):
+            ftpbackup.join_remote(tmp_path, bad)
+
+
+class HostileFTP(FakeFTP):
+    """Lists names built to escape the snapshot folder and serves bytes for ANY
+    name asked - what a rogue box answering on a robot's address would do."""
+
+    def __init__(self, source, hostile, timeout=None):
+        super().__init__(source, timeout=timeout)
+        self._hostile = list(hostile)
+
+    def nlst(self, *args):
+        return super().nlst(*args) + (self._hostile if self._cwd == "MD:" else [])
+
+    def retrbinary(self, cmd, callback, blocksize=8192):
+        if cmd.split(" ", 1)[1] in self._hostile:
+            callback(b"written by a hostile server")
+            return "226 transfer complete"
+        return super().retrbinary(cmd, callback, blocksize)
+
+
+def test_hostile_listing_never_writes_outside_the_snapshot(monkeypatch, tmp_path):
+    """Before the fix an absolute name was written exactly where it pointed
+    (pathlib lets an absolute right side replace the base), and a backslash
+    name aborted the whole pull. Now both are refused, recorded as skipped, and
+    the robot's real files still come home."""
+    _iso_lib(monkeypatch, tmp_path)
+    src = _make_controller(tmp_path)
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    # six levels up from <lib>/plant/line/robot/date/time is tmp_path itself
+    hostile = [str(victim / "pwned_abs.bat"), "..\\" * 6 + "escaped_up.txt"]
+    dest = tmp_path / "lib"
+    before = {p for p in tmp_path.rglob("*") if p.is_file()}
+    job = ftpbackup.BackupJob(
+        "192.0.2.10", dest, "FakePlant", "L1", "RB010R01B01", throttle=0,
+        ftp_factory=lambda timeout=None: HostileFTP(src, hostile, timeout))
+    res = job.run()
+
+    assert res["status"] == "done", res
+    assert list(victim.iterdir()) == []
+    new = {p for p in tmp_path.rglob("*") if p.is_file()} - before
+    assert new and all(dest in p.parents for p in new), sorted(map(str, new))
+    for name in hostile:
+        assert any(s.startswith(name) and "not pulled" in s for s in res["skipped"]), name
+    meta = json.loads((Path(res["dated_path"]) / "backup.json").read_text(encoding="utf-8"))
+    assert sum("not pulled" in s for s in meta["skipped"]) == len(hostile)
+    assert (Path(res["dated_path"]) / "SUMMARY.DG").is_file()
+
+
+# -- the Latest swap is all or nothing (audit 2026-11-18, reproduced) ----------
+
+def _tree(folder):
+    return sorted(str(p.relative_to(folder)) for p in folder.rglob("*"))
+
+
+def test_mirror_in_use_is_left_exactly_as_it_was(tmp_path):
+    """The old swap deleted the mirror first and renamed the new copy in after.
+    With one file held open (an Explorer preview, the simulator, AV) that wiped
+    every other file and then failed to place the new copy - 6 of 7 gone,
+    nothing back. Windows refuses to rename a folder with an open file inside,
+    so renaming the old copy ASIDE first turns that into a clean no-op."""
+    dated = tmp_path / "dated"
+    dated.mkdir()
+    (dated / "NEW.DG").write_text("new copy")
+    latest = tmp_path / "Latest" / "RB010R01B01"
+    latest.mkdir(parents=True)
+    for i in range(6):
+        (latest / f"OLD{i}.DG").write_text("the copy already there")
+    (latest / "HELD.DG").write_text("open in another program")
+    before = _tree(latest)
+
+    held = open(latest / "HELD.DG", "rb")
+    try:
+        assert ftpbackup.mirror_latest(dated, latest, label="RB010R01B01") is None
+    finally:
+        held.close()
+    assert _tree(latest) == before
+    assert not list(latest.parent.glob("*.__tmp"))
+
+    assert ftpbackup.mirror_latest(dated, latest) == latest     # nothing open: swaps
+    assert _tree(latest) == ["NEW.DG"]
+    assert not list(latest.parent.glob("*.__tmp"))
+
+
+# -- one controller, one backup at a time (audit 2026-11-18) -------------------
+
+def test_claim_dated_dir_never_shares_a_snapshot(tmp_path):
+    import datetime as dt
+    when = dt.datetime(2026, 11, 19, 10, 0, 0)
+    first, w1 = ftpbackup.claim_dated_dir(tmp_path, "FakePlant", "L1", "RB010R01B01", when)
+    second, w2 = ftpbackup.claim_dated_dir(tmp_path, "FakePlant", "L1", "RB010R01B01", when)
+    assert first.name == "10_00_00" and w1 == when
+    assert second.name == "10_00_01" and w2 == when + dt.timedelta(seconds=1)
+    assert first != second and first.is_dir() and second.is_dir()
+
+
+class _SlowJob:
+    """A job that records how many runs of its controller overlap."""
+    live: dict = {}
+    peak: dict = {}
+    overall: list = [0, 0]                 # [running now, most at once]
+    guard = None
+
+    def __init__(self, host, root, plant, line, robot, *, note="", run_id="",
+                 on_complete=None, **kw):
+        import threading
+        import uuid
+        self.id = uuid.uuid4().hex
+        self.host = host
+        self.ran = False
+        self._cancel = threading.Event()
+        self._snap = {"id": self.id, "run_id": run_id, "status": "pending", "host": host}
+
+    @property
+    def cancelled(self):
+        return self._cancel.is_set()
+
+    def cancel(self):
+        self._cancel.set()
+
+    def snapshot(self):
+        return dict(self._snap)
+
+    def finish_cancelled(self):
+        self._snap["status"] = "cancelled"
+        return dict(self._snap)
+
+    def run(self):
+        import time
+        cls = type(self)
+        self.ran = True
+        with cls.guard:
+            cls.live[self.host] = cls.live.get(self.host, 0) + 1
+            cls.peak[self.host] = max(cls.peak.get(self.host, 0), cls.live[self.host])
+            cls.overall[0] += 1
+            cls.overall[1] = max(cls.overall)
+        time.sleep(0.4)
+        with cls.guard:
+            cls.live[self.host] -= 1
+            cls.overall[0] -= 1
+        self._snap["status"] = "done"
+        return dict(self._snap)
+
+
+def _slow_api(monkeypatch, tmp_path):
+    import threading
+    from backupviewer import api as api_mod
+    _iso_lib(monkeypatch, tmp_path)
+    _SlowJob.live, _SlowJob.peak, _SlowJob.overall = {}, {}, [0, 0]
+    _SlowJob.guard = threading.Lock()
+    row = dict(api_mod._DEVICE_REGISTRY[""], job_cls=_SlowJob, job_kw=lambda spec: {})
+    monkeypatch.setitem(api_mod._DEVICE_REGISTRY, "", row)
+    return api_mod.Api()
+
+
+def _wait_settled(api, ids, timeout=10.0):
+    """Every job final AND its thread gone. The thread writes the backup log
+    AFTER the status turns final, and a write that outlives the test lands in
+    the developer's real %APPDATA% once monkeypatch has put app_dir back."""
+    import threading
+    import time
+    end = time.time() + timeout
+    while not all(ftpbackup.is_terminal(api._jobs[i].snapshot()["status"]) for i in ids):
+        if time.time() >= end:
+            raise AssertionError("jobs did not settle")
+        time.sleep(0.05)
+    names = {"backup-" + i for i in ids}
+    for t in threading.enumerate():
+        if t.name in names:
+            t.join(max(0.0, end - time.time()))
+            assert not t.is_alive(), f"{t.name} outlived its job"
+
+
+def test_a_controller_never_gets_two_backups_at_once(monkeypatch, tmp_path):
+    """Every job used to start on its own thread at once, so a double-click or
+    two library rows for one IP opened two sessions on one live controller.
+    Now the second waits its turn; different controllers still run together."""
+    api = _slow_api(monkeypatch, tmp_path)
+    specs = [("192.0.2.10", "RB010R01B01"), ("192.0.2.10", "RB010R01B01"),
+             ("192.0.2.11", "RB010R02B01")]
+    ids = [api.start_backup({"host": h, "robot": r, "line": "L1"})["data"]["job_id"]
+           for h, r in specs]
+    _wait_settled(api, ids)
+    assert _SlowJob.peak["192.0.2.10"] == 1
+    assert _SlowJob.overall[1] >= 2            # the other controller was not held up
+    assert all(api._jobs[i].snapshot()["status"] == "done" for i in ids)
+
+
+def test_a_backup_cancelled_while_waiting_never_dials(monkeypatch, tmp_path):
+    api = _slow_api(monkeypatch, tmp_path)
+    first = api.start_backup({"host": "192.0.2.10", "robot": "RB010R01B01"})["data"]["job_id"]
+    queued = api.start_backup({"host": "192.0.2.10", "robot": "RB010R01B01"})["data"]["job_id"]
+    api._jobs[queued].cancel()
+    _wait_settled(api, [first, queued])
+    assert api._jobs[queued].snapshot()["status"] == "cancelled"
+    assert api._jobs[queued].ran is False
+    assert api._jobs[first].snapshot()["status"] == "done"
+
+
+def test_a_cancel_that_lands_as_the_controller_frees_up_never_dials(monkeypatch, tmp_path):
+    """A waiting job looked at its cancel only while the lock stayed busy, so a
+    cancel that landed in the same moment the controller came free dialled
+    anyway. Here the lock is free, and the cancel lands while it is taken."""
+    import threading
+    api = _slow_api(monkeypatch, tmp_path)
+    cancel = threading.Event()
+
+    class _CancelledWhileTaken:
+        held = False
+
+        def acquire(self, timeout=-1):
+            cancel.set()
+            self.held = True
+            return True
+
+        def release(self):
+            self.held = False
+
+    lock = api._host_locks["192.0.2.10"] = _CancelledWhileTaken()
+    assert api._hold_hosts(["192.0.2.10"], cancel.is_set) is None
+    assert lock.held is False                      # given back, never kept

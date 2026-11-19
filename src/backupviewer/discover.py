@@ -22,6 +22,7 @@ import ftplib
 import ipaddress
 import json
 import logging
+import os
 import socket
 import struct
 import subprocess
@@ -100,6 +101,25 @@ def normalize_cidr(text: str) -> str:
     return s + "/24"
 
 
+# The most addresses one sweep may cover: a /20 (sixteen /24s - a plant puts
+# each line on its own /24). There was no limit: a typo'd /16 probed 65,000
+# addresses, and a /8 built 16.7 million jobs up front and froze the app before
+# it dialled anything (audit 2026-11-18).
+MAX_SCAN_ADDRESSES = 4096
+
+
+def scan_size_problem(cidr: str) -> str:
+    """"" when `cidr` is a subnet small enough to sweep, else why not."""
+    try:
+        net = ipaddress.ip_network(cidr, strict=False)
+    except ValueError:
+        return f"not a subnet: {cidr}"
+    if net.num_addresses > MAX_SCAN_ADDRESSES:
+        return (f"{cidr} is {net.num_addresses:,} addresses - a sweep covers at most "
+                f"{MAX_SCAN_ADDRESSES:,} (a /20); scan the line's own /24")
+    return ""
+
+
 def enumerate_hosts(cidr: str) -> list[str]:
     """Usable host addresses in a CIDR. A /32 (or /31) yields its literal address(es)."""
     net = ipaddress.ip_network(cidr, strict=False)
@@ -111,8 +131,13 @@ def enumerate_hosts(cidr: str) -> list[str]:
 
 # -- network adapters (for the discover dialog) ----------------------------------
 
-# absolute path: PATH is unreliable inside a frozen onefile exe
-_PS_EXE = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+# Windows tools by FULL path, built from %SystemRoot%: PATH is unreliable inside
+# a frozen onefile exe, and a bare name is searched for in the app's own folder
+# and the current directory BEFORE System32 - a planted powershell.exe there
+# would run instead (audit 2026-11-18). api.py launches through these too.
+SYSTEM_ROOT = os.environ.get("SystemRoot") or r"C:\Windows"
+_PS_EXE = os.path.join(SYSTEM_ROOT, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+EXPLORER_EXE = os.path.join(SYSTEM_ROOT, "explorer.exe")
 _ADAPTER_TIMEOUT = 5
 _ADAPTER_PS = (
     "$a=Get-NetAdapter -ErrorAction SilentlyContinue|"
@@ -130,7 +155,7 @@ _ADAPTER_PS = (
 def _powershell(script: str, runner) -> str:
     """Run a PowerShell one-liner and return stdout, or "" on any failure. Uses an
     absolute exe + CREATE_NO_WINDOW so a windowed exe never flashes a console."""
-    exe = _PS_EXE if Path(_PS_EXE).exists() else "powershell.exe"
+    exe = _PS_EXE                        # never a bare name - see SYSTEM_ROOT
     kwargs = {"capture_output": True, "text": True, "timeout": _ADAPTER_TIMEOUT}
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     if flags:
@@ -726,6 +751,10 @@ class NetworkScanJob(_ScanJob):
     def run(self):
         try:
             self._set(status="scanning")
+            problem = scan_size_problem(self.cidr)
+            if problem:
+                self._set(status="error", error=problem)
+                return
             hosts = self._host_provider(self.cidr)
             self._set(total=len(hosts))
             self._matrox_eip = self._identity_sweep()

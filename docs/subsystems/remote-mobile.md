@@ -122,8 +122,11 @@ reading a backup. All of them vanish when there is nothing to drive:
    argued rather than assumed (§4, §5).
 4. **The window viewfinder** (`viewfinder_start` + `screengrab.py`) — the same
    QR handoff, but the phone mirrors whatever one of *our* windows is showing (a
-   camera remote, a popped-out backup) by grabbing that window's client area. No
-   rectangle to pick; it follows the window.
+   camera remote, a popped-out backup) by having that window render its client
+   area into a bitmap (PrintWindow, PW_RENDERFULLCONTENT - never a copy of the
+   screen, so nothing lying over the window reaches the phone; only windows
+   this process owns are ever looked up). No rectangle to pick; it follows the
+   window.
 5. **The cam-lens tiles** (`home.js` multicam + the `cvx_tile_*` endpoints in
    `api.py`) — the library's camera wall. A Matrox tile polls the HMI frame the
    camera already serves; a CV-X tile **polls a still** from the frame bridge
@@ -284,7 +287,7 @@ Within them:
 |---|---|
 | protocol client | `cvx_remote.py` (508 — framing, ctx-echo, handshake replay, JPEG harvest, mouse, the MJPEG server) |
 | captured traffic | `cvx_handshake/chan8502_tx.bin` (96 KB), `chan8503_tx.bin`, `chan8504_tx.bin` — the replayed client handshake, one blob per socket (§4, §7) |
-| relay + capture | `phoneview.py` (408 — the token-gated share server), `screengrab.py` (159 — BitBlt→PNG of a window), `qr.py` (264 — the hand-rolled encoder) |
+| relay + capture | `phoneview.py` (408 — the token-gated share server), `screengrab.py` (PrintWindow→PNG of one of our own windows), `qr.py` (264 — the hand-rolled encoder) |
 | overlays (JS) | `cvxremote.js` (313 — the CV-X screen+mouse overlay), `mtxremote.js` (168 — the Matrox iframe-tab overlay), `phoneview.js` (212 — the QR modal + firewall panel) |
 
 Load order (`index.html:131-133`): `cvxremote.js` → `mtxremote.js` →
@@ -493,7 +496,7 @@ The protocol facts, tagged:
 
 | Fact | Evidence |
 |---|---|
-| `phoneview.py` runs the app's **only listening socket**, narrowed five ways: off by default (the server exists only while a share is active and dies with the app), every route token-gated via `secrets.token_urlsafe`, the camera IP fixed by the desktop user (nothing a phone sends chooses what is fetched), single-flight fetch with a floor, and 404s that reflect nothing back | `phoneview.py:10-20,71,203-221,335-356`; test-enforced across the set (`test_unknown_paths_are_404`, `test_label_is_html_escaped`, `test_frame_cache_rides_one_camera_fetch`, `test_camera_down_serves_stale_frame_with_honest_age`) |
+| `phoneview.py` runs the app's **only listening socket**, narrowed these ways: off by default (the server exists only while a share is active and dies with the app; since 2026-11-19 a reaper also ends a share that aged out or that no phone has pulled for `SESSION_IDLE`, and stops the server with the last one - it used to wait for a phone to ask), every route token-gated via `secrets.token_urlsafe(16)` (128 bits; was 6 bytes), the camera IP fixed by the desktop user (nothing a phone sends chooses what is fetched), single-flight fetch with a floor, 404s that reflect nothing back, a 30 s idle timeout per connection and at most `max_clients` connections held at once. Still plain HTTP on every interface: the share URL is the secret | `phoneview.py:10-20,71,203-221,335-356`; test-enforced across the set (`test_unknown_paths_are_404`, `test_label_is_html_escaped`, `test_frame_cache_rides_one_camera_fetch`, `test_camera_down_serves_stale_frame_with_honest_age`) |
 | Gentle with the camera: five phones cost it at most one request per `MIN_FETCH_GAP` (0.45 s) — one thread refreshes while every other rides the cache; the camera's own HMI polls at 1 Hz and the relay never exceeds ~2 Hz | `phoneview.py:39,203-221`; **corpus-measured** rationale, single-flight test-enforced (`test_frame_cache_rides_one_camera_fetch`) |
 | The QR dials the most reachable address: the Windows mobile-hotspot net (`192.168.137.*`) first, then other private LANs, with the camera-facing adapter demoted last | `phoneview.py:361-408`; test-enforced ordering (`test_rank_hotspot_first_camera_net_last`) |
 | A window session is a singleton that re-points: pressing 📱 in a different window re-targets the one window share (and re-labels it) rather than opening a second | `phoneview.py:114-131`, `api.py:2426-2448`; test-enforced (`test_window_session_is_a_singleton_and_repoints`) |
@@ -505,7 +508,7 @@ The protocol facts, tagged:
 | `qr.py` is hand-rolled because the stack is locked — the canonical instance of CLAUDE.md's "redesign the feature rather than add a dependency": a QR *is* the phone-view URL, so it is 264 lines of stdlib, not a library | `qr.py:1-12`; **the** locked-stack example |
 | Deliberately scoped: byte mode, EC level L, versions 1–5, a single Reed-Solomon block with no interleaving — caps payloads at 106 bytes, triple what a LAN URL needs; longer raises | `qr.py:62-67,244-264`; test-enforced limit (`test_version_selection_and_limits`: 106 fits, 107 raises, UTF-8 counts bytes) |
 | Verified end-to-end against an **independent decoder** (zxing-cpp) across every version and mask before landing; the offline tests re-prove each piece — RS syndromes zero, BCH minimum distance 7, finder/timing/alignment geometry, and a from-scratch reader that unmasks and re-reads the payload out of the finished matrix | `qr.py:9-11`; the read-back decoder is `test_qr.py:139-213` — "prove against an outside oracle, then pin it offline" |
-| `screengrab.py` is BitBlt via ctypes + zlib: the stdlib has no JPEG encoder, but a PNG writer is forty lines (`png_encode`), so capture stays inside the locked stack | `screengrab.py:1-13,37-51`; test-enforced by decoding the encoder's own output by hand (`test_png_roundtrip`) |
+| `screengrab.py` is PrintWindow (the window renders itself into a memory bitmap) via ctypes + zlib: the stdlib has no JPEG encoder, but a PNG writer is forty lines (`png_encode`), so capture stays inside the locked stack. Until 2026-11-19 it BitBlt'd the SCREEN at the window's position, so whatever covered the window went to the phone; verified offline that a covering window no longer appears and that a WebView2 window renders correctly (`test_the_window_renders_itself_not_what_covers_it`) | `screengrab.py:1-13,37-51`; test-enforced by decoding the encoder's own output by hand (`test_png_roundtrip`) |
 | `grab_window_png` re-finds the window by exact title on **every** call, so the mirror follows the window if the tech moves or resizes it; a closed/minimized window raises `OSError` → 503 with an honest reason | `screengrab.py:144-157`, `phoneview.py:349-356`; test-enforced (`test_window_capture_failure_is_reported`) |
 | The DPI trap: each capture flips *its own* thread to per-monitor DPI awareness and restores it, so window rects and BitBlt agree on **physical** pixels on scaled displays | `screengrab.py:92-109`; **live-run (recorded)** Windows behaviour, paid for once |
 | The pointer-sized-handle trap: the user32 prototypes carry explicit `restype`/`argtypes`, or ctypes truncates a Win64 HWND to 32 bits and the call silently no-ops | `screengrab.py:112-125`; test-enforced (`test_window_handles_are_pointer_sized`) — the "picker never showed" bug (§7) |
@@ -843,7 +846,11 @@ code does about it. "Test-enforced" = a unit test or the probe pins it;
   inbound-allow rule for **all** profiles (`-Profile Any`), because a rule scoped
   to Public is exactly what left a phone blocked when the Windows mobile hotspot
   came up as a Private network (`api.py:2473-2475`,
-  `test_firewall_command_shape`).
+  `test_firewall_command_shape`). Since 2026-11-19 the rule is scoped to THIS
+  program (`-Program <exe>`) - it used to admit any program on the port range,
+  on every network - and the status check counts only a rule for the running
+  exe, so the old unscoped rule or one left by a moved exe is offered for
+  replacement (`test_firewall_status_counts_only_a_rule_for_this_exe`).
 
 - **A hardcoded window title that went stale.** `viewfinder` looks up the main
   window by its *live* title, not a constant, because `FindWindowW` is

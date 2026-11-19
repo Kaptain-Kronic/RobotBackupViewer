@@ -7,6 +7,8 @@ a verbatim copy of a real simulator-written workspace.xml with the plant's IP
 swapped for TEST-NET, so a regression in BOM / CRLF / field order / spelling
 (`Tumbnail`, sic) fails loudly instead of shipping a workspace that silently will
 not open."""
+import json
+
 import pytest
 
 from backupviewer import keyence_workspace as kw
@@ -274,15 +276,19 @@ def test_export_copies_and_replaces_without_touching_the_source(tmp_path):
     src = _mkws(tmp_path / "backup" / "CAM1", "192.0.2.44")
     sim = tmp_path / "simfolder"
 
-    dest = kw.export_workspace(src, sim, "DD183")
-    assert dest == sim / "DD183"
+    dest = kw.export_workspace(src, sim, "RB183")
+    assert dest == sim / "RB183"
     assert kw.is_workspace(dest)
     assert (dest / kw.SD_DIR / "cv-x" / "setting" / "env.dat").read_bytes() == b"env blob"
 
-    # re-exporting REPLACES: the stale file from the old copy is gone
+    # a file that appeared in the loaded copy is a CHANGE: re-exporting asks
+    # first (see the changed-workspace test), and once confirmed it REPLACES -
+    # the stale file from the old copy is gone
     (dest / kw.SD_DIR / "cv-x" / "setting" / "stale.dat").write_bytes(b"old")
     (src / kw.SD_DIR / "cv-x" / "setting" / "new.dat").write_bytes(b"new")
-    kw.export_workspace(src, sim, "DD183")
+    with pytest.raises(kw.ForeignWorkspace):
+        kw.export_workspace(src, sim, "RB183")
+    kw.export_workspace(src, sim, "RB183", replace_foreign=True)
     assert not (dest / kw.SD_DIR / "cv-x" / "setting" / "stale.dat").exists()
     assert (dest / kw.SD_DIR / "cv-x" / "setting" / "new.dat").is_file()
     assert not list(sim.glob("*.__tmp"))          # no half-copy left visible
@@ -315,3 +321,66 @@ def test_write_and_detect(tmp_path):
     bare.mkdir()
     (bare / kw.WORKSPACE_XML).write_bytes(SAMPLE)
     assert not kw.is_workspace(bare)
+
+
+# -- a loaded workspace that changed is work, not a stale copy (audit 2026-11-18)
+
+def test_a_loaded_workspace_that_changed_is_not_replaced_unasked(tmp_path):
+    """Scans downloaded into a loaded workspace with Keyence's own tool, or
+    edits saved in the simulator, are somebody's work. The ledger used to say
+    only "we made this folder", so a re-export wiped them without a word. Now
+    the ledger remembers what the folder held, and a changed one asks first."""
+    src = _mkws(tmp_path / "backup" / "CAM1")
+    sim = tmp_path / "simfolder"
+    dest = kw.export_workspace(src, sim, "RB183")
+    assert kw.would_replace_changed(sim, "RB183") is False
+    assert kw.export_workspace(src, sim, "RB183") == dest          # unchanged: no question
+
+    film = dest / kw.SD_DIR / "cv-x" / "setting" / "001" / "SimImage" / "CAM1"
+    film.mkdir(parents=True)
+    scan = film / "261105_101500_0000000042_CAM1_HEIGHT_OK.bmp"
+    scan.write_bytes(b"a scan the tech pulled in by hand")
+    assert kw.would_replace_changed(sim, "RB183") is True
+    assert kw.would_replace_foreign(sim, "RB183") is False         # still ours
+    with pytest.raises(kw.ForeignWorkspace) as caught:
+        kw.export_workspace(src, sim, "RB183")
+    assert caught.value.changed is True
+    assert scan.is_file()                                          # untouched while asking
+
+    assert kw.export_workspace(src, sim, "RB183", replace_foreign=True) == dest
+    assert not scan.exists()
+    assert kw.would_replace_changed(sim, "RB183") is False         # fresh fingerprint
+
+
+def test_an_export_recorded_before_fingerprints_asks_once(tmp_path):
+    """A ledger entry written by an older version cannot prove the folder is
+    unchanged - so it asks, and the export that follows records a fingerprint."""
+    src = _mkws(tmp_path / "backup" / "CAM1")
+    sim = tmp_path / "simfolder"
+    kw.export_workspace(src, sim, "RB183")
+    led = json.loads((sim / kw.EXPORT_LEDGER).read_text(encoding="utf-8"))
+    del led["exports"]["RB183"]["fingerprint"]
+    (sim / kw.EXPORT_LEDGER).write_text(json.dumps(led), encoding="utf-8")
+    assert kw.would_replace_changed(sim, "RB183") is True
+    with pytest.raises(kw.ForeignWorkspace):
+        kw.export_workspace(src, sim, "RB183")
+    kw.export_workspace(src, sim, "RB183", replace_foreign=True)
+    assert kw.would_replace_changed(sim, "RB183") is False
+
+
+def test_a_workspace_the_simulator_has_open_is_left_whole(tmp_path):
+    """Windows will not rename a folder while a file inside it is open. The old
+    swap deleted first and renamed after, so an open simulator meant a
+    half-deleted workspace and no new copy. Now the refusal leaves it whole."""
+    src = _mkws(tmp_path / "backup" / "CAM1")
+    sim = tmp_path / "simfolder"
+    dest = kw.export_workspace(src, sim, "RB183")
+    before = sorted(str(p.relative_to(dest)) for p in dest.rglob("*"))
+    held = open(dest / kw.WORKSPACE_XML, "rb")
+    try:
+        assert kw.export_workspace(src, sim, "RB183") is None
+    finally:
+        held.close()
+    assert sorted(str(p.relative_to(dest)) for p in dest.rglob("*")) == before
+    assert not list(sim.glob("*.__tmp"))
+    assert kw.export_workspace(src, sim, "RB183") == dest          # closed: it goes through

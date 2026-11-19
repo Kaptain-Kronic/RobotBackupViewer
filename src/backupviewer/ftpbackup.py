@@ -72,6 +72,25 @@ def dated_dir(root: Path, plant: str, line: str, robot: str, when: _dt.datetime)
     return Path(*parts)
 
 
+def claim_dated_dir(root: Path, plant: str, line: str, robot: str,
+                    when: _dt.datetime) -> tuple[Path, _dt.datetime]:
+    """Create this run's dated snapshot folder and return (folder, when). When
+    that second's folder already exists - a second pull of the same robot in
+    the same second (a double-click, two library rows for one robot) - take
+    the next free second instead: two runs must never share, and interleave
+    their files inside, one snapshot. The mkdir itself is the claim, so two
+    threads racing for one second cannot both win it."""
+    for _ in range(120):
+        dated = dated_dir(root, plant, line, robot, when)
+        dated.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            dated.mkdir()
+            return dated, when
+        except FileExistsError:
+            when += _dt.timedelta(seconds=1)
+    raise OSError(f"no free snapshot folder for {robot} near {when:%Y-%m-%d %H:%M:%S}")
+
+
 def latest_dir(root: Path, plant: str, line: str, robot: str) -> Path:
     """<root>\\<plant>\\<line>\\Latest\\<robot> - the overwritten newest mirror."""
     parts = [root]
@@ -84,6 +103,43 @@ def latest_dir(root: Path, plant: str, line: str, robot: str) -> Path:
 # -- reusable transfer primitives -----------------------------------------------
 # Shared by the FANUC BackupJob and the Matrox CameraBackupJob (mtxbackup.py) so
 # the gentle, crash-safe download + mirror behaviour is written once.
+
+# -- device-supplied names -> local paths --------------------------------------
+# Every file name a transfer writes comes from the DEVICE's listing, and a device
+# is not trusted to name local paths. A listing entry that was a whole Windows
+# path ("C:\...\x.bat") replaced the snapshot folder outright under pathlib's
+# join rules, and the pull wrote the file THERE - anywhere on the PC (audit
+# 2026-11-18, reproduced against a fake server). A name is pulled only when it
+# is one plain path component; anything else is recorded as skipped.
+
+_BAD_NAME_CHARS = frozenset('\\/:*?"<>|')
+
+
+def safe_remote_name(name: str) -> bool:
+    r"""True when `name` - one entry of a device's listing - can be used as ONE
+    local path component as-is: not empty, not "." or "..", no path separator
+    or drive colon, none of the characters Windows refuses, no control
+    characters, and no trailing dot or space (Windows strips those, so the file
+    on disk would not be the file the device named). Reserved device names
+    (CON, AUX, ...) stay allowed: every write goes through the \\?\ prefix,
+    which stores them literally, and a controller may hold a program called AUX."""
+    if not name or name in (".", "..") or name[-1] in ". ":
+        return False
+    return not any(c in _BAD_NAME_CHARS or ord(c) < 32 for c in name)
+
+
+def join_remote(root: Path, rel: str) -> Path:
+    """`root` joined with a device-supplied "/"-separated relpath. Raises
+    ValueError for any component safe_remote_name refuses, so the result can
+    only ever sit under `root`."""
+    parts = rel.split("/")
+    if not all(safe_remote_name(p) for p in parts):
+        raise ValueError(f"unsafe remote path {rel!r}")
+    return root.joinpath(*parts)
+
+
+UNSAFE_NOTE = "(not a usable file name - not pulled)"
+
 
 def long_path(p) -> str:
     r"""A Windows extended-length path string (\\?\...) so a file whose full path
@@ -138,10 +194,18 @@ def retrieve(ftp, retr_arg: str, dest: Path, *, retries: int = RETRIES) -> int:
 
 
 def mirror_latest(dated: Path, latest: Path, *, label: str = "") -> Path | None:
-    r"""Overwrite `latest` with a copy of the `dated` snapshot, built in a sibling
-    .__tmp dir then atomically swapped, so a half-written mirror is never visible
-    and a failure here leaves the (good) dated snapshot untouched. Returns the
-    mirror path, or None on failure (logged).
+    r"""Overwrite `latest` with a copy of the `dated` snapshot. Returns the
+    mirror path, or None on failure (logged) - and on failure `latest` is
+    exactly what it was before, never a half-deleted mix.
+
+    The swap: copy into a sibling `.__tmp`, rename the current folder ASIDE to
+    `.__old.__tmp`, rename the copy into place, then delete the old one.
+    Windows refuses to rename a folder while any file inside it is open (the
+    CV-X simulator running on an exported workspace, an Explorer preview, AV),
+    and that refusal now leaves everything as it was. The old order - delete
+    first, rename after - wiped all but the open file and then failed to place
+    the new copy (audit 2026-11-18, reproduced). Both transient names end in
+    `.__tmp`, which every library walk already skips.
 
     Every path goes through \\?\ : the SOURCE side is a dated camera snapshot,
     which is the deepest tree this app ever makes (`<lib>\<plant>\<line>\<robot>\
@@ -150,20 +214,44 @@ def mirror_latest(dated: Path, latest: Path, *, label: str = "") -> Path | None:
     Past 260 chars a plain copy fails with 'cannot find the path' - which this
     function catches and logs, so the symptom is a Latest mirror that quietly
     stops tracking while every dated snapshot looks perfect."""
+    what = label or latest.name
     tmp = latest.with_name(latest.name + ".__tmp")
-    tmp_l, latest_l = long_path(tmp), long_path(latest)
+    old = latest.with_name(latest.name + ".__old.__tmp")
+    tmp_l, old_l, latest_l = long_path(tmp), long_path(old), long_path(latest)
     try:
         os.makedirs(long_path(latest.parent), exist_ok=True)
         shutil.rmtree(tmp_l, ignore_errors=True)
+        shutil.rmtree(old_l, ignore_errors=True)   # an old copy a past run could not delete
         shutil.copytree(long_path(dated), tmp_l)
-        shutil.rmtree(latest_l, ignore_errors=True)
-        os.replace(tmp_l, latest_l)
-        return latest
     except OSError:
-        log.exception("Latest mirror failed for %s (dated snapshot is intact)",
-                      label or latest.name)
+        log.exception("mirror of %s failed while copying (the source is intact)", what)
         shutil.rmtree(tmp_l, ignore_errors=True)
         return None
+    had_old = os.path.lexists(latest_l)
+    if had_old:
+        try:
+            os.replace(latest_l, old_l)
+        except OSError as e:
+            log.warning("mirror of %s not refreshed: %s is in use (%s) - left exactly "
+                        "as it was", what, latest, e)
+            shutil.rmtree(tmp_l, ignore_errors=True)
+            return None
+    try:
+        os.replace(tmp_l, latest_l)
+    except OSError:
+        log.exception("mirror of %s failed at the final rename", what)
+        if had_old:
+            try:
+                os.replace(old_l, latest_l)       # put the previous copy back
+            except OSError:
+                log.exception("the previous copy of %s is left at %s", what, old)
+        shutil.rmtree(tmp_l, ignore_errors=True)
+        return None
+    if had_old:
+        shutil.rmtree(old_l, ignore_errors=True)
+        if os.path.lexists(old_l):
+            log.warning("could not finish deleting the old copy at %s", old)
+    return latest
 
 
 # -- read-only FTP tree walk (shared by the Keyence CV-X camera backup) ----------
@@ -188,11 +276,13 @@ def _names(ftp) -> list[str]:
     return out
 
 
-def _walk(ftp, rel: str, out: list, cancel=None) -> None:
+def _walk(ftp, rel: str, out: list, cancel=None, skipped: list | None = None) -> None:
     """Recursively collect file relpaths under the CURRENT directory (whose path
     from the walk root is `rel`). Directories are detected by descending into them
     (cwd succeeds) and files fall through. Leaves CWD where it started (each
-    descent is matched by a cwd('..'))."""
+    descent is matched by a cwd('..')). A name that cannot be a local path
+    component (safe_remote_name) is never entered or listed for download; it goes
+    to `skipped` instead, so the loss stays on the record."""
     for name in sorted(_names(ftp)):
         if cancel is not None and cancel():
             return
@@ -200,12 +290,17 @@ def _walk(ftp, rel: str, out: list, cancel=None) -> None:
             log.warning("ftp walk hit file cap %d under %s", WALK_MAX_FILES, rel)
             return
         child = f"{rel}/{name}" if rel else name
+        if not safe_remote_name(name):
+            log.warning("ftp walk: refused the name %r under %s", name, rel)
+            if skipped is not None:
+                skipped.append(child)
+            continue
         try:
             ftp.cwd(name)                 # success => it's a directory, now inside it
         except ftplib.all_errors:
             out.append(child)             # not a directory => a file to pull
             continue
-        _walk(ftp, child, out, cancel)
+        _walk(ftp, child, out, cancel, skipped)
         try:
             ftp.cwd("..")
         except ftplib.all_errors:
@@ -278,6 +373,11 @@ class _JobBase:
         self._set(status=status, error=error, current="",
                   finished=_now().isoformat(timespec="seconds"))
         return self.snapshot()
+
+    def finish_cancelled(self) -> dict:
+        """End a job that was cancelled before it ever started (it was waiting
+        its turn on a controller another backup was using)."""
+        return self._finish("cancelled")
 
     def _fire_on_complete(self):
         """Post-success registration hook, guarded so library/identity work can
@@ -395,10 +495,9 @@ class CameraJobBase(_JobBase):
 
     def run(self) -> dict:
         self._set(status="connecting", started=_now().isoformat(timespec="seconds"))
-        when = _now()
-        dated = dated_dir(self.dest_root, self.plant, self.line, self.robot, when)
         try:
-            dated.mkdir(parents=True, exist_ok=True)
+            dated, when = claim_dated_dir(self.dest_root, self.plant, self.line,
+                                          self.robot, _now())
             self._set(dated_path=str(dated))
             # started-marker written FIRST: backup.json exists from the first
             # moment with complete:false, and only _write_sidecars - the LAST
@@ -480,9 +579,8 @@ class BackupJob(_JobBase):
                 return self._finish("cancelled")
             self._set(status="downloading", total=len(files))
 
-            when = _now()
-            dated = dated_dir(self.dest_root, self.plant, self.line, self.robot, when)
-            dated.mkdir(parents=True, exist_ok=True)
+            dated, when = claim_dated_dir(self.dest_root, self.plant, self.line,
+                                          self.robot, _now())
             self._set(dated_path=str(dated))
             # started-marker: backup.json exists from the first moment with
             # complete:false, and only _write_sidecars - the LAST step of a
@@ -576,6 +674,11 @@ class BackupJob(_JobBase):
             if base in (".", ".."):
                 continue
             child = f"{rel}/{base}" if rel else base
+            if not safe_remote_name(base):
+                log.warning("refused the file name %r from %s", base, self.host)
+                with self._lock:
+                    self._p["skipped"].append(f"{child} {UNSAFE_NOTE}")
+                continue
             if base.upper().endswith(SKIP_EXTS):
                 with self._lock:
                     self._p["skipped"].append(child)
@@ -608,7 +711,9 @@ class BackupJob(_JobBase):
 
     def _download_one(self, ftp, dev, rel, dated: Path) -> int:
         # MD: is flat, so CWD is already the device and a bare basename RETRs.
-        return retrieve(ftp, rel.rsplit("/", 1)[-1], dated / rel.replace("/", os.sep))
+        # join_remote re-checks every component: the listing filter above is
+        # the first line, this is the one that guarantees the file lands inside
+        return retrieve(ftp, rel.rsplit("/", 1)[-1], join_remote(dated, rel))
 
 
 def probe_controller(host, *, user="", passwd="", passive=True, port=21,

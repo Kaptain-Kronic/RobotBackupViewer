@@ -97,7 +97,17 @@ def _bad(p: Path, why: str) -> dict:
 
 # Line/robot keys become folder names verbatim - anything Windows can't take
 # (or that would change the tree depth, like a slash) is skipped, not created.
-_BAD_NAME = re.compile(r'[\\/:*?"<>|]')
+_BAD_NAME = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+
+
+def _usable_name(n: str) -> bool:
+    """A line or robot name that is ONE plain folder name: none of the
+    characters Windows refuses, not "." or "..", and no trailing dot or space
+    (Windows strips those, so the folder would not be the one the list names).
+    ".." used to pass the character check and walk the seeded robot.json out of
+    the folder the user chose (audit 2026-11-18)."""
+    return (bool(n) and n not in (".", "..") and n[-1] not in ". "
+            and not _BAD_NAME.search(n))
 
 
 def parse_robots_json(path) -> dict:
@@ -126,14 +136,14 @@ def parse_robots_json(path) -> dict:
         if not isinstance(members, dict):
             junk.append(lname or repr(line))
             continue
-        if not lname or _BAD_NAME.search(lname):
+        if not _usable_name(lname):
             bad_names += 1
             continue
         rows = []
         for robot in sorted(members, key=str):
             rname = str(robot).strip()
             ip = members[robot].strip() if isinstance(members[robot], str) else ""
-            if not rname or _BAD_NAME.search(rname):
+            if not _usable_name(rname):
                 bad_names += 1
                 continue
             if not ip:

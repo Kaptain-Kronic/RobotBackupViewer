@@ -59,7 +59,11 @@ LANGUAGES = {
 }
 ENGLISH = 1
 
-# a script line is believed only if it matches the language's own grammar
+# a script line is believed only if it matches the language's own grammar -
+# the statements Keyence's own help documents. The loop forms were missing
+# until 2026-11-18, and scripts() skips what does not match, so the logic tab
+# showed a loop's body with its FOR/NEXT gone (a 30-line script read as 26,
+# as if the body ran once) - text silently dropped from evidence.
 _SCRIPT_LINE = re.compile(
     r"""(?x)
     ^\s*(?:
@@ -67,7 +71,12 @@ _SCRIPT_LINE = re.compile(
       | @[A-Za-z_]\w*\s*=.*                   # assignment to a local
       | ANS\d+\s*=.*                          # an output assignment
       | (?:IF|ELSEIF)\b.*\bTHEN\b.*           # a conditional
-      | (?:ELSE|ENDIF|END)\s*
+      | (?:ELSE|ENDIF|END|END\s+IF)\s*        # (the help also writes END IF)
+      | FOR\s+@[A-Za-z_]\w*\s*=.*\bTO\b.*     # FOR @i = a TO b [STEP c]
+      | NEXT(?:\s+@[A-Za-z_]\w*)?             # its end
+      | DO                                    # DO ... LOOP [WHILE cond]
+      | LOOP(?:\s+WHILE\b.*)?
+      | EXIT\s+(?:FOR|DO)                     # leave a loop early
       | T\d+\.RSLT\..*                        # a bare cross-tool reference
     )\s*$"""
 )

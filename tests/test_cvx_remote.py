@@ -491,3 +491,60 @@ def test_mjpeg_closes_each_part_eagerly_and_resends_when_idle():
             conn.close()
         srv.shutdown()
         srv.server_close()
+
+
+# -- buffers stay bounded and a stalled click is released (audit 2026-11-18) ---
+
+def test_extract_jpegs_never_keeps_bytes_that_cannot_start_a_frame():
+    buf = bytearray(b"\x00" * 100_000 + b"\xff")      # junk, then half a start marker
+    assert cx.extract_jpegs(buf) == []
+    assert bytes(buf) == b"\xff"                      # only the possible half-SOI stays
+
+
+def test_extract_jpegs_gives_up_a_start_that_never_ends(monkeypatch):
+    monkeypatch.setattr(cx, "MAX_JPEG_BYTES", 64)
+    buf = bytearray(b"\xff\xd8" + b"x" * 100)         # a start that never ends
+    assert cx.extract_jpegs(buf) == []
+    assert len(buf) <= 64                             # given up, not held forever
+    jpg = b"\xff\xd8" + b"ok" + b"\xff\xd9"
+    buf += jpg                                        # the stream back in step
+    assert cx.extract_jpegs(buf) == [jpg]
+
+
+def test_control_channel_resyncs_past_an_impossible_length():
+    s = _session()
+    buf = bytearray(struct.pack("<8I", 0, 0, 0, 0, 0, 0, 0, 0xFFFFFFF0))
+    s._parse_ctrl(cx.CTRL_PORT, buf)
+    assert len(buf) < 32                              # walked past, not waited on
+
+
+def test_a_held_back_button_up_is_released_without_another_event():
+    """A lost bridge call just before a button-up used to hold the button down
+    on the controller until the mouse moved again: the dead hole was only
+    skipped when the NEXT event arrived. A timer now releases it."""
+    import time
+    s = _session()
+    s._alive = True
+    fake = FakeSock()
+    s._socks[cx.CTRL_PORT] = fake
+    s.queue_mouse(0, cx.EV_LDOWN, 100, 0)
+    s.queue_mouse(2, cx.EV_LUP, 102, 0)               # seq 1 died in flight
+    assert _sent_events(fake) == [(cx.EV_LDOWN, 100)]
+    time.sleep(cx.CvxRemoteSession.MOUSE_FLUSH_S + 0.3)
+    assert _sent_events(fake) == [(cx.EV_LDOWN, 100), (cx.EV_LUP, 102)]
+
+
+def test_a_late_arrival_for_a_skipped_hole_is_dropped():
+    """Once a hole is skipped, its call arriving late is stale: replaying it
+    sent an old position out of order and rewound the queue into a new stall."""
+    s = _session()
+    s._alive = True
+    fake = FakeSock()
+    s._socks[cx.CTRL_PORT] = fake
+    s.queue_mouse(0, cx.EV_MOVE, 100, 0)
+    s.queue_mouse(2, cx.EV_MOVE, 102, 0)
+    s._mouse_gap_t0 -= 1.0
+    s.queue_mouse(3, cx.EV_MOVE, 103, 0)              # skips the hole at 1
+    s.queue_mouse(1, cx.EV_MOVE, 101, 0)              # the dead call, late
+    s.queue_mouse(4, cx.EV_MOVE, 104, 0)
+    assert [x for _ev, x in _sent_events(fake)] == [100, 102, 103, 104]

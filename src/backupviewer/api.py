@@ -368,6 +368,8 @@ class Api:
 
     def __init__(self):
         self._window = None
+        # set by the first get_state: the page loaded AND the bridge works
+        self.booted = threading.Event()
         # open viewer sessions, keyed by sid = str(session.root) - the display
         # path, matching the compare cache key (`compare:{b.root}:{mode}`).
         # Each entry owns its own compare session so every tab restores
@@ -379,6 +381,12 @@ class Api:
         self._active_sid: str | None = None  # what the MAIN window is showing
         self._sessions_lock = threading.Lock()  # registry mutations only
         self._jobs: dict[str, ftpbackup.BackupJob] = {}  # active/finished backup jobs
+        # one backup per controller at a time (CLAUDE.md: one connection to a
+        # live controller). A second job for a host - a double-click, a retry,
+        # two library rows that point at one IP - waits its turn instead of
+        # opening a second session beside the first.
+        self._host_locks: dict[str, threading.Lock] = {}
+        self._host_locks_guard = threading.Lock()
         self._scans: dict[str, discover._ScanJob] = {}  # folder + network scan jobs
         self._link = discover.LinkWatch()  # the plant-link pill's state machine
         self._link_ips: tuple[int, ...] = ()  # library addresses, packed + cached
@@ -539,6 +547,27 @@ class Api:
 
     def _backups_active(self) -> bool:
         return self._active_backup_count() > 0
+
+    def _hold_hosts(self, hosts, cancelled):
+        """Take the per-controller lock of every host a job dials, in sorted
+        order (two stations sharing a camera cannot deadlock). Returns the held
+        locks, or None when the job was cancelled while it waited - with
+        anything already taken given back. The cancel is read again once a
+        lock is taken: one that lands as the controller comes free must not
+        dial either."""
+        held = []
+        for h in sorted({str(x).strip().lower() for x in hosts if x}):
+            with self._host_locks_guard:
+                lk = self._host_locks.setdefault(h, threading.Lock())
+            while not cancelled():
+                if lk.acquire(timeout=0.25):
+                    held.append(lk)
+                    break
+            if cancelled():
+                for x in reversed(held):
+                    x.release()
+                return None
+        return held
 
     def _import_active(self) -> bool:
         t = self._import_thread
@@ -758,6 +787,7 @@ class Api:
         # that html/js loaded and the bridge works (useful for frozen builds).
         # Solo pop-out windows pass their pinned sid.
         log.info("ui booted; sid=%s active=%s", sid, self._active_sid)
+        self.booted.set()           # app.py's boot watchdog waits on this
         if sid:
             return self._entry(sid)["manifest"]
         if self._active_sid is None:
@@ -1527,7 +1557,7 @@ class Api:
             os.startfile(str(rp))  # Windows-native; the app only ships on Windows
         except (AttributeError, OSError):
             try:
-                subprocess.Popen(["explorer", str(rp)])  # noqa: S607
+                subprocess.Popen([discover.EXPLORER_EXE, str(rp)])  # noqa: S607
             except OSError:
                 pass
         return str(rp)
@@ -3594,11 +3624,23 @@ class Api:
     def _fw_port_range(self) -> str:
         return f"{phoneview.PORT_BASE}-{phoneview.PORT_BASE + phoneview.PORT_TRIES - 1}"
 
+    @staticmethod
+    def _fw_program() -> str:
+        """The program the inbound rule admits: this exe (in a source run, the
+        Python interpreter running it). The phone-view server runs in-process."""
+        import sys
+        return os.path.abspath(sys.executable)
+
     def _fw_command(self) -> str:
-        """The exact rule-adding command, shown in the UI for copy/paste."""
+        """The exact rule-adding command, shown in the UI for copy/paste. Scoped
+        to THIS program: the rule used to admit any program on the port range,
+        on every network, for as long as the rule stayed (audit 2026-11-18).
+        All profiles stay - a Public-only rule is what left the phone blocked
+        on a Private hotspot."""
         return ("New-NetFirewallRule -DisplayName '" + self._FW_RULE_NAME +
                 "' -Direction Inbound -Action Allow -Protocol TCP -LocalPort " +
-                self._fw_port_range() + " -Profile Any")
+                self._fw_port_range() + " -Profile Any -Program '" +
+                self._fw_program().replace("'", "''") + "'")
 
     @_endpoint
     def phone_view_firewall_status(self):
@@ -3606,13 +3648,20 @@ class Api:
         it (single source of truth for the UI's copy button). A non-elevated
         read - no UAC."""
         present = False
-        probe = ("if (Get-NetFirewallRule -DisplayName '" + self._FW_RULE_NAME +
-                 "' -ErrorAction SilentlyContinue) { 'yes' } else { 'no' }")
+        # the program each rule of ours admits ('Any' for the old unscoped
+        # rule, NONE when there is no rule): only a rule for THIS exe counts,
+        # so a rule left by a moved exe or the old all-programs rule is offered
+        # for replacement rather than reported as working
+        probe = ("$r = Get-NetFirewallRule -DisplayName '" + self._FW_RULE_NAME +
+                 "' -ErrorAction SilentlyContinue; if ($r) { ($r | "
+                 "Get-NetFirewallApplicationFilter).Program } else { 'NONE' }")
+        want = os.path.normcase(self._fw_program())
         try:
-            r = subprocess.run(["powershell", "-NoProfile", "-Command", probe],
+            r = subprocess.run([discover._PS_EXE, "-NoProfile", "-Command", probe],
                                capture_output=True, text=True, timeout=10,
                                creationflags=_CREATE_NO_WINDOW)
-            present = "yes" in (r.stdout or "").lower()
+            present = any(os.path.normcase(ln.strip()) == want
+                          for ln in (r.stdout or "").splitlines())
         except (OSError, subprocess.SubprocessError):
             pass   # can't read it - the UI just offers the command anyway
         return {"rule_present": present, "command": self._fw_command(),
@@ -3628,10 +3677,11 @@ class Api:
                  "' -ErrorAction SilentlyContinue; " + self._fw_command() +
                  " | Out-Null")
         enc = base64.b64encode(inner.encode("utf-16-le")).decode()
-        outer = ("Start-Process powershell -Verb RunAs -WindowStyle Hidden "
+        outer = ("Start-Process '" + discover._PS_EXE.replace("'", "''") +
+                 "' -Verb RunAs -WindowStyle Hidden "
                  "-ArgumentList '-NoProfile','-EncodedCommand','" + enc + "'")
         try:
-            subprocess.Popen(["powershell", "-NoProfile", "-Command", outer],
+            subprocess.Popen([discover._PS_EXE, "-NoProfile", "-Command", outer],
                              creationflags=_CREATE_NO_WINDOW)
         except OSError as e:
             raise ApiError("PHONE_VIEW", f"could not launch the admin prompt: {e}")
@@ -3748,7 +3798,7 @@ class Api:
             os.startfile(str(d))  # Windows-native; the app only ships on Windows
         except (AttributeError, OSError):
             try:
-                subprocess.Popen(["explorer", str(d)])  # noqa: S607
+                subprocess.Popen([discover.EXPLORER_EXE, str(d)])  # noqa: S607
             except OSError:
                 pass
         return str(d)
@@ -3774,7 +3824,7 @@ class Api:
 
     @_endpoint
     def get_settings(self):
-        return settings.load()
+        return settings.load_all()        # incl. the edit workspace's own files
 
     @_endpoint
     def set_setting(self, key: str, value):
@@ -3877,6 +3927,10 @@ class Api:
             # export (replace freely) or a folder somebody made by hand, which
             # exporting would DESTROY. The picker must not blur them.
             it["foreign"] = keyence_workspace.would_replace_foreign(root, it["name"])
+            # ours, but changed since it was loaded (simulator edits, scans pulled
+            # into it with Keyence's tool) - replacing it destroys that work too
+            it["changed"] = (not it["foreign"]
+                             and keyence_workspace.would_replace_changed(root, it["name"]))
         return planned
 
     @_endpoint
@@ -3911,12 +3965,16 @@ class Api:
             try:
                 dest = keyence_workspace.export_workspace(
                     it["src"], root, it["name"], replace_foreign=bool(replace_foreign))
-            except keyence_workspace.ForeignWorkspace:
-                blocked.append({**row, "path": str(root / it["name"])})
+            except keyence_workspace.ForeignWorkspace as e:
+                blocked.append({**row, "path": str(root / it["name"]), "changed": e.changed})
                 continue
             (done if dest else failed).append({**row, "path": str(dest or "")})
         if not done and failed and not blocked:
-            raise ApiError("EXPORT_FAILED", f"nothing copied ({len(failed)} failed)")
+            # the usual cause: the simulator has the workspace open, and Windows
+            # will not let an open folder be swapped (it is left as it was)
+            raise ApiError("EXPORT_FAILED",
+                           f"nothing copied ({len(failed)} failed) - if the simulator has "
+                           "these workspaces open, close it and load again")
         return {"root": str(root), "exported": done, "failed": failed, "blocked": blocked}
 
     @_endpoint
@@ -4754,7 +4812,7 @@ class Api:
             os.startfile(str(rp))  # Windows-native; the app only ships on Windows
         except (AttributeError, OSError):
             try:
-                subprocess.Popen(["explorer", str(rp)])  # noqa: S607
+                subprocess.Popen([discover.EXPLORER_EXE, str(rp)])  # noqa: S607
             except OSError:
                 pass
         return str(rp)
@@ -4869,9 +4927,18 @@ class Api:
         )
         self._jobs[job.id] = job
         backuplog.start_job(run_id, job.id, spec)
+        hosts = [host] + [c.get("host") for c in (spec.get("cameras") or [])
+                          if isinstance(c, dict)]
 
         def _run_and_log():
-            snap = job.run()          # returns the final snapshot on every path
+            # wait (status stays "pending") while another backup has any of this
+            # job's controllers; a cancel while waiting ends it without dialling
+            held = self._hold_hosts(hosts, lambda: job.cancelled)
+            try:
+                snap = job.finish_cancelled() if held is None else job.run()
+            finally:
+                for lk in reversed(held or []):
+                    lk.release()
             try:
                 backuplog.finish_job(run_id, job.id, snap)
             except Exception:  # noqa: BLE001 - the log must never kill a backup thread
@@ -5107,6 +5174,9 @@ class Api:
         cidr = discover.normalize_cidr(spec.get("cidr") or "") or discover.default_cidr()
         if not cidr:
             raise ApiError("BAD_SPEC", "could not determine a subnet to scan")
+        problem = discover.scan_size_problem(cidr)
+        if problem:
+            raise ApiError("BAD_SPEC", problem)
         job = discover.NetworkScanJob(cidr, port=spec.get("port", 21),
                                       smb_port=spec.get("smb_port", discover.SMB_PORT))
         self._scans[job.id] = job

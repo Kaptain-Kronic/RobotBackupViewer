@@ -9,6 +9,8 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
 from backupviewer import ftpbackup, mtxbackup, library, settings
 from backupviewer.session import BackupSession
 
@@ -594,3 +596,56 @@ def test_fanuc_job_refuses_matrox_ftp_host(monkeypatch, tmp_path):
     assert res["status"] == "error", res
     assert "matrox camera" in res["error"].lower()
     assert library.list_robots()["robots"] == []
+
+
+# -- the camera share is never touched as the logged-on user (audit 2026-11-18)
+# A UNC touch with no credential in place makes Windows sign in as the
+# logged-on user, and the scan probes any host that CLAIMS to be a Matrox on an
+# unauthenticated broadcast - so that handed the user's own login to whatever
+# answered. These record the order of every Windows call smb_mount makes.
+
+def _smb_spy(monkeypatch, *, saved=False, stage_ok=True, reachable=False, rc=0):
+    calls = []
+
+    def note(*what):
+        calls.append(what)
+
+    monkeypatch.setattr(mtxbackup, "_cred_exists", lambda h: note("saved?", h) or saved)
+    monkeypatch.setattr(mtxbackup, "_cred_write", lambda h, u, p: note("stage", h) or stage_ok)
+    monkeypatch.setattr(mtxbackup, "_cred_delete", lambda h: note("delete", h))
+    monkeypatch.setattr(mtxbackup, "_share_reachable", lambda base: note("touch") or reachable)
+    monkeypatch.setattr(mtxbackup, "_wnet_add", lambda unc, u, p: note("connect", u) or rc)
+    monkeypatch.setattr(mtxbackup, "_wnet_cancel", lambda name: note("cancel", name))
+    return calls
+
+
+def test_the_share_is_touched_only_after_the_camera_credential_is_staged(monkeypatch):
+    calls = _smb_spy(monkeypatch, reachable=True)
+    base, cleanup = mtxbackup.smb_mount("192.0.2.60", "mtxuser", "Matrox")
+    assert calls == [("saved?", "192.0.2.60"), ("stage", "192.0.2.60"), ("touch",)]
+    cleanup()
+    assert calls[-1] == ("delete", "192.0.2.60")     # ours lives only for the pull
+
+
+def test_without_a_credential_in_place_only_explicit_logins_are_tried(monkeypatch):
+    calls = _smb_spy(monkeypatch, stage_ok=False, rc=0)
+    _base, cleanup = mtxbackup.smb_mount("192.0.2.60", "mtxuser", "Matrox")
+    assert ("touch",) not in calls                   # no stat as the logged-on user
+    assert ("connect", None) not in calls            # no credential-less connect either
+    assert ("connect", "mtxuser") in calls
+    cleanup()
+    assert not any(c[0] == "delete" for c in calls)  # nothing of ours to delete
+
+
+def test_a_credential_the_tech_saved_is_never_overwritten_or_deleted(monkeypatch):
+    calls = _smb_spy(monkeypatch, saved=True, reachable=True)
+    _base, cleanup = mtxbackup.smb_mount("192.0.2.60", "mtxuser", "Matrox")
+    cleanup()
+    assert not any(c[0] in ("stage", "delete") for c in calls)
+
+
+def test_a_refused_login_takes_our_staged_credential_with_it(monkeypatch):
+    calls = _smb_spy(monkeypatch, rc=mtxbackup._ERROR_LOGON_FAILURE)
+    with pytest.raises(OSError):
+        mtxbackup.smb_mount("192.0.2.60", "mtxuser", "Matrox")
+    assert calls[-1] == ("delete", "192.0.2.60")

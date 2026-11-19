@@ -710,3 +710,31 @@ def test_link_adapter_choices_shows_its_reasoning():
     top = rows[0]
     assert top["name"] == DONGLE["name"] and top["library"] == len(LIB)
     assert next(r for r in rows if r["name"] == "Wi-Fi")["library"] == 0
+
+
+# -- a sweep has a size limit (audit 2026-11-18) -------------------------------
+
+def test_scan_size_problem_allows_a_line_and_refuses_a_typo():
+    assert discover.scan_size_problem("192.0.2.0/24") == ""
+    assert discover.scan_size_problem("192.0.2.0/20") == ""
+    assert "65,536 addresses" in discover.scan_size_problem("10.20.0.0/16")
+    assert "16,777,216" in discover.scan_size_problem("10.0.0.0/8")
+    assert discover.scan_size_problem("not a net").startswith("not a subnet")
+
+
+def test_api_refuses_an_oversized_sweep_before_building_anything():
+    """A /8 used to build 16.7 million host jobs up front and freeze the app."""
+    from backupviewer.api import Api
+    r = Api().net_scan_start({"cidr": "10.0.0.0/8"})
+    assert r["ok"] is False and r["error"]["code"] == "BAD_SPEC"
+    assert "/24" in r["error"]["message"]
+
+
+def test_scan_job_refuses_an_oversized_range_itself():
+    calls = []
+    job = discover.NetworkScanJob("10.0.0.0/8",
+                                  host_provider=lambda c: calls.append(c) or [])
+    job.run()
+    snap = job.snapshot()
+    assert snap["status"] == "error" and "addresses" in snap["error"]
+    assert calls == []                           # never enumerated
