@@ -176,55 +176,79 @@ def _cred_delete(host: str) -> None:
         pass
 
 
-def _smb_connect(unc: str, user: str, passwd: str) -> tuple[bool, bool]:
-    """Authenticate the SMB share as `user`. Returns (created, staged): created is
-    True if WE mapped the share (caller must disconnect it); staged is True if we
-    wrote a session credential (caller must delete it when done - a camera
-    password must never outlive the pull). Raises OSError with tech-facing
+def _cred_exists(host: str) -> bool:
+    """True when Windows already holds a saved credential for this address (the
+    entry Explorer's "remember my credentials" writes). Only its presence is
+    used; the copy CredReadW hands back is freed at once, never read."""
+    import ctypes
+    ptr = ctypes.c_void_p()
+    try:
+        ok = ctypes.windll.advapi32.CredReadW(host, _CRED_TYPE_DOMAIN_PASSWORD, 0,
+                                              ctypes.byref(ptr))
+    except Exception:  # noqa: BLE001 - no advapi32 (non-Windows test run)
+        return False
+    if ok and ptr.value:
+        try:
+            ctypes.windll.advapi32.CredFree(ptr)
+        except Exception:  # noqa: BLE001
+            pass
+        return True
+    return False
+
+
+def _share_reachable(base: Path) -> bool:
+    """Does the camera share answer through the session or credential already in
+    place? (A UNC stat: Windows connects with whatever it holds for the host.)"""
+    try:
+        return (base / "da").exists() or (base / "Documents").exists()
+    except OSError:
+        return False
+
+
+def _smb_connect(unc: str, user: str, passwd: str, *, ride: bool = False) -> bool:
+    """Authenticate the SMB share as `user`. Returns True if WE mapped the share
+    (the caller disconnects it when done). Raises OSError with tech-facing
     guidance if every strategy fails.
 
     The camera's Samba is fussy about programmatic logins in ways Explorer's own
-    prompt isn't, so this tries, in order: (1) plain mtxuser/Matrox; (2) the user
-    qualified with the server (`<ip>\\mtxuser`) - a WORKGROUP PC otherwise sends
-    its OWN name as the domain, which the camera rejects with WinError 86/1326;
-    (3) NO creds, to ride an existing server session (the tech's Explorer login -
-    Windows allows only one credential set per server); (4) clear a stale/
-    conflicting session and retry plain."""
+    prompt isn't, so this tries, in order: (0) only when `ride` - a camera
+    credential is already in place for the host - connect with NO explicit
+    creds, so the redirector uses it or an existing session (the tech's
+    Explorer login); (1) plain mtxuser/Matrox; (2) the user qualified with the
+    server (`<ip>\\mtxuser`) - a WORKGROUP PC otherwise sends its OWN name as the
+    domain, which the camera rejects with WinError 86/1326; (3) clear a
+    stale/conflicting session and retry plain. A credential-less connect with
+    nothing in place would sign in as the logged-on Windows user instead - so
+    step 0 never runs without `ride`."""
     server = unc.rsplit("\\", 1)[0]               # \\host  from  \\host\share
     host = server.lstrip("\\")
     _RETRYABLE = (_ERROR_INVALID_PASSWORD, _ERROR_LOGON_FAILURE,
                   _ERROR_SESSION_CREDENTIAL_CONFLICT, _ERROR_BAD_NET_NAME)
 
-    # 0. stage the credential (Explorer's "remember me") then connect with NO
-    #    explicit creds - the redirector uses the staged/any existing session.
-    #    This is the automation that lets a fresh camera back up without the tech
-    #    opening it in Explorer first. smb_mount deletes it once the pull is done.
-    staged = _cred_write(host, user, passwd)
-    rc = _wnet_add(unc, None, None)
-    if rc in (0, _ERROR_ALREADY_ASSIGNED):
-        return rc == 0, staged
+    if ride:
+        rc = _wnet_add(unc, None, None)                     # 0. the credential in place
+        if rc in (0, _ERROR_ALREADY_ASSIGNED):
+            return rc == 0
 
     rc = _wnet_add(unc, user, passwd)                       # 1. explicit plain creds
     if rc == 0:
-        return True, staged
+        return True
     if rc == _ERROR_ALREADY_ASSIGNED:
-        return False, staged
+        return False
     if rc in _RETRYABLE:
         rc = _wnet_add(unc, host + "\\" + user, passwd)     # 2. server-qualified user
         if rc == 0:
-            return True, staged
+            return True
         if rc == _ERROR_ALREADY_ASSIGNED:
-            return False, staged
+            return False
     _wnet_cancel(unc)                                       # 3. clear + retry plain
     _wnet_cancel(server + "\\IPC$")
     _wnet_cancel(server)
     rc = _wnet_add(unc, user, passwd)
     if rc == 0:
-        return True, staged
+        return True
     if rc == _ERROR_ALREADY_ASSIGNED:
-        return False, staged
-    if staged:                                             # bad cred -> don't leave it staged
-        _cred_delete(host)
+        return False
     raise OSError(
         f"SMB login to {unc} was refused (WinError {rc}). Open \\\\{host} in File "
         f"Explorer and sign in as {user} first, then retry the backup.")
@@ -237,22 +261,31 @@ def _smb_disconnect(unc: str) -> None:
 def smb_mount(host: str, user: str, passwd: str):
     """Default mount: return (base_path, cleanup) for `\\\\host\\mtxuser`.
 
-    Ride an existing session first - if the share is already reachable (the tech
-    signed into the camera in Explorer, the proven-working path), use it and touch
-    nothing. Only authenticate ourselves when it isn't, and clear any stale
-    conflicting session inside _smb_connect. Runs in the app's interactive desktop
-    session, the same context where an Explorer login to the camera succeeds.
+    NOTHING touches the share until a camera credential is in place for the
+    host: the tech's own saved one, or ours, staged here (Explorer's "remember
+    my credentials", session-only). A UNC touch with nothing in place makes
+    Windows sign in as the LOGGED-ON USER - and the network scan probes any
+    host that claims to be a Matrox on an unauthenticated broadcast, so that
+    handed the user's own NTLM login to whatever answered (audit 2026-11-18).
+    With a credential in place the stat rides an existing session (the tech
+    signed in via Explorer - the proven-working path) or uses that credential.
+    If staging fails, only explicit-credential connects are tried.
 
-    cleanup disconnects any share WE mapped and deletes any credential WE staged,
-    so the camera password lives only for the pull - never persisted past it."""
+    cleanup disconnects any share WE mapped and deletes only a credential WE
+    staged: a saved credential of the tech's is never overwritten or removed,
+    and the camera password we staged lives only for the pull."""
     unc = _unc(host)
     base = Path(unc)
+    saved = _cred_exists(host)
+    staged = False if saved else _cred_write(host, user, passwd)
+    if (saved or staged) and _share_reachable(base):
+        return base, ((lambda: _cred_delete(host)) if staged else (lambda: None))
     try:
-        if (base / "da").exists() or (base / "Documents").exists():
-            return base, lambda: None            # ride the existing session, touch nothing
+        created = _smb_connect(unc, user, passwd, ride=saved or staged)
     except OSError:
-        pass
-    created, staged = _smb_connect(unc, user, passwd)
+        if staged:                       # a refused login must not leave ours behind
+            _cred_delete(host)
+        raise
 
     def _cleanup():
         if created:
