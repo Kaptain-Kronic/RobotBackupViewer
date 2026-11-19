@@ -1,6 +1,6 @@
-"""Screen capture: the PNG encoder proven by decoding it back by hand, and
-the GDI path smoke-tested against the real desktop (Windows only - which is
-the only place the app runs)."""
+"""Window capture: the PNG encoder proven by decoding it back by hand, and the
+window-renders-itself path tested against real windows of this process
+(Windows only - which is the only place the app runs)."""
 import struct
 import sys
 import zlib
@@ -48,36 +48,81 @@ def test_png_rejects_wrong_length():
         screengrab.png_encode(2, 2, b"\x00" * 15)
 
 
-def _capture_rect_png(x, y, w, h) -> bytes:
-    """The composition grab_window_png uses (screengrab.py) once its client
-    rect is known. There is no public rect-capture entry point - the app only
-    ever captures a WINDOW - so the shared GDI+PNG machinery is exercised
-    here the same way the live path composes it."""
-    return screengrab.png_encode(w, h, screengrab._grab_rect_rgba(x, y, w, h))
-
-
-def _desktop_capturable() -> bool:
-    """GDI can't capture a locked/disconnected session - that's the machine's
-    state, not a code bug, so the live-capture smoke test skips honestly."""
+@pytest.fixture
+def covered_window():
+    """A window of THIS process (red) with another window (blue, topmost) lying
+    exactly over it - both at 2% opacity, so nothing shows on the screen of
+    whoever runs the suite. Yields the red one's title."""
     if sys.platform != "win32":
-        return False
+        pytest.skip("window capture is Windows-only")
+    tk = pytest.importorskip("tkinter")
+    import time
     try:
-        _capture_rect_png(0, 0, 2, 2)
-        return True
-    except OSError:
-        return False
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("no display for a test window")
+    root.withdraw()
+    title = "bv-grab-target-7f3q"
+    target = tk.Toplevel(root, bg="#d01010")
+    target.title(title)
+    target.geometry("160x120+30+30")
+    target.attributes("-alpha", 0.02)
+    cover = tk.Toplevel(root, bg="#1010d0")
+    cover.title("bv-grab-cover")
+    cover.geometry("160x120+30+30")
+    cover.attributes("-topmost", True)
+    cover.attributes("-alpha", 0.02)
+    for _ in range(25):
+        root.update()
+        time.sleep(0.02)
+    try:
+        yield title
+    finally:
+        root.destroy()
 
 
-needs_desktop = pytest.mark.skipif(
-    not _desktop_capturable(), reason="desktop not capturable (locked session?)")
-
-
-@needs_desktop
-def test_captured_rect_speaks_png():
-    png = _capture_rect_png(0, 0, 6, 4)
+def test_the_window_renders_itself_not_what_covers_it(covered_window):
+    """The mirror used to copy the SCREEN at the window's position, so whatever
+    lay over the app (an email, a chat) went to the phone. The window now
+    renders itself: its own red, and not one pixel of the blue lying on top."""
+    try:
+        png = screengrab.grab_window_png(covered_window)
+    except OSError as e:
+        pytest.skip(f"desktop not capturable here ({e})")
     w, h, rgba = _decode_png(png)
-    assert (w, h) == (6, 4)
+    px = [rgba[i:i + 3] for i in range(0, len(rgba), 4 * 7)]
+    red = sum(1 for p in px if p[0] > 180 and p[1] < 60 and p[2] < 60)
+    blue = sum(1 for p in px if p[2] > 180 and p[0] < 60)
+    assert red > len(px) // 5, "the window's own content is in the capture"
+    assert blue == 0, "nothing covering the window may reach the phone"
     assert all(rgba[i] == 255 for i in range(3, len(rgba), 4)), "alpha forced opaque"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="window query is Windows-only")
+def test_another_programs_window_is_never_mirrored():
+    """Only this process's own windows are ever looked up: a stranger's window
+    that happens to share a title can never be captured."""
+    import ctypes
+    import os
+    from ctypes import wintypes
+    titles = []
+    buf = ctypes.create_unicode_buffer(512)
+
+    def visit(hwnd, _lparam):
+        pid = wintypes.DWORD()
+        screengrab._u32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        screengrab._u32.GetWindowTextW(hwnd, buf, 512)
+        if pid.value != os.getpid() and buf.value:
+            titles.append(buf.value)
+            return False
+        return True
+
+    screengrab._u32.EnumWindows(screengrab._ENUM_PROC(visit), 0)
+    if not titles:
+        pytest.skip("no titled window of another process to look for")
+    assert screengrab.window_is_open(titles[0]) is False
+    with pytest.raises(OSError):
+        screengrab.grab_window_png(titles[0])
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="window query is Windows-only")
@@ -91,26 +136,6 @@ def test_grab_window_png_missing_is_clean_error():
         screengrab.grab_window_png("no window has this title 8f2k")
 
 
-@needs_desktop
-def test_grab_window_png_captures_the_app_shell_window():
-    """A real window (this process has a console/host) — capture whatever the
-    foreground shell window is by its title, proving the whole find -> client
-    rect -> BitBlt -> PNG chain end to end."""
-    import ctypes
-    from ctypes import wintypes
-    buf = ctypes.create_unicode_buffer(512)
-    ctypes.windll.user32.GetWindowTextW(
-        ctypes.windll.kernel32.GetConsoleWindow() or
-        ctypes.windll.user32.GetForegroundWindow(), buf, 512)
-    title = buf.value
-    if not title:
-        pytest.skip("no titled window to capture in this environment")
-    png = screengrab.grab_window_png(title)
-    w, h, rgba = _decode_png(png)
-    assert w > 0 and h > 0
-    assert all(rgba[i] == 255 for i in range(3, len(rgba), 4)), "alpha forced opaque"
-
-
 @pytest.mark.skipif(sys.platform != "win32", reason="Win32 prototypes are Windows-only")
 def test_window_handles_are_pointer_sized():
     """Regression guard: without explicit prototypes, ctypes truncates a Win64
@@ -119,7 +144,8 @@ def test_window_handles_are_pointer_sized():
     import ctypes
     from ctypes import wintypes
     u = screengrab._u32
-    assert u.FindWindowW.restype is wintypes.HWND
-    assert ctypes.sizeof(u.FindWindowW.restype) == ctypes.sizeof(ctypes.c_void_p)
+    assert ctypes.sizeof(wintypes.HWND) == ctypes.sizeof(ctypes.c_void_p)
     assert u.GetClientRect.argtypes[0] is wintypes.HWND
-    assert u.ClientToScreen.argtypes[0] is wintypes.HWND
+    assert u.PrintWindow.argtypes[:2] == (wintypes.HWND, wintypes.HDC)
+    assert u.GetWindowThreadProcessId.argtypes[0] is wintypes.HWND
+    assert screengrab._g32.CreateCompatibleDC.restype is wintypes.HDC
