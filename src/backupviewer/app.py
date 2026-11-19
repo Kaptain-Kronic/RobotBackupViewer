@@ -71,6 +71,47 @@ def _fallback_storage_dir() -> Path:
     return Path(base) / "BackupViewer" / "webview2"
 
 
+def _normal_storage_dir() -> Path:
+    """The ONE WebView2 profile folder normal mode uses. pywebview's default is a
+    fresh temp folder per launch, deleted at exit only if the browser process
+    quits within 3 s - so they piled up in %TEMP% (30 of them, 280 MB, by
+    2026-09). Given a folder, a launch reuses it: at most one, ever. It stays
+    a private (non-persisting) profile, exactly as before; it is just not new
+    every time. Separate from the fallback folder, which a rescue wipes."""
+    base = os.environ.get("LOCALAPPDATA") or str(settings.app_dir())
+    return Path(base) / "BackupViewer" / "webview2-profile"
+
+
+# How long a launch may take to reach `ui booted` before it is treated like a
+# WebView2 init failure. A healthy boot takes ~2.5 s from here (the onefile
+# unpack happens before this code runs); 90 s is far past any slow disk.
+_BOOT_DEADLINE_S = 90.0
+
+
+def _arm_boot_watchdog(window, api, watch, deadline: float = _BOOT_DEADLINE_S):
+    """The rescue below only catches the init failure pywebview LOGS. WebView2
+    runtime 153 failed silently instead - a window that never reached the
+    bridge, no error anywhere (2026-09-17). If the page has not booted by the
+    deadline, mark the start failed and close the dead window, so main() takes
+    the same once-only relaunch ladder (_next_boot_action)."""
+    import threading
+
+    def run():
+        if api.booted.wait(deadline):
+            return
+        log.error("no 'ui booted' %.0f s after start - treating it as a failed "
+                  "WebView2 start", deadline)
+        watch.failed = True
+        try:
+            window.destroy()
+        except Exception:  # noqa: BLE001 - window may already be gone
+            pass
+
+    t = threading.Thread(target=run, name="boot-watchdog", daemon=True)
+    t.start()
+    return t
+
+
 def _widen_server_backlog(depth: int = 128) -> None:
     """Deepen the accept queue of pywebview's built-in file server before it
     listens. The page is served from http://127.0.0.1 by a bottle/wsgiref
@@ -105,6 +146,18 @@ def _apply_fallback_env() -> dict:
     except OSError:
         log.warning("could not create %s - letting WebView2 create it", d)
     return {"storage_path": str(d), "private_mode": False}
+
+
+def _start_kwargs(debug: bool, fallback: bool) -> dict:
+    """webview.start() options for this boot: always ONE stable profile folder
+    (see _normal_storage_dir), swapped for the fresh fallback one in fallback
+    mode."""
+    kw = {"gui": "edgechromium", "debug": debug,
+          "storage_path": str(_normal_storage_dir())}
+    if fallback:
+        log.info("WebView2 fallback mode: software rendering + stable profile")
+        kw.update(_apply_fallback_env())
+    return kw
 
 
 def _relaunch_cmd() -> list[str]:
@@ -261,10 +314,7 @@ def main(argv=None) -> int:
     else:
         fallback = bool(settings.get(_WV2_SETTING)) and not args.webview2_normal
 
-    start_kwargs = {"gui": "edgechromium", "debug": args.debug}
-    if fallback:
-        log.info("WebView2 fallback mode: software rendering + stable profile")
-        start_kwargs.update(_apply_fallback_env())
+    start_kwargs = _start_kwargs(args.debug, fallback)
     _widen_server_backlog()      # before start(): the file server listens inside it
 
     api = Api()
@@ -282,6 +332,7 @@ def main(argv=None) -> int:
 
     watch = _WebView2FailureWatch(window)
     logging.getLogger("pywebview").addHandler(watch)
+    _arm_boot_watchdog(window, api, watch)
     try:
         webview.start(**start_kwargs)
     except Exception as e:

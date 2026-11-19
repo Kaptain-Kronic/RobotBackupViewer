@@ -368,6 +368,8 @@ class Api:
 
     def __init__(self):
         self._window = None
+        # set by the first get_state: the page loaded AND the bridge works
+        self.booted = threading.Event()
         # open viewer sessions, keyed by sid = str(session.root) - the display
         # path, matching the compare cache key (`compare:{b.root}:{mode}`).
         # Each entry owns its own compare session so every tab restores
@@ -781,6 +783,7 @@ class Api:
         # that html/js loaded and the bridge works (useful for frozen builds).
         # Solo pop-out windows pass their pinned sid.
         log.info("ui booted; sid=%s active=%s", sid, self._active_sid)
+        self.booted.set()           # app.py's boot watchdog waits on this
         if sid:
             return self._entry(sid)["manifest"]
         if self._active_sid is None:
