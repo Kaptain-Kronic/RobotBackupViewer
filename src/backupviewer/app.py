@@ -130,6 +130,86 @@ def _wire_drop(window, api: Api) -> None:
     window.events.loaded += wire
 
 
+# ---- one app per settings folder -------------------------------------------------
+# Two copies running at once each read-modify-write library.json and
+# settings.json, each run a library watcher and scans, and the last writer
+# silently wins (audit 2026-11-18). The onefile exe is slow enough to start
+# that a second double-click is the usual way it happens. A named mutex keyed
+# to the settings folder lets the second launch hand over and exit - and keys
+# it so test runs with their own throwaway APPDATA never collide with the real
+# app or with each other.
+
+_ERROR_ALREADY_EXISTS = 183
+_instance_mutex = None          # held for the life of the process
+
+
+def _instance_mutex_name() -> str:
+    import hashlib
+    folder = os.path.normcase(str(settings.app_dir()))
+    return "Local\\BackupViewer-" + hashlib.sha1(folder.encode("utf-8")).hexdigest()[:16]
+
+
+def _claim_single_instance() -> bool:
+    """True when no other Backup Viewer is running on this settings folder (and
+    this one now holds the claim). Anything that stops the check answers True:
+    a launch must never be blocked by the guard itself."""
+    global _instance_mutex
+    try:
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateMutexW.restype = wintypes.HANDLE
+        k32.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
+        k32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        handle = k32.CreateMutexW(None, False, _instance_mutex_name())
+        already = ctypes.get_last_error() == _ERROR_ALREADY_EXISTS
+    except Exception:  # noqa: BLE001 - no kernel32 (non-Windows test run)
+        return True
+    if not handle:
+        return True
+    if already:
+        k32.CloseHandle(handle)
+        return False
+    _instance_mutex = (k32, handle)
+    return True
+
+
+def _release_single_instance() -> None:
+    """Give the claim up early - before a rescue relaunch, whose new process
+    must be able to take it while this one is still exiting."""
+    global _instance_mutex
+    if _instance_mutex:
+        k32, handle = _instance_mutex
+        _instance_mutex = None
+        try:
+            k32.CloseHandle(handle)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _front_running_window() -> bool:
+    """Bring the running app's main window to the front; False when it has no
+    window yet (still starting up)."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        u32 = ctypes.WinDLL("user32", use_last_error=True)
+        u32.FindWindowW.restype = wintypes.HWND
+        u32.FindWindowW.argtypes = (wintypes.LPCWSTR, wintypes.LPCWSTR)
+        u32.IsIconic.argtypes = (wintypes.HWND,)
+        u32.ShowWindow.argtypes = (wintypes.HWND, ctypes.c_int)
+        u32.SetForegroundWindow.argtypes = (wintypes.HWND,)
+        hwnd = u32.FindWindowW(None, "Backup Viewer")
+        if not hwnd:
+            return False
+        if u32.IsIconic(hwnd):
+            u32.ShowWindow(hwnd, 9)          # SW_RESTORE
+        u32.SetForegroundWindow(hwnd)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _next_boot_action(failed: bool, mode: str, rescued: bool) -> str:
     """After webview.start() returns: 'ok', 'give-up' (a rescue already
     failed - never chain relaunches), or which mode to relaunch into."""
@@ -157,6 +237,13 @@ def main(argv=None) -> int:
 
     if args.diagnose:
         return _run_diagnose(args.diagnose)
+
+    if not _claim_single_instance():
+        log.info("another Backup Viewer is running on this settings folder - handing over")
+        if not _front_running_window():
+            _message("Backup Viewer is already starting - its window will appear "
+                     "in a moment.", 0x40)
+        return 0
 
     try:
         import webview
@@ -223,6 +310,7 @@ def main(argv=None) -> int:
         settings.set_value(_WV2_SETTING, None)      # the remembered mode was wrong
     env = dict(os.environ)
     env[_WV2_RESCUE_ENV] = target
+    _release_single_instance()          # the relaunched process takes the claim
     try:
         subprocess.Popen(_relaunch_cmd(), env=env, close_fds=True)
     except OSError:
@@ -257,6 +345,16 @@ def _run_diagnose(host: str) -> int:
     except Exception:  # noqa: BLE001 - console run / non-Windows
         pass
     return 0
+
+
+def _message(text: str, flags: int = 0x40) -> None:
+    """A plain Windows message box (the windowed exe has no console)."""
+    try:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(None, text, "Backup Viewer", flags)
+    except Exception:  # noqa: BLE001 - console run / non-Windows
+        print(text)
 
 
 def _webview2_help(err: Exception, runtime_missing: bool = False) -> None:
