@@ -3820,7 +3820,7 @@ class Api:
 
     @_endpoint
     def get_settings(self):
-        return settings.load()
+        return settings.load_all()        # incl. the edit workspace's own files
 
     @_endpoint
     def set_setting(self, key: str, value):
