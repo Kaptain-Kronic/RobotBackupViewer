@@ -496,3 +496,45 @@ def test_cvx_logic_refuses_a_robot_backup(api, tmp_path):
     (d / "SUMMARY.DG").write_text("F Number: F999999\n", encoding="cp1252")
     res = api.cvx_logic(_sid(api, d))
     assert not res["ok"] and res["error"]["code"] == "NOT_CVX"
+
+
+# -- the loop statements are part of the language (audit 2026-11-18) -----------
+
+LOOP_SCRIPT = [
+    "'agitate check - sum four heights",
+    "@SUM = 0",
+    "FOR @I = 0 TO 3 STEP 1",
+    "@SUM = @SUM + T101.RSLT.X[@I]:MS",
+    "IF @SUM > 400 THEN",
+    "EXIT FOR",
+    "END IF",
+    "NEXT",
+    "@N = 0",
+    "DO",
+    "@N = @N + 1",
+    "LOOP WHILE @N < 3",
+    "ANS1 = @SUM",
+]
+
+
+def test_loop_lines_are_never_dropped_from_a_script():
+    """FOR/NEXT, DO/LOOP, EXIT and the two-word END IF used to fail the grammar,
+    and scripts() skips what fails it - so the logic tab showed the loop body
+    without the loop, as if it ran once. Every line must come back, in order."""
+    raw, _offs = block([script_bytes(LOOP_SCRIPT)])
+    got = cvx_program.scripts(raw)
+    assert len(got) == 1
+    assert got[0]["lines"] == LOOP_SCRIPT
+
+
+@pytest.mark.parametrize("line", [
+    "FOR @I = 0 TO 3", "FOR @J=1 TO @N STEP 2", "NEXT", "NEXT @I", "DO", "LOOP",
+    "LOOP WHILE @N < 3", "EXIT FOR", "EXIT DO", "END IF", "ENDIF",
+])
+def test_the_loop_grammar_matches_the_documented_forms(line):
+    assert cvx_program._SCRIPT_LINE.match(line)
+
+
+@pytest.mark.parametrize("line", ["FOR", "FORMAT", "DONE", "NEXTSTEP", "EXIT", "LOOPED"])
+def test_the_loop_grammar_does_not_swallow_lookalikes(line):
+    assert not cvx_program._SCRIPT_LINE.match(line)
