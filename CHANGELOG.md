@@ -61,6 +61,10 @@
   its program list in its own file instead of inside settings.json; the CV-X
   remote's buffers stay bounded and a lost mouse call can no longer leave a
   button held; the LibraryImporter refuses `..` as a line or robot name.
+- **The about box names Jake Parsons beside Cody.** The credit pill reads
+  "cody beach + jake parsons + claude code", and under "questions, bugs,
+  suggestions" each of them has a row with an address and its own copy
+  button.
 
 ## v1.7.1 — the app boots whole again, the camera wall pops out into boxes and a window of its own, a picker chooses what the wall shows, and global-5 robots back up over http
 - **Every boot now loads every file — and says so when one does not.** v1.7

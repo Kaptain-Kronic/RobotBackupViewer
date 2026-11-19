@@ -23,7 +23,7 @@ batch lands, or with `--check` to hear about drift).
 > When per-subsystem docs land, they supersede this file for their own area. This
 > map's remaining job is breadth: what exists, and where.
 
-**Scope.** 305 files / ~104,076 lines. Covers everything in the working tree except: the
+**Scope.** 305 files / ~104,094 lines. Covers everything in the working tree except: the
 **Scope.** 265 files / ~78,187 lines. Covers everything in the working tree except: the
 **Scope.** 270 files / ~81,013 lines. Covers everything in the working tree except: the
 `.git` internals, build outputs (`dist/`, `build/`, `__pycache__/`), the private
@@ -45,7 +45,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 |---|---|---|---|---|
 | `.gitignore` | 21 | ignore rules for pycache/build/dist plus the local-only sample backup, real ip list and diag folders | build/config | active |
 | `build_exe.log` | 105 | pyinstaller transcript of one successful onefile build on store python 3.13 with pyinstaller 6.20 *(untracked, local-only)* | build/config | generated |
-| `CHANGELOG.md` | 2101 | prose changelog newest-first: a large unreleased section over v1.4 back to v0.1, feature by feature | docs | active |
+| `CHANGELOG.md` | 2105 | prose changelog newest-first: a large unreleased section over v1.4 back to v0.1, feature by feature | docs | active |
 | `CLAUDE.md` | 280 | the build contract: locked stack, layer map, composition/honesty rules and the plant-identifier firewall | docs | active |
 | `CVX_FTP_LAYOUT.md` | 108 | field notes on the cv-x ftp tree and simulator workspace layout, and what env.dat cannot prove | docs | active |
 | `LICENSE` | 620 | verbatim gnu gpl v3 license text, the license the readme points at | docs | vendored |
@@ -126,7 +126,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/settings.py` | 149 | settings.json under %appdata% with atomic locked writes, plus app_dir, library_root, sim_root and logging setup | shared/infra | active |
 | `src/backupviewer/updatecheck.py` | 109 | github releases/latest check with version compare and a policy that only lets the frozen exe auto-check | shared/infra | active |
 | `src/backupviewer/web/css/base.css` | 569 | root css: theme variable contract (--bg/--accent/--edge/--panel), app shell layout, chrome bars, bgfx layers | theming | active |
-| `src/backupviewer/web/css/components.css` | 2929 | the app's single component stylesheet: cards, tables, pills, modals, plus per-tab styles for every subsystem | theming | active |
+| `src/backupviewer/web/css/components.css` | 2933 | the app's single component stylesheet: cards, tables, pills, modals, plus per-tab styles for every subsystem | theming | active |
 | `src/backupviewer/web/fonts/Orbitron-VariableFont_wght.ttf` | *38 KB* | bundled orbitron variable font, loaded by base.css @font-face and offered as the 'rog' ui font in settings | theming | vendored |
 | `src/backupviewer/web/index.html` | 169 | the single page: the two chrome rows (topbar with the screens button, per-screen toolbar), #view, jobstrip, statusbar, the ordered script list, and the inline boot-loss recorder (window.BV_LOST) | shared/infra | active |
 | `src/backupviewer/web/js/api.js` | 161 | promise wrapper over the pywebview bridge: {ok,data} envelope, solo/cvx-window sid injection, slow-call dedupe | shared/infra | active |
@@ -165,7 +165,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | `src/backupviewer/web/js/manage_ui.js` | 1547 | the last-backup report modal: run log with retry-failed, partial-snapshot review, stale list (the tidy actions ride the library's functions… menu now) | library | active |
 | `src/backupviewer/web/js/mtxremote.js` | 286 | matrox remote overlay: sandboxed iframe tabs of the camera's own web ui, window fallback if unframeable | remote/mobile | active |
 | `src/backupviewer/web/js/phoneview.js` | 212 | qr handoff modal that mirrors this window (or a camera feed) to a phone, with a firewall-fix help panel | remote/mobile | active |
-| `src/backupviewer/web/js/router.js` | 593 | hash router and app boot: the screens dropdown + breadcrumb feed, chrome edge hairlines, cubes, status bar, boot sequence with its self-check (lost files: reload once, then halt and name them) | shared/infra | active |
+| `src/backupviewer/web/js/router.js` | 603 | hash router and app boot: the screens dropdown + breadcrumb feed, chrome edge hairlines, cubes, status bar, boot sequence with its self-check (lost files: reload once, then halt and name them) | shared/infra | active |
 | `src/backupviewer/web/js/scan_ui.js` | 999 | the fleet-scan modal: check picker built from the backend registry, find chips, live progress, grouped report | flag scanning | active |
 | `src/backupviewer/web/js/settings_ui.js` | 571 | the gear dialog (display/preferences tabs) and BV.uiPrefs.apply — fonts, sizes, glass/frost fills, bgfx dials | shared/infra | active |
 | `src/backupviewer/web/js/sim_export.js` | 208 | the load-cameras picker: copies CV-X workspaces from backups into the simulator folder, foreign-dir guard | cameras | active |
@@ -329,10 +329,10 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | subsystem | files | ~lines |
 |---|---:|---:|
 | tests | 104 | 33,573 |
-| shared/infra | 30 | 11,190 |
+| shared/infra | 30 | 11,200 |
 | library | 5 | 8,499 |
-| docs | 12 | 8,256 |
-| theming | 34 | 6,744 |
+| docs | 12 | 8,260 |
+| theming | 34 | 6,748 |
 | cameras | 18 | 6,500 |
 | backup parsing | 32 | 6,439 |
 | 3D viewer | 18 | 5,500 |
@@ -344,7 +344,7 @@ found nothing referencing the file (`possibly-dead`), it is a build/tool product
 | compare engine | 5 | 1,388 |
 | tools/scripts | 5 | 1,087 |
 | build/config | 7 | 266 |
-| **total** | **305** | **104,076** |
+| **total** | **305** | **104,094** |
 
 > Counts are by *primary* subsystem only — a file appears once, so these add up to the
 > whole repo. The `tests` row is the largest because every probe and unit suite counts as

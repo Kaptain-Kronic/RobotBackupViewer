@@ -2141,6 +2141,10 @@ button.btn.danger:disabled { opacity: 0.5; cursor: default; }
   color: var(--accent); background: var(--bg); border: 1px solid var(--edge);
   border-radius: 6px; padding: 0.4rem 0.6rem; word-break: break-all;
 }
+/* one row per person: name, address, its own copy button */
+.about-contact { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.35rem; }
+.about-who { flex: none; min-width: 6.5rem; font-size: 0.84rem; color: var(--sub); }
+.about-contact .about-mail { flex: 1; min-width: 0; }
 
 /* manage-backups modal (manage_ui.js): two tabs on a segmented row.
    report = the last-run pane (its failed list capped so it never starves the

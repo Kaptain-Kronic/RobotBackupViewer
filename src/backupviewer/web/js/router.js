@@ -121,14 +121,20 @@
      I reach you" affordance, so it has to LOOK clickable without shouting over
      the status line. Delegated below (statusR is innerHTML-rebuilt constantly,
      so a per-render listener would leak). */
-  var CONTACT = "cmbeach96+backupviewer@gmail.com";
+  var CREDIT = "cody beach + jake parsons + claude code";
+  /* who to write to - each address with its own copy button, since the
+     address is the whole point of the box */
+  var CONTACTS = [
+    { name: "cody beach", email: "cmbeach96+backupviewer@gmail.com" },
+    { name: "jake parsons", email: "parsonsjake25@gmail.com" },
+  ];
   var REPO = "https://github.com/Kaptain-Kronic/RobotBackupViewer";
 
   function rightStatusHtml() {
     var v = BV.state.version ? "ver. " + BV.state.version.split(".").slice(0, 2).join(".") : "";
     var upd = BV.update ? BV.update.pillHtml() : "";
     return upd + v + ' <span class="pill ghost credit-pill" title="about + contact">' +
-      "cody beach+claude code</span>";
+      BV.esc(CREDIT) + "</span>";
   }
 
   function aboutModal() {
@@ -136,22 +142,26 @@
     body.appendChild(BV.el("div", { class: "about-line" },
       "backupviewer <span class=\"accent\">" +
       BV.esc(BV.state.version || "") + "</span>"));
-    body.appendChild(BV.el("div", { class: "about-line dim" }, "cody beach + claude code"));
+    body.appendChild(BV.el("div", { class: "about-line dim" }, BV.esc(CREDIT)));
     if (BV.update) body.appendChild(BV.update.aboutSection());
     body.appendChild(BV.el("div", { class: "about-lbl" }, "questions, bugs, suggestions"));
-    var mail = BV.el("div", { class: "about-mail" }, BV.esc(CONTACT));
-    body.appendChild(mail);
+    CONTACTS.forEach(function (c) {
+      var row = BV.el("div", { class: "about-contact" });
+      row.appendChild(BV.el("span", { class: "about-who" }, BV.esc(c.name)));
+      row.appendChild(BV.el("span", { class: "about-mail" }, BV.esc(c.email)));
+      var copy = BV.el("button", { class: "btn", title: "copy " + c.name + "'s address" },
+        "copy");
+      copy.addEventListener("click", function () { BV.copyText(c.email, "email copied"); });
+      row.appendChild(copy);
+      body.appendChild(row);
+    });
     var acts = BV.el("div", { class: "lf-actions" });
-    var copyBtn = BV.el("button", { class: "btn primary", title: "copy the address" },
-      "copy email");
-    copyBtn.addEventListener("click", function () { BV.copyText(CONTACT, "email copied"); });
     var repoBtn = BV.el("button", { class: "btn", title: "open the source on GitHub" },
       "source");
     repoBtn.addEventListener("click", function () {
       BV.api.call("open_url", REPO).catch(function () { BV.copyText(REPO, "link copied"); });
     });
     var closeBtn = BV.el("button", { class: "btn" }, "close");
-    acts.appendChild(copyBtn);
     acts.appendChild(repoBtn);
     acts.appendChild(closeBtn);
     body.appendChild(acts);
